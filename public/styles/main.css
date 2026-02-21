@@ -112,6 +112,7 @@ html, body, #root {
 
 .navbar-brand .brand-accent {
   color: var(--accent);
+  font-weight: 700;
 }
 
 .navbar-actions {
@@ -1568,6 +1569,75 @@ html, body, #root {
   color: var(--accent);
 }
 
+/* --- Sanitize Button --- */
+.btn-sanitize {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  transition: all 0.15s;
+}
+
+.btn-sanitize:hover:not(:disabled) {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.btn-sanitize:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-sanitized {
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  cursor: default;
+}
+
+.btn-sanitized:disabled {
+  opacity: 0.8;
+}
+
+/* --- Sanitize Status Badge --- */
+.sanitize-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(52, 211, 153, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--success);
+  margin-bottom: 12px;
+}
+
+/* --- LLM Warning Modal Content --- */
+.llm-warning-content {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.llm-warning-content p {
+  margin-bottom: 8px;
+}
+
+.llm-warning-content ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.llm-warning-content li {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+}
+
+.llm-warning-content strong {
+  color: var(--accent);
+}
+
 /* --- Responsive: 1440x900 --- */
 @media (max-width: 1600px) {
   .main-content {
@@ -1579,4 +1649,263 @@ html, body, #root {
   .main-content {
     grid-template-columns: 260px 1fr 240px;
   }
+}
+
+/* --- Review Status Labels --- */
+.status-label {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.status-label.status-disabled {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--error);
+}
+
+.status-label.status-unreviewed {
+  background: rgba(107, 114, 128, 0.15);
+  color: var(--text-muted);
+}
+
+.status-label.status-llm-reviewed {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warning);
+}
+
+.status-label.status-accepted {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+}
+
+/* --- Structured Suggestion Cards --- */
+.suggestion-analysis {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.suggestion-verdict {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+
+.suggestion-verdict.looks_good {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+}
+
+.suggestion-verdict.needs_changes {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warning);
+}
+
+.suggestion-field-change {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.suggestion-field-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.suggestion-values {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.suggestion-current {
+  color: var(--error);
+  text-decoration: line-through;
+  font-family: var(--font-mono);
+}
+
+.suggestion-arrow {
+  color: var(--text-muted);
+}
+
+.suggestion-new {
+  color: var(--success);
+  font-family: var(--font-mono);
+}
+
+.suggestion-reason {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.suggestion-import-btn {
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(77, 208, 200, 0.3);
+  border-radius: 3px;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.suggestion-import-btn:hover {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+/* --- Accept Button --- */
+.btn-accept {
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.btn-accept:hover {
+  background: rgba(52, 211, 153, 0.2);
+}
+
+.btn-accepted {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  cursor: default;
+  opacity: 0.8;
+}
+
+/* --- Rule Review Action Bar --- */
+.rule-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* --- Review Chat Panel --- */
+.review-chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 95%;
+  word-wrap: break-word;
+}
+
+.chat-message.user {
+  align-self: flex-end;
+  background: var(--accent-glow);
+  border: 1px solid rgba(77, 208, 200, 0.2);
+  color: var(--text-primary);
+}
+
+.chat-message.assistant {
+  align-self: flex-start;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+.chat-input-area {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.chat-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  outline: none;
+  resize: none;
+  min-height: 34px;
+  max-height: 80px;
+}
+
+.chat-input:focus {
+  border-color: var(--accent);
+}
+
+.chat-suggestion-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-top: 6px;
+}
+
+.chat-suggestion-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* --- Review Progress Badge --- */
+.review-progress {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+/* --- Status Filter Dropdown --- */
+.status-filter-select {
+  padding: 5px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+
+.status-filter-select:focus {
+  border-color: var(--accent);
 }

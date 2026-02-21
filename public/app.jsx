@@ -5,6 +5,7 @@
  *   LEFT:   ConfigInput   — paste/upload PAN-OS config
  *   CENTER: Tabbed editor — Security Rules / Zones / Objects / NAT
  *   RIGHT:  InterviewPanel — editable rule details + LLM suggestions
+ *           ReviewChatPanel — full-ruleset LLM review chat (when in review mode)
  *   BOTTOM: SRXOutput     — generated SRX commands + warnings
  *
  * State flow:
@@ -13,12 +14,15 @@
  *   3. ModelSelector auto-opens  →  sourceModel + targetModel
  *   4. InterfaceMapper opens  →  interfaceMappings
  *   5. User edits config in tabbed panels
- *   6. Click "Convert" sends to /api/convert  →  srxOutput + convertWarnings
+ *   6. User reviews rules (LLM Review + Accept per rule)
+ *   7. When all accepted, "Review" opens full-ruleset chat
+ *   8. Click "Convert" sends to /api/convert  →  srxOutput + convertWarnings
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import ConfigInput from './components/ConfigInput.jsx';
 import PolicyTable from './components/PolicyTable.jsx';
 import InterviewPanel from './components/InterviewPanel.jsx';
+import ReviewChatPanel from './components/ReviewChatPanel.jsx';
 import SRXOutput from './components/SRXOutput.jsx';
 import WarningsPanel from './components/WarningsPanel.jsx';
 import LLMSettings from './components/LLMSettings.jsx';
@@ -49,11 +53,20 @@ export default function App() {
   // --- Center panel tab state ---
   const [editTab, setEditTab] = useState('rules');
 
+  // --- Review mode state ---
+  const [reviewMode, setReviewMode] = useState(false);
+
   // --- Conversion output state ---
   const [srxOutput, setSrxOutput] = useState(null);
   const [convertWarnings, setConvertWarnings] = useState([]);
   const [conversionSummary, setConversionSummary] = useState(null);
   const [outputFormat, setOutputFormat] = useState('set');
+
+  // --- Sanitization state ---
+  const [isSanitized, setIsSanitized] = useState(false);
+  const [sanitizationTable, setSanitizationTable] = useState(null);
+  const [showLLMWarning, setShowLLMWarning] = useState(false);
+  const [llmWarningDismissed, setLlmWarningDismissed] = useState(false);
 
   // --- UI state ---
   const [isLoading, setIsLoading] = useState(false);
@@ -65,6 +78,57 @@ export default function App() {
 
   // --- All warnings combined (parse + convert) ---
   const allWarnings = [...parseWarnings, ...convertWarnings];
+
+  // --- Review progress ---
+  const reviewProgress = useMemo(() => {
+    const policies = intermediateConfig?.security_policies || [];
+    const accepted = policies.filter(r => r._review_status === 'accepted' || r.disabled).length;
+    return { accepted, total: policies.length };
+  }, [intermediateConfig]);
+
+  const allRulesAccepted = reviewProgress.total > 0 && reviewProgress.accepted === reviewProgress.total;
+
+  // ------------------------------------------------------------------
+  // Sanitize handler: strips sensitive data from config text
+  // ------------------------------------------------------------------
+  const handleSanitize = useCallback(async () => {
+    if (!configText.trim()) return;
+    setIsLoading(true);
+    setLoadingMessage('Sanitizing configuration...');
+    setError(null);
+
+    try {
+      const response = await fetch('/api/sanitize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ configText }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Sanitization failed');
+      }
+
+      setConfigText(data.sanitizedText);
+      setSanitizationTable(data.replacements);
+      setIsSanitized(true);
+    } catch (err) {
+      setError(`Sanitize error: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+      setLoadingMessage('');
+    }
+  }, [configText]);
+
+  // Reset sanitization flag when user changes config text manually
+  const handleConfigChange = useCallback((text) => {
+    setConfigText(text);
+    if (isSanitized) {
+      setIsSanitized(false);
+      setSanitizationTable(null);
+      setLlmWarningDismissed(false);
+    }
+  }, [isSanitized]);
 
   // ------------------------------------------------------------------
   // Parse handler: sends config to /api/parse
@@ -79,6 +143,7 @@ export default function App() {
     setConversionSummary(null);
     setSelectedRule(null);
     setEditTab('rules');
+    setReviewMode(false);
 
     try {
       const response = await fetch('/api/parse', {
@@ -91,6 +156,12 @@ export default function App() {
       if (!response.ok) {
         throw new Error(data.error || 'Parse failed');
       }
+
+      // Inject _review_status on every rule
+      const policies = data.intermediateConfig.security_policies || [];
+      policies.forEach(rule => {
+        rule._review_status = 'unreviewed';
+      });
 
       setIntermediateConfig(data.intermediateConfig);
       setParseWarnings(data.warnings || []);
@@ -185,6 +256,7 @@ export default function App() {
         description: '',
         tags: [],
         profile_group: '',
+        _review_status: 'unreviewed',
       };
       return {
         ...prev,
@@ -207,6 +279,55 @@ export default function App() {
   const handleConfigUpdate = useCallback((field, items) => {
     setIntermediateConfig(prev => ({ ...prev, [field]: items }));
   }, []);
+
+  // ------------------------------------------------------------------
+  // Review handlers
+  // ------------------------------------------------------------------
+
+  /** Accept the currently selected rule */
+  const handleAcceptRule = useCallback((index) => {
+    setIntermediateConfig(prev => {
+      const policies = [...prev.security_policies];
+      policies[index] = { ...policies[index], _review_status: 'accepted' };
+      return { ...prev, security_policies: policies };
+    });
+    // Update selectedRule to reflect the change
+    setSelectedRule(prev => prev ? { ...prev, _review_status: 'accepted' } : prev);
+  }, []);
+
+  /** Mark the currently selected rule as LLM reviewed */
+  const handleSetLLMReviewed = useCallback((index) => {
+    setIntermediateConfig(prev => {
+      const policies = [...prev.security_policies];
+      if (policies[index]._review_status !== 'accepted') {
+        policies[index] = { ...policies[index], _review_status: 'llm-reviewed' };
+      }
+      return { ...prev, security_policies: policies };
+    });
+    setSelectedRule(prev => {
+      if (prev && prev._review_status !== 'accepted') {
+        return { ...prev, _review_status: 'llm-reviewed' };
+      }
+      return prev;
+    });
+  }, []);
+
+  /** Get current rule index for the selected rule */
+  const getCurrentRuleIndex = useCallback(() => {
+    if (!selectedRule || !intermediateConfig) return -1;
+    return intermediateConfig.security_policies.findIndex(
+      r => r.name === selectedRule.name && r._rule_index === selectedRule._rule_index
+    );
+  }, [selectedRule, intermediateConfig]);
+
+  /** Handle Review button click */
+  const handleReviewClick = useCallback(() => {
+    if (!allRulesAccepted) {
+      setError(`All rules must be accepted before full review (${reviewProgress.accepted}/${reviewProgress.total} accepted)`);
+      return;
+    }
+    setReviewMode(true);
+  }, [allRulesAccepted, reviewProgress]);
 
   // ------------------------------------------------------------------
   // Model / mapping handlers
@@ -238,7 +359,7 @@ export default function App() {
       <nav className="navbar">
         <div className="navbar-brand">
           <h1>
-            Firewall Policy <span className="brand-accent">Converter</span>
+            Firewall Policy to <span className="brand-accent">Intent</span> Converter
           </h1>
         </div>
 
@@ -267,6 +388,11 @@ export default function App() {
                 Warnings <span className="stat-value" style={{ color: 'var(--warning)' }}>
                   {allWarnings.length}
                 </span>
+              </span>
+            )}
+            {intermediateConfig && (
+              <span className="review-progress">
+                {reviewProgress.accepted}/{reviewProgress.total} accepted
               </span>
             )}
           </div>
@@ -338,10 +464,12 @@ export default function App() {
         {/* LEFT: Config Input */}
         <ConfigInput
           configText={configText}
-          onConfigChange={setConfigText}
+          onConfigChange={handleConfigChange}
           onParse={handleParse}
+          onSanitize={handleSanitize}
           isLoading={isLoading}
           isParsed={!!intermediateConfig}
+          isSanitized={isSanitized}
           sourceModel={sourceModel}
           targetModel={targetModel}
           onOpenModels={() => setShowModelSelector(true)}
@@ -380,10 +508,21 @@ export default function App() {
                   </button>
                   <div style={{ flex: 1 }} />
                   <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleReviewClick}
+                    style={{
+                      margin: '6px 4px',
+                      opacity: allRulesAccepted ? 1 : 0.5,
+                    }}
+                    title={allRulesAccepted ? 'Start full ruleset review with LLM' : `${reviewProgress.accepted}/${reviewProgress.total} rules accepted`}
+                  >
+                    Review
+                  </button>
+                  <button
                     className="btn btn-primary btn-sm"
                     onClick={() => handleConvert('set')}
                     disabled={isLoading}
-                    style={{ margin: '6px 12px' }}
+                    style={{ margin: '6px 12px 6px 4px' }}
                   >
                     Convert to SRX
                   </button>
@@ -443,23 +582,46 @@ export default function App() {
           )}
         </div>
 
-        {/* RIGHT: Interview / Rule Details */}
-        <InterviewPanel
-          selectedRule={selectedRule}
-          intermediateConfig={intermediateConfig}
-          warnings={allWarnings}
-          onUpdateRule={(updatedRule) => {
-            if (!selectedRule || !intermediateConfig) return;
-            const index = intermediateConfig.security_policies.findIndex(
-              r => r.name === selectedRule.name && r._rule_index === selectedRule._rule_index
-            );
-            if (index >= 0) {
-              handleUpdateRule(index, updatedRule);
-              setSelectedRule(updatedRule);
-            }
-          }}
-          targetModel={targetModel}
-        />
+        {/* RIGHT: Interview / Rule Details / Review Chat */}
+        {reviewMode ? (
+          <ReviewChatPanel
+            intermediateConfig={intermediateConfig}
+            onUpdateRule={handleUpdateRule}
+            targetModel={targetModel}
+            isSanitized={isSanitized}
+            llmWarningDismissed={llmWarningDismissed}
+            onLLMWarning={() => setShowLLMWarning(true)}
+            onExitReview={() => setReviewMode(false)}
+          />
+        ) : (
+          <InterviewPanel
+            selectedRule={selectedRule}
+            intermediateConfig={intermediateConfig}
+            warnings={allWarnings}
+            onUpdateRule={(updatedRule) => {
+              if (!selectedRule || !intermediateConfig) return;
+              const index = intermediateConfig.security_policies.findIndex(
+                r => r.name === selectedRule.name && r._rule_index === selectedRule._rule_index
+              );
+              if (index >= 0) {
+                handleUpdateRule(index, updatedRule);
+                setSelectedRule(updatedRule);
+              }
+            }}
+            targetModel={targetModel}
+            isSanitized={isSanitized}
+            llmWarningDismissed={llmWarningDismissed}
+            onLLMWarning={() => setShowLLMWarning(true)}
+            onAcceptRule={() => {
+              const index = getCurrentRuleIndex();
+              if (index >= 0) handleAcceptRule(index);
+            }}
+            onSetLLMReviewed={() => {
+              const index = getCurrentRuleIndex();
+              if (index >= 0) handleSetLLMReviewed(index);
+            }}
+          />
+        )}
 
         {/* BOTTOM: SRX Output + Warnings */}
         <div className="panel output-panel">
@@ -507,6 +669,7 @@ export default function App() {
                 format={outputFormat}
                 summary={conversionSummary}
                 isParsed={!!intermediateConfig}
+                sanitizationTable={sanitizationTable}
               />
             ) : (
               <WarningsPanel warnings={allWarnings} />
@@ -540,6 +703,59 @@ export default function App() {
           onMappingComplete={handleMappingComplete}
           onClose={() => setShowInterfaceMapper(false)}
         />
+      )}
+
+      {/* LLM Warning Modal — shown when user tries AI suggestions without sanitizing */}
+      {showLLMWarning && (
+        <div className="modal-overlay" onClick={() => setShowLLMWarning(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
+            <div className="modal-header" style={{ borderBottomColor: 'rgba(248, 113, 113, 0.3)' }}>
+              <h2 style={{ color: 'var(--warning)' }}>Security Warning</h2>
+              <button className="modal-close" onClick={() => setShowLLMWarning(false)}>x</button>
+            </div>
+            <div className="modal-body">
+              <div className="llm-warning-content">
+                <p style={{ fontWeight: 600, marginBottom: 8 }}>
+                  Your configuration has not been sanitized.
+                </p>
+                <p>
+                  Sending firewall configurations to LLM providers may expose sensitive information including:
+                </p>
+                <ul>
+                  <li>Public and private IP addresses</li>
+                  <li>Usernames, password hashes, and API keys</li>
+                  <li>Network topology and security architecture</li>
+                  <li>VPN pre-shared keys and certificates</li>
+                </ul>
+                <p style={{ marginTop: 8 }}>
+                  Use the <strong>Sanitize Configuration</strong> button to replace sensitive data with
+                  placeholders before using AI suggestions. Originals are restored on export.
+                </p>
+              </div>
+            </div>
+            <div className="modal-footer" style={{ gap: 8 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowLLMWarning(false);
+                  handleSanitize();
+                }}
+              >
+                Sanitize First
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setLlmWarningDismissed(true);
+                  setShowLLMWarning(false);
+                }}
+                style={{ background: 'var(--warning)', borderColor: 'var(--warning)' }}
+              >
+                Proceed Without Sanitizing
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -2,13 +2,12 @@
  * LLMSettings Component
  *
  * Modal dialog for configuring the LLM provider used by the interview engine.
- * Phase 1: Shows a placeholder UI with provider selection.
- * Phase 3: Full implementation with API key management, model selection,
- *          test connection, and provider-specific settings.
+ * Includes provider selection, API key, model, temperature, and editable system prompt.
  *
  * Settings are stored in localStorage only — API keys never leave the browser.
  */
 import React, { useState, useEffect } from 'react';
+import { DEFAULT_SYSTEM_PROMPT } from '../utils/llm-client.js';
 
 const PROVIDERS = [
   { id: 'claude', name: 'Claude (Anthropic)', defaultModel: 'claude-sonnet-4-6' },
@@ -24,6 +23,7 @@ export default function LLMSettings({ onClose }) {
   const [model, setModel] = useState('claude-sonnet-4-6');
   const [baseUrl, setBaseUrl] = useState('');
   const [temperature, setTemperature] = useState(0.2);
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
 
   // Load saved settings from localStorage on mount
   useEffect(() => {
@@ -36,6 +36,7 @@ export default function LLMSettings({ onClose }) {
         setModel(settings.model || 'claude-sonnet-4-6');
         setBaseUrl(settings.baseUrl || '');
         setTemperature(settings.temperature ?? 0.2);
+        setSystemPrompt(settings.systemPrompt || DEFAULT_SYSTEM_PROMPT);
       }
     } catch {
       // Ignore parse errors
@@ -44,7 +45,7 @@ export default function LLMSettings({ onClose }) {
 
   /** Save settings to localStorage */
   const handleSave = () => {
-    const settings = { provider, apiKey, model, baseUrl, temperature };
+    const settings = { provider, apiKey, model, baseUrl, temperature, systemPrompt };
     localStorage.setItem('llm-settings', JSON.stringify(settings));
     onClose();
   };
@@ -75,8 +76,8 @@ export default function LLMSettings({ onClose }) {
         borderRadius: 'var(--radius-lg)',
         border: '1px solid var(--border-color)',
         padding: '24px',
-        width: '480px',
-        maxHeight: '80vh',
+        width: '600px',
+        maxHeight: '85vh',
         overflow: 'auto',
       }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -87,19 +88,6 @@ export default function LLMSettings({ onClose }) {
           >
             x
           </button>
-        </div>
-
-        {/* Phase 3 notice */}
-        <div style={{
-          background: 'var(--accent-glow)',
-          border: '1px solid var(--accent-dim)',
-          borderRadius: 'var(--radius)',
-          padding: '10px 14px',
-          marginBottom: '20px',
-          fontSize: '12px',
-          color: 'var(--accent)',
-        }}>
-          Interview engine and LLM integration coming in Phase 2 & 3. Settings saved locally for when it's ready.
         </div>
 
         {/* Provider selector */}
@@ -169,6 +157,35 @@ export default function LLMSettings({ onClose }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
             <span>Precise (0.0)</span>
             <span>Creative (1.0)</span>
+          </div>
+        </SettingsField>
+
+        {/* System Prompt */}
+        <SettingsField label="Review System Prompt">
+          <textarea
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            style={{
+              ...inputStyle,
+              minHeight: '160px',
+              maxHeight: '300px',
+              resize: 'vertical',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '11px',
+              lineHeight: '1.5',
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+              {systemPrompt.length} characters
+            </span>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}
+              style={{ fontSize: '10px', padding: '2px 8px' }}
+            >
+              Reset to Default
+            </button>
           </div>
         </SettingsField>
 

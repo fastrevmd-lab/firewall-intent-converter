@@ -3,10 +3,15 @@
  *
  * Right panel showing editable rule details + AI-powered suggestions.
  * When a rule is selected, all fields are editable inline.
- * "Get AI Suggestions" calls the configured LLM for best-practice advice.
+ * "LLM Review" calls the configured LLM for structured best-practice advice.
+ * "Accept Rule" marks the rule as accepted in the review workflow.
  */
 import React, { useState } from 'react';
-import { getLLMSuggestion, getLLMStatus, buildRuleSuggestionPrompt } from '../utils/llm-client.js';
+import {
+  getLLMSuggestion,
+  getLLMStatus,
+  buildStructuredRuleSuggestionPrompt,
+} from '../utils/llm-client.js';
 
 export default function InterviewPanel({
   selectedRule,
@@ -14,8 +19,14 @@ export default function InterviewPanel({
   warnings,
   onUpdateRule,
   targetModel,
+  isSanitized,
+  llmWarningDismissed,
+  onLLMWarning,
+  onAcceptRule,
+  onSetLLMReviewed,
 }) {
-  const [suggestion, setSuggestion] = useState('');
+  const [structuredSuggestion, setStructuredSuggestion] = useState(null);
+  const [rawSuggestion, setRawSuggestion] = useState('');
   const [isLoadingSuggestion, setIsLoadingSuggestion] = useState(false);
   const [suggestionError, setSuggestionError] = useState('');
 
@@ -25,21 +36,51 @@ export default function InterviewPanel({
 
   const llmStatus = getLLMStatus();
 
-  /** Request LLM suggestions for the selected rule */
-  const handleGetSuggestion = async () => {
+  /** Request structured LLM review for the selected rule */
+  const handleLLMReview = async () => {
     if (!selectedRule) return;
+
+    // Warn user if config hasn't been sanitized (skip if already dismissed)
+    if (!isSanitized && !llmWarningDismissed && onLLMWarning) {
+      onLLMWarning();
+      return;
+    }
+
     setIsLoadingSuggestion(true);
     setSuggestionError('');
-    setSuggestion('');
+    setStructuredSuggestion(null);
+    setRawSuggestion('');
 
     try {
-      const prompt = buildRuleSuggestionPrompt(
+      const prompt = buildStructuredRuleSuggestionPrompt(
         selectedRule,
         targetModel,
         intermediateConfig?.zones
       );
       const result = await getLLMSuggestion(prompt.user, prompt.system);
-      setSuggestion(result);
+
+      // Try to parse structured JSON response
+      try {
+        // Strip markdown fences if present
+        let jsonStr = result.trim();
+        if (jsonStr.startsWith('```')) {
+          jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+        }
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.analysis && parsed.suggestions) {
+          setStructuredSuggestion(parsed);
+        } else {
+          setRawSuggestion(result);
+        }
+      } catch {
+        // JSON parse failed — show raw text
+        setRawSuggestion(result);
+      }
+
+      // Mark as LLM reviewed
+      if (onSetLLMReviewed) {
+        onSetLLMReviewed();
+      }
     } catch (err) {
       setSuggestionError(err.message);
     } finally {
@@ -53,10 +94,28 @@ export default function InterviewPanel({
     onUpdateRule({ ...selectedRule, [field]: value });
   };
 
+  /** Import a single suggestion field change */
+  const handleImportSuggestion = (suggestion) => {
+    if (!selectedRule || !onUpdateRule) return;
+    handleFieldChange(suggestion.field, suggestion.suggested);
+  };
+
+  /** Import all suggestions at once */
+  const handleImportAll = () => {
+    if (!structuredSuggestion?.suggestions || !selectedRule || !onUpdateRule) return;
+    let updated = { ...selectedRule };
+    for (const s of structuredSuggestion.suggestions) {
+      updated = { ...updated, [s.field]: s.suggested };
+    }
+    onUpdateRule(updated);
+  };
+
   /** Handle toggling boolean fields */
   const handleToggle = (field) => {
     handleFieldChange(field, !selectedRule[field]);
   };
+
+  const isAccepted = selectedRule?._review_status === 'accepted';
 
   // --- No rule selected ---
   if (!selectedRule) {
@@ -99,6 +158,36 @@ export default function InterviewPanel({
         </span>
       </div>
       <div className="panel-body">
+        {/* Review Action Bar */}
+        <div className="rule-review-actions">
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={handleLLMReview}
+            disabled={isLoadingSuggestion || !llmStatus.configured}
+          >
+            {isLoadingSuggestion ? (
+              <>
+                <span className="loading-spinner" style={{ width: 12, height: 12 }} />
+                Analyzing...
+              </>
+            ) : (
+              'LLM Review'
+            )}
+          </button>
+          <button
+            className={`btn btn-sm ${isAccepted ? 'btn-accepted' : 'btn-accept'}`}
+            onClick={() => onAcceptRule && onAcceptRule()}
+            disabled={isAccepted}
+          >
+            {isAccepted ? 'Accepted' : 'Accept Rule'}
+          </button>
+          {!llmStatus.configured && (
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+              Configure LLM in Settings
+            </span>
+          )}
+        </div>
+
         {/* General */}
         <div className="detail-section">
           <h3>General</h3>
@@ -240,28 +329,13 @@ export default function InterviewPanel({
           </div>
         )}
 
-        {/* LLM Suggestions */}
+        {/* AI Review Section */}
         <div className="detail-section">
-          <h3>AI Suggestions</h3>
-          <button
-            className="btn btn-secondary btn-sm btn-block"
-            onClick={handleGetSuggestion}
-            disabled={isLoadingSuggestion || !llmStatus.configured}
-            style={{ marginBottom: 8 }}
-          >
-            {isLoadingSuggestion ? (
-              <>
-                <span className="loading-spinner" style={{ width: 12, height: 12 }} />
-                Analyzing...
-              </>
-            ) : (
-              'Get AI Suggestions'
-            )}
-          </button>
+          <h3>AI Review</h3>
 
-          {!llmStatus.configured && (
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              Configure an LLM provider in Settings to enable AI suggestions.
+          {llmStatus.configured && !isSanitized && (
+            <p style={{ fontSize: '11px', color: 'var(--warning)', marginBottom: 8 }}>
+              Configuration not sanitized — you will be warned before sending data to an LLM.
             </p>
           )}
 
@@ -271,15 +345,65 @@ export default function InterviewPanel({
             </div>
           )}
 
-          {suggestion && (
+          {/* Structured suggestion display */}
+          {structuredSuggestion && (
+            <div className="suggestion-card" style={{ padding: '10px 12px' }}>
+              <div className="suggestion-analysis">{structuredSuggestion.analysis}</div>
+              {structuredSuggestion.verdict && (
+                <span className={`suggestion-verdict ${structuredSuggestion.verdict}`}>
+                  {structuredSuggestion.verdict === 'looks_good' ? 'Looks Good' : 'Needs Changes'}
+                </span>
+              )}
+
+              {structuredSuggestion.suggestions?.map((s, i) => (
+                <div key={i} className="suggestion-field-change">
+                  <div className="suggestion-field-name">{s.field}</div>
+                  <div className="suggestion-values">
+                    <span className="suggestion-current">{formatValue(s.current)}</span>
+                    <span className="suggestion-arrow">&rarr;</span>
+                    <span className="suggestion-new">{formatValue(s.suggested)}</span>
+                  </div>
+                  <div className="suggestion-reason">{s.reason}</div>
+                  <button
+                    className="suggestion-import-btn"
+                    onClick={() => handleImportSuggestion(s)}
+                  >
+                    Import
+                  </button>
+                </div>
+              ))}
+
+              {structuredSuggestion.suggestions?.length > 1 && (
+                <button
+                  className="btn btn-secondary btn-sm btn-block"
+                  onClick={handleImportAll}
+                  style={{ marginTop: 8 }}
+                >
+                  Import All Suggestions
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Raw text fallback */}
+          {rawSuggestion && !structuredSuggestion && (
             <div className="suggestion-card">
-              <div className="suggestion-content">{suggestion}</div>
+              <div className="suggestion-content">{rawSuggestion}</div>
             </div>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+/** Format a value for display */
+function formatValue(val) {
+  if (val === true) return 'true';
+  if (val === false) return 'false';
+  if (Array.isArray(val)) return val.join(', ');
+  if (val === null || val === undefined) return '(none)';
+  return String(val);
 }
 
 /** Editable text field */

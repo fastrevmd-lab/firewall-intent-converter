@@ -3,6 +3,7 @@
  *
  * Sortable, filterable, editable security rules table.
  * Supports inline cell editing (double-click), add/delete rows.
+ * Shows review status labels (Disabled/Unreviewed/LLM Reviewed/Accepted).
  */
 import React, { useState, useMemo } from 'react';
 
@@ -18,6 +19,7 @@ export default function PolicyTable({
   const [sortField, setSortField] = useState('_rule_index');
   const [sortDir, setSortDir] = useState('asc');
   const [filter, setFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [editingCell, setEditingCell] = useState(null); // { index, field }
   const [editValue, setEditValue] = useState('');
 
@@ -35,12 +37,28 @@ export default function PolicyTable({
     return map;
   }, [warnings]);
 
+  /** Get the review status for display */
   const getRuleStatus = (rule) => {
+    if (rule.disabled) return 'disabled';
+    if (rule._review_status === 'accepted') return 'accepted';
+    if (rule._review_status === 'llm-reviewed') return 'llm-reviewed';
+    return 'unreviewed';
+  };
+
+  /** Get the warning-based sub-status */
+  const getWarningStatus = (rule) => {
     const ruleWarnings = warningsByRule[rule.name] || [];
     if (ruleWarnings.some(w => w.severity === 'unsupported')) return 'unsupported';
     if (ruleWarnings.some(w => w.severity === 'interview_required')) return 'interview';
     if (ruleWarnings.some(w => w.severity === 'warning')) return 'warning';
     return 'clean';
+  };
+
+  const statusLabels = {
+    disabled: 'Disabled',
+    unreviewed: 'Unreviewed',
+    'llm-reviewed': 'LLM Reviewed',
+    accepted: 'Accepted',
   };
 
   const handleSort = (field) => {
@@ -55,6 +73,7 @@ export default function PolicyTable({
   const displayPolicies = useMemo(() => {
     let result = [...policies];
 
+    // Text filter
     if (filter.trim()) {
       const f = filter.toLowerCase();
       result = result.filter(p =>
@@ -66,6 +85,11 @@ export default function PolicyTable({
         p.applications.join(' ').toLowerCase().includes(f) ||
         p.action.toLowerCase().includes(f)
       );
+    }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      result = result.filter(p => getRuleStatus(p) === statusFilter);
     }
 
     result.sort((a, b) => {
@@ -81,7 +105,7 @@ export default function PolicyTable({
     });
 
     return result;
-  }, [policies, filter, sortField, sortDir]);
+  }, [policies, filter, statusFilter, sortField, sortDir]);
 
   /** Start editing a cell */
   const startEdit = (realIndex, field, currentValue) => {
@@ -178,6 +202,17 @@ export default function PolicyTable({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <select
+          className="status-filter-select"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="all">All Status</option>
+          <option value="unreviewed">Unreviewed</option>
+          <option value="llm-reviewed">LLM Reviewed</option>
+          <option value="accepted">Accepted</option>
+          <option value="disabled">Disabled</option>
+        </select>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           {displayPolicies.length} of {policies.length}
         </span>
@@ -205,6 +240,7 @@ export default function PolicyTable({
           <tbody>
             {displayPolicies.map((policy) => {
               const status = getRuleStatus(policy);
+              const warnStatus = getWarningStatus(policy);
               const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
               const realIndex = getRealIndex(policy);
 
@@ -234,7 +270,12 @@ export default function PolicyTable({
                     {policy.log_end && 'E'}
                   </td>
                   <td>
-                    <span className={`status-dot ${status}`} title={status} />
+                    <span className={`status-label status-${status}`}>
+                      {statusLabels[status]}
+                    </span>
+                    {warnStatus !== 'clean' && (
+                      <span className={`status-dot ${warnStatus}`} title={warnStatus} style={{ marginLeft: 4 }} />
+                    )}
                   </td>
                   <td>
                     <button

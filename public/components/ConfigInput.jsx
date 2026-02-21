@@ -6,6 +6,7 @@
  *   - Paste raw XML config text
  *   - Upload a config file (.xml, .txt)
  *   - Select a pre-loaded sample config for testing
+ *   - Sanitize configuration to strip sensitive data
  *   - Show source/target model badges after parsing
  */
 import React, { useRef } from 'react';
@@ -15,8 +16,10 @@ export default function ConfigInput({
   configText,
   onConfigChange,
   onParse,
+  onSanitize,
   isLoading,
   isParsed,
+  isSanitized,
   sourceModel,
   targetModel,
   onOpenModels,
@@ -69,6 +72,16 @@ export default function ConfigInput({
           </div>
         )}
 
+        {/* Sanitization status badge */}
+        {isSanitized && (
+          <div className="sanitize-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            Configuration sanitized — sensitive data replaced with placeholders
+          </div>
+        )}
+
         {/* File upload area */}
         <div
           className="file-upload-area"
@@ -111,11 +124,31 @@ export default function ConfigInput({
           style={{ flex: 1 }}
         />
 
+        {/* Sanitize button — above Parse */}
+        <button
+          className={`btn btn-block ${isSanitized ? 'btn-sanitized' : 'btn-sanitize'}`}
+          onClick={onSanitize}
+          disabled={isLoading || !configText.trim() || isSanitized}
+          title="Remove passwords, hashes, public IPs, usernames — replaced with placeholders"
+        >
+          {isSanitized ? (
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              Configuration Sanitized
+            </>
+          ) : (
+            'Sanitize Configuration'
+          )}
+        </button>
+
         {/* Parse button */}
         <button
           className="btn btn-primary btn-block"
           onClick={onParse}
           disabled={isLoading || !configText.trim()}
+          style={{ marginTop: 4 }}
         >
           {isLoading ? (
             <>
