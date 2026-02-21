@@ -2,3 +2,14 @@ node_modules/
 dist/
 .vite/
 .claude/
+
+# Secrets / API keys — never commit these
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+*.key
+*.pem
+credentials.json
+secrets.json

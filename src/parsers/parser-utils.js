@@ -160,6 +160,32 @@ export function mapPanosAppToJunos(panosApp) {
 }
 
 /**
+ * Maps a PAN-OS security profile type to the corresponding SRX feature and profile name.
+ *
+ * PAN-OS profiles map to SRX as follows:
+ *   virus, wildfire-analysis → UTM anti-virus
+ *   url-filtering            → UTM web-filtering
+ *   file-blocking            → UTM content-filtering
+ *   spyware, vulnerability   → IDP
+ *
+ * @param {string} profileType - PAN-OS profile type (e.g. 'virus', 'spyware')
+ * @param {string} profileName - PAN-OS profile name (e.g. 'default', 'strict')
+ * @returns {{ srxFeature: string, srxType: string, srxProfile: string }}
+ */
+export function mapPanosProfileToSrx(profileType, profileName) {
+  const safeName = sanitizeJunosName(profileName);
+  const mapping = {
+    'virus':              { srxFeature: 'utm', srxType: 'anti-virus',        srxProfile: `junos-av-${safeName}` },
+    'wildfire-analysis':  { srxFeature: 'utm', srxType: 'anti-virus',        srxProfile: `junos-av-${safeName}` },
+    'url-filtering':      { srxFeature: 'utm', srxType: 'web-filtering',     srxProfile: `junos-wf-${safeName}` },
+    'file-blocking':      { srxFeature: 'utm', srxType: 'content-filtering', srxProfile: `junos-cf-${safeName}` },
+    'spyware':            { srxFeature: 'idp', srxType: 'idp-policy',        srxProfile: `idp-${safeName}` },
+    'vulnerability':      { srxFeature: 'idp', srxType: 'idp-policy',        srxProfile: `idp-${safeName}` },
+  };
+  return mapping[profileType] || { srxFeature: 'unknown', srxType: profileType, srxProfile: safeName };
+}
+
+/**
  * Detects the source vendor/format from raw config text.
  * Currently supports PAN-OS XML detection; will be extended for
  * FortiGate, Cisco ASA, and Check Point in later phases.

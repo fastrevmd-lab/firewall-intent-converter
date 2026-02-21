@@ -10,7 +10,7 @@
  * Phase 2+: Full XML with NAT, routing, VPN, UTM.
  */
 
-import { sanitizeJunosName, mapPanosAppToJunos } from '../parsers/parser-utils.js';
+import { sanitizeJunosName, mapPanosAppToJunos, mapPanosProfileToSrx } from '../parsers/parser-utils.js';
 
 /**
  * Builds a Junos XML configuration from the intermediate config.
@@ -22,6 +22,12 @@ import { sanitizeJunosName, mapPanosAppToJunos } from '../parsers/parser-utils.j
 export function buildSrxXml(config, interfaceMappings = {}) {
   const warnings = [];
   const lines = [];
+
+  // Compute UTM/IDP/SecIntel assignment maps (mirrors srx-converter logic)
+  const { utmPolicyMap, utmProfiles } = computeUtmMap(config.security_policies);
+  const { idpPolicyMap } = computeIdpMap(config.security_policies);
+  const blockLists = (config.external_lists || []).filter(e => e.isBlockList);
+  const secIntelEnabled = blockLists.length > 0;
 
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push('<configuration>');
@@ -35,8 +41,11 @@ export function buildSrxXml(config, interfaceMappings = {}) {
   // Address book
   buildAddressBookXml(config.address_objects, config.address_groups, lines);
 
+  // UTM
+  buildUtmXml(utmProfiles, lines);
+
   // Policies
-  buildPoliciesXml(config.security_policies, lines, warnings);
+  buildPoliciesXml(config.security_policies, lines, warnings, { utmPolicyMap, idpPolicyMap, secIntelEnabled });
 
   // NAT
   buildNatXml(config.nat_rules, lines, warnings);
@@ -45,6 +54,11 @@ export function buildSrxXml(config, interfaceMappings = {}) {
 
   // Applications
   buildApplicationsXml(config.service_objects, config.applications, lines);
+
+  // Services (SecIntel)
+  if (secIntelEnabled) {
+    buildSecIntelXml(blockLists, lines);
+  }
 
   lines.push('</configuration>');
 
@@ -155,8 +169,10 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
 // Security Policies XML Builder
 // ---------------------------------------------------------------------------
 
-function buildPoliciesXml(policies, lines, warnings) {
+function buildPoliciesXml(policies, lines, warnings, profileMaps = {}) {
   if (!policies || policies.length === 0) return;
+
+  const { utmPolicyMap = {}, idpPolicyMap = {}, secIntelEnabled = false } = profileMaps;
 
   // Group policies by zone pair
   const zonePairs = {};
@@ -182,15 +198,23 @@ function buildPoliciesXml(policies, lines, warnings) {
 
     for (const policy of pair.policies) {
       const name = sanitizeJunosName(policy.name);
+
+      // Clean EDL addresses from match criteria
+      const secIntelAddrs = new Set(policy._secIntelAddresses || []);
+      let srcAddrs = policy.src_addresses.filter(a => !secIntelAddrs.has(a));
+      let dstAddrs = policy.dst_addresses.filter(a => !secIntelAddrs.has(a));
+      if (srcAddrs.length === 0 && policy.src_addresses.length > 0) srcAddrs = ['any'];
+      if (dstAddrs.length === 0 && policy.dst_addresses.length > 0) dstAddrs = ['any'];
+
       lines.push('        <policy>');
       lines.push(`          <name>${escapeXml(name)}</name>`);
 
       // Match
       lines.push('          <match>');
-      for (const addr of (policy.src_addresses.length > 0 ? policy.src_addresses : ['any'])) {
+      for (const addr of (srcAddrs.length > 0 ? srcAddrs : ['any'])) {
         lines.push(`            <source-address>${escapeXml(sanitizeJunosName(addr))}</source-address>`);
       }
-      for (const addr of (policy.dst_addresses.length > 0 ? policy.dst_addresses : ['any'])) {
+      for (const addr of (dstAddrs.length > 0 ? dstAddrs : ['any'])) {
         lines.push(`            <destination-address>${escapeXml(sanitizeJunosName(addr))}</destination-address>`);
       }
 
@@ -210,6 +234,30 @@ function buildPoliciesXml(policies, lines, warnings) {
         if (policy.log_end) lines.push('              <session-close/>');
         lines.push('            </log>');
       }
+
+      // Application services (UTM / IDP / SecIntel)
+      const hasUtm = !!utmPolicyMap[policy.name];
+      const hasIdp = !!idpPolicyMap[policy.name];
+      const hasProfileGroup = policy.profile_group && Object.keys(policy.security_profiles || {}).length === 0;
+      const hasSecIntel = secIntelEnabled && policy.action === 'allow' &&
+        policy.dst_zones.some(z => z.toLowerCase() === 'untrust');
+
+      if (hasUtm || hasIdp || hasSecIntel || hasProfileGroup) {
+        lines.push('            <application-services>');
+        if (hasUtm) {
+          lines.push(`              <utm-policy>${escapeXml(utmPolicyMap[policy.name])}</utm-policy>`);
+        } else if (hasProfileGroup) {
+          lines.push('              <utm-policy>default-utm</utm-policy>');
+        }
+        if (hasIdp) {
+          lines.push(`              <idp-policy>${escapeXml(idpPolicyMap[policy.name])}</idp-policy>`);
+        }
+        if (hasSecIntel) {
+          lines.push('              <security-intelligence-policy>secIntel-policy</security-intelligence-policy>');
+        }
+        lines.push('            </application-services>');
+      }
+
       lines.push('          </then>');
 
       lines.push('        </policy>');
@@ -277,6 +325,145 @@ function buildApplicationsXml(serviceObjects, applications, lines) {
   }
 
   lines.push('  </applications>');
+}
+
+// ---------------------------------------------------------------------------
+// UTM XML Builder
+// ---------------------------------------------------------------------------
+
+function computeUtmMap(policies) {
+  const utmPolicyMap = {};
+  const utmProfiles = []; // { policyName, profiles: { type → mapped } }
+  if (!policies) return { utmPolicyMap, utmProfiles };
+
+  const utmTypes = ['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking'];
+  const comboMap = new Map();
+  let idx = 0;
+
+  for (const policy of policies) {
+    const sp = policy.security_profiles || {};
+    const utmP = {};
+    for (const t of utmTypes) {
+      if (sp[t]) utmP[t] = sp[t];
+    }
+    if (Object.keys(utmP).length === 0) continue;
+
+    const key = JSON.stringify(utmP);
+    if (!comboMap.has(key)) {
+      idx++;
+      const pName = `utm-policy-${idx}`;
+      const mapped = {};
+      for (const [pt, pv] of Object.entries(utmP)) {
+        mapped[pt] = mapPanosProfileToSrx(pt, pv);
+      }
+      comboMap.set(key, { policyName: pName, profiles: mapped });
+      utmProfiles.push({ policyName: pName, profiles: mapped });
+    }
+    utmPolicyMap[policy.name] = comboMap.get(key).policyName;
+  }
+  return { utmPolicyMap, utmProfiles };
+}
+
+function computeIdpMap(policies) {
+  const idpPolicyMap = {};
+  if (!policies) return { idpPolicyMap };
+
+  const idpTypes = ['spyware', 'vulnerability'];
+  const comboMap = new Map();
+  let idx = 0;
+
+  for (const policy of policies) {
+    const sp = policy.security_profiles || {};
+    const hasIdp = idpTypes.some(t => sp[t]);
+    if (!hasIdp) continue;
+
+    const idpP = {};
+    for (const t of idpTypes) {
+      if (sp[t]) idpP[t] = sp[t];
+    }
+    const key = JSON.stringify(idpP);
+    if (!comboMap.has(key)) {
+      idx++;
+      comboMap.set(key, `idp-policy-${idx}`);
+    }
+    idpPolicyMap[policy.name] = comboMap.get(key);
+  }
+  return { idpPolicyMap };
+}
+
+function buildUtmXml(utmProfiles, lines) {
+  if (!utmProfiles || utmProfiles.length === 0) return;
+
+  lines.push('    <utm>');
+
+  // Feature profiles
+  const emitted = new Set();
+  lines.push('      <feature-profile>');
+  for (const combo of utmProfiles) {
+    for (const mapped of Object.values(combo.profiles)) {
+      if (mapped.srxFeature !== 'utm' || emitted.has(mapped.srxProfile)) continue;
+      emitted.add(mapped.srxProfile);
+
+      if (mapped.srxType === 'anti-virus') {
+        lines.push(`        <anti-virus><profile name="${escapeXml(mapped.srxProfile)}"/></anti-virus>`);
+      } else if (mapped.srxType === 'web-filtering') {
+        lines.push(`        <web-filtering><profile name="${escapeXml(mapped.srxProfile)}" type="juniper-enhanced"/></web-filtering>`);
+      } else if (mapped.srxType === 'content-filtering') {
+        lines.push(`        <content-filtering><profile name="${escapeXml(mapped.srxProfile)}"/></content-filtering>`);
+      }
+    }
+  }
+  lines.push('      </feature-profile>');
+
+  // UTM policies
+  for (const combo of utmProfiles) {
+    lines.push(`      <utm-policy name="${escapeXml(combo.policyName)}">`);
+    for (const mapped of Object.values(combo.profiles)) {
+      if (mapped.srxFeature !== 'utm') continue;
+      if (mapped.srxType === 'anti-virus') {
+        lines.push(`        <anti-virus><http-profile>${escapeXml(mapped.srxProfile)}</http-profile></anti-virus>`);
+      } else if (mapped.srxType === 'web-filtering') {
+        lines.push(`        <web-filtering><http-profile>${escapeXml(mapped.srxProfile)}</http-profile></web-filtering>`);
+      } else if (mapped.srxType === 'content-filtering') {
+        lines.push(`        <content-filtering><rule-set>${escapeXml(mapped.srxProfile)}</rule-set></content-filtering>`);
+      }
+    }
+    lines.push('      </utm-policy>');
+  }
+
+  lines.push('    </utm>');
+}
+
+// ---------------------------------------------------------------------------
+// SecIntel XML Builder
+// ---------------------------------------------------------------------------
+
+function buildSecIntelXml(blockLists, lines) {
+  if (!blockLists || blockLists.length === 0) return;
+
+  lines.push('  <services>');
+  lines.push('    <security-intelligence>');
+
+  lines.push('      <profile>');
+  lines.push('        <name>secIntel-profile</name>');
+  lines.push('        <category>BlockList</category>');
+  blockLists.forEach((bl, i) => {
+    const ruleName = `secIntel-rule-${i + 1}`;
+    lines.push(`        <rule>`);
+    lines.push(`          <name>${escapeXml(ruleName)}</name>`);
+    lines.push('          <match><threat-level>10</threat-level></match>');
+    lines.push('          <then><action>block close</action><log/></then>');
+    lines.push('        </rule>');
+  });
+  lines.push('      </profile>');
+
+  lines.push('      <policy>');
+  lines.push('        <name>secIntel-policy</name>');
+  lines.push('        <profile>secIntel-profile</profile>');
+  lines.push('      </policy>');
+
+  lines.push('    </security-intelligence>');
+  lines.push('  </services>');
 }
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@
  * (clean / warning / unsupported) for the warnings panel.
  */
 
-import { sanitizeJunosName, mapPanosAppToJunos, createWarning } from '../parsers/parser-utils.js';
+import { sanitizeJunosName, mapPanosAppToJunos, mapPanosProfileToSrx, createWarning } from '../parsers/parser-utils.js';
 
 // ---------------------------------------------------------------------------
 // Main Converter Entry Point
@@ -52,7 +52,17 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}) {
   convertServiceObjects(config.service_objects, commands, warnings, summary);
   convertServiceGroups(config.service_groups, commands, warnings, summary);
   convertApplications(config.applications, commands, warnings, summary);
-  convertSecurityPolicies(config.security_policies, commands, warnings, summary);
+
+  // UTM / IDP / SecIntel — must run before security policies to build assignment maps
+  const { utmCommands, utmPolicyMap } = convertUtmPolicies(config.security_policies, warnings);
+  const { idpCommands, idpPolicyMap } = convertIdpPolicies(config.security_policies, warnings);
+  const { secIntelCommands, secIntelEnabled } = convertSecIntel(config.external_lists, config.security_policies, warnings);
+
+  commands.push(...utmCommands);
+  commands.push(...idpCommands);
+  commands.push(...secIntelCommands);
+
+  convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled });
   convertNatRules(config.nat_rules, commands, warnings, summary);
 
   summary.total_warnings = warnings.length;
@@ -306,11 +316,208 @@ function convertApplications(apps, commands, warnings, summary) {
 }
 
 // ---------------------------------------------------------------------------
+// UTM Policy Converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans all security policies for UTM-relevant profiles (virus, wildfire,
+ * url-filtering, file-blocking) and generates SRX UTM feature profiles
+ * and utm-policy definitions.
+ *
+ * Returns { utmCommands, utmPolicyMap } where utmPolicyMap maps
+ * rule name → utm-policy name for attachment in convertSecurityPolicies.
+ */
+function convertUtmPolicies(policies, warnings) {
+  const utmCommands = [];
+  const utmPolicyMap = {};
+  if (!policies || policies.length === 0) return { utmCommands, utmPolicyMap };
+
+  const utmTypes = ['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking'];
+
+  // Collect unique UTM profile combinations per rule
+  const comboMap = new Map(); // serialized combo → { profiles, policyName, rules[] }
+  let comboIndex = 0;
+
+  for (const policy of policies) {
+    const sp = policy.security_profiles || {};
+    const utmProfiles = {};
+    for (const t of utmTypes) {
+      if (sp[t]) utmProfiles[t] = sp[t];
+    }
+    if (Object.keys(utmProfiles).length === 0) continue;
+
+    const key = JSON.stringify(utmProfiles);
+    if (!comboMap.has(key)) {
+      comboIndex++;
+      comboMap.set(key, { profiles: utmProfiles, policyName: `utm-policy-${comboIndex}`, rules: [] });
+    }
+    comboMap.get(key).rules.push(policy.name);
+    utmPolicyMap[policy.name] = comboMap.get(key).policyName;
+  }
+
+  if (comboMap.size === 0) return { utmCommands, utmPolicyMap };
+
+  utmCommands.push('# =============================================');
+  utmCommands.push('# UTM Feature Profiles & Policies');
+  utmCommands.push('# =============================================');
+
+  // Collect all unique feature profiles
+  const emittedProfiles = new Set();
+
+  for (const [, combo] of comboMap) {
+    const pName = combo.policyName;
+
+    for (const [pType, pValue] of Object.entries(combo.profiles)) {
+      const mapped = mapPanosProfileToSrx(pType, pValue);
+      if (mapped.srxFeature !== 'utm') continue;
+
+      // Emit feature profile definition once
+      if (!emittedProfiles.has(mapped.srxProfile)) {
+        emittedProfiles.add(mapped.srxProfile);
+        if (mapped.srxType === 'web-filtering') {
+          utmCommands.push(`set security utm feature-profile ${mapped.srxType} profile ${mapped.srxProfile} type juniper-enhanced`);
+        } else {
+          utmCommands.push(`set security utm feature-profile ${mapped.srxType} profile ${mapped.srxProfile}`);
+        }
+      }
+
+      // Attach to utm-policy
+      if (mapped.srxType === 'anti-virus') {
+        utmCommands.push(`set security utm utm-policy ${pName} anti-virus http-profile ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} anti-virus ftp-upload-profile ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} anti-virus ftp-download-profile ${mapped.srxProfile}`);
+      } else if (mapped.srxType === 'web-filtering') {
+        utmCommands.push(`set security utm utm-policy ${pName} web-filtering http-profile ${mapped.srxProfile}`);
+      } else if (mapped.srxType === 'content-filtering') {
+        utmCommands.push(`set security utm utm-policy ${pName} content-filtering rule-set ${mapped.srxProfile}`);
+      }
+    }
+  }
+
+  utmCommands.push('');
+  return { utmCommands, utmPolicyMap };
+}
+
+// ---------------------------------------------------------------------------
+// IDP Policy Converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans policies for IDP-relevant profiles (spyware, vulnerability) and
+ * generates SRX IDP policy definitions.
+ */
+function convertIdpPolicies(policies, warnings) {
+  const idpCommands = [];
+  const idpPolicyMap = {};
+  if (!policies || policies.length === 0) return { idpCommands, idpPolicyMap };
+
+  const idpTypes = ['spyware', 'vulnerability'];
+  let policyIndex = 0;
+  const comboMap = new Map();
+
+  for (const policy of policies) {
+    const sp = policy.security_profiles || {};
+    const hasIdp = idpTypes.some(t => sp[t]);
+    if (!hasIdp) continue;
+
+    const idpProfiles = {};
+    for (const t of idpTypes) {
+      if (sp[t]) idpProfiles[t] = sp[t];
+    }
+
+    const key = JSON.stringify(idpProfiles);
+    if (!comboMap.has(key)) {
+      policyIndex++;
+      comboMap.set(key, { profiles: idpProfiles, policyName: `idp-policy-${policyIndex}`, rules: [] });
+    }
+    comboMap.get(key).rules.push(policy.name);
+    idpPolicyMap[policy.name] = comboMap.get(key).policyName;
+  }
+
+  if (comboMap.size === 0) return { idpCommands, idpPolicyMap };
+
+  idpCommands.push('# =============================================');
+  idpCommands.push('# IDP Policies');
+  idpCommands.push('# =============================================');
+
+  for (const [, combo] of comboMap) {
+    const pName = combo.policyName;
+    let ruleIdx = 0;
+
+    for (const [pType, pValue] of Object.entries(combo.profiles)) {
+      ruleIdx++;
+      const ruleName = `${pType}-rule-${ruleIdx}`;
+      const base = `security idp idp-policy ${pName} rulebase-ips rule ${ruleName}`;
+
+      idpCommands.push(`set ${base} match attacks predefined-attack-groups "Recommended"`);
+      idpCommands.push(`set ${base} then action recommended`);
+      idpCommands.push(`set ${base} then notification log-attacks`);
+      idpCommands.push(`# IDP rule mapped from PAN-OS ${pType} profile "${pValue}"`);
+    }
+  }
+
+  idpCommands.push('');
+  return { idpCommands, idpPolicyMap };
+}
+
+// ---------------------------------------------------------------------------
+// Security Intelligence (SecIntel) Converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates SRX Security Intelligence configuration from detected EDL block lists.
+ */
+function convertSecIntel(externalLists, policies, warnings) {
+  const secIntelCommands = [];
+  let secIntelEnabled = false;
+  if (!externalLists || externalLists.length === 0) return { secIntelCommands, secIntelEnabled };
+
+  const blockLists = externalLists.filter(e => e.isBlockList);
+  if (blockLists.length === 0) return { secIntelCommands, secIntelEnabled };
+
+  secIntelEnabled = true;
+
+  secIntelCommands.push('# =============================================');
+  secIntelCommands.push('# Security Intelligence (SecIntel)');
+  secIntelCommands.push('# =============================================');
+
+  // Create a SecIntel profile with rules for each block list
+  const profileName = 'secIntel-profile';
+  let ruleIdx = 0;
+
+  for (const bl of blockLists) {
+    ruleIdx++;
+    const ruleName = `secIntel-rule-${ruleIdx}`;
+    const safeName = sanitizeJunosName(bl.name);
+
+    secIntelCommands.push(`# EDL: "${bl.name}" (${bl.isPredefined ? 'predefined' : 'custom'}, type: ${bl.listType})`);
+    secIntelCommands.push(`set services security-intelligence profile ${profileName} category BlockList`);
+    secIntelCommands.push(`set services security-intelligence profile ${profileName} rule ${ruleName} match threat-level 10`);
+    secIntelCommands.push(`set services security-intelligence profile ${profileName} rule ${ruleName} then action block close`);
+    secIntelCommands.push(`set services security-intelligence profile ${profileName} rule ${ruleName} then log`);
+  }
+
+  secIntelCommands.push(`set services security-intelligence policy secIntel-policy ${profileName}`);
+
+  warnings.push(createWarning(
+    'warning',
+    'security-intelligence',
+    `${blockLists.length} EDL block list(s) mapped to SRX SecIntel: [${blockLists.map(b => b.name).join(', ')}]`,
+    'Verify SRX platform supports Security Intelligence and configure feed servers'
+  ));
+
+  secIntelCommands.push('');
+  return { secIntelCommands, secIntelEnabled };
+}
+
+// ---------------------------------------------------------------------------
 // Security Policy Converter
 // ---------------------------------------------------------------------------
 
-function convertSecurityPolicies(policies, commands, warnings, summary) {
+function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}) {
   if (!policies || policies.length === 0) return;
+
+  const { utmPolicyMap = {}, idpPolicyMap = {}, secIntelEnabled = false } = profileMaps;
 
   commands.push('# =============================================');
   commands.push('# Security Policies');
@@ -322,10 +529,18 @@ function convertSecurityPolicies(policies, commands, warnings, summary) {
   for (const policy of policies) {
     const policyName = sanitizeJunosName(policy.name);
 
+    // Clean up EDL block list addresses from match criteria
+    const secIntelAddrs = new Set(policy._secIntelAddresses || []);
+    let srcAddrs = policy.src_addresses.filter(a => !secIntelAddrs.has(a));
+    let dstAddrs = policy.dst_addresses.filter(a => !secIntelAddrs.has(a));
+    if (srcAddrs.length === 0 && policy.src_addresses.length > 0) srcAddrs = ['any'];
+    if (dstAddrs.length === 0 && policy.dst_addresses.length > 0) dstAddrs = ['any'];
+
     // SRX policies are organized by from-zone/to-zone pair.
-    // For "any" zones, SRX uses "global" policy (or we enumerate all zone pairs).
     const srcZones = policy.src_zones.length > 0 ? policy.src_zones : ['any'];
     const dstZones = policy.dst_zones.length > 0 ? policy.dst_zones : ['any'];
+
+    const hasIndividualProfiles = Object.keys(policy.security_profiles || {}).length > 0;
 
     // Handle zone-based policy paths
     for (const srcZone of srcZones) {
@@ -345,14 +560,14 @@ function convertSecurityPolicies(policies, commands, warnings, summary) {
         }
 
         // Match criteria: source addresses
-        const srcAddrs = policy.src_addresses.length > 0 ? policy.src_addresses : ['any'];
-        for (const addr of srcAddrs) {
+        const effectiveSrcAddrs = srcAddrs.length > 0 ? srcAddrs : ['any'];
+        for (const addr of effectiveSrcAddrs) {
           commands.push(`set ${policyPath} match source-address ${sanitizeJunosName(addr)}`);
         }
 
         // Match criteria: destination addresses
-        const dstAddrs = policy.dst_addresses.length > 0 ? policy.dst_addresses : ['any'];
-        for (const addr of dstAddrs) {
+        const effectiveDstAddrs = dstAddrs.length > 0 ? dstAddrs : ['any'];
+        for (const addr of effectiveDstAddrs) {
           commands.push(`set ${policyPath} match destination-address ${sanitizeJunosName(addr)}`);
         }
 
@@ -374,9 +589,25 @@ function convertSecurityPolicies(policies, commands, warnings, summary) {
           commands.push(`set ${policyPath} then log session-close`);
         }
 
-        // Security profile group → add as comment (Phase 2: UTM mapping)
-        if (policy.profile_group) {
-          commands.push(`# NOTE: PAN-OS profile group "${policy.profile_group}" applied to rule "${policy.name}" — requires manual UTM configuration`);
+        // UTM policy attachment
+        if (utmPolicyMap[policy.name]) {
+          commands.push(`set ${policyPath} then permit application-services utm-policy ${utmPolicyMap[policy.name]}`);
+        }
+
+        // IDP policy attachment
+        if (idpPolicyMap[policy.name]) {
+          commands.push(`set ${policyPath} then permit application-services idp-policy ${idpPolicyMap[policy.name]}`);
+        }
+
+        // SecIntel attachment (on permit rules to untrust)
+        if (secIntelEnabled && policy.action === 'allow' && dstZones.some(z => z.toLowerCase() === 'untrust')) {
+          commands.push(`set ${policyPath} then permit application-services security-intelligence-policy secIntel-policy`);
+        }
+
+        // Profile group fallback (if no individual profiles but group exists)
+        if (policy.profile_group && !hasIndividualProfiles) {
+          commands.push(`# NOTE: PAN-OS profile group "${policy.profile_group}" — individual profiles not specified, applied default UTM+IDP`);
+          commands.push(`set ${policyPath} then permit application-services utm-policy default-utm`);
         }
 
         // Disabled rules → deactivate command
