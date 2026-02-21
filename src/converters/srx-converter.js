@@ -1,0 +1,629 @@
+/**
+ * SRX Set-Command Converter
+ * ===========================
+ * Agent: SRX-Expert
+ *
+ * Converts the vendor-neutral intermediate JSON schema into Juniper SRX
+ * set commands (Junos CLI format).
+ *
+ * Output follows Junos hierarchy:
+ *   - security zones
+ *   - security address-book global
+ *   - applications
+ *   - security policies from-zone X to-zone Y policy Z
+ *   - security nat source/destination
+ *   - deactivate statements for disabled rules
+ *
+ * Each generated command is tagged with a conversion status
+ * (clean / warning / unsupported) for the warnings panel.
+ */
+
+import { sanitizeJunosName, mapPanosAppToJunos, createWarning } from '../parsers/parser-utils.js';
+
+// ---------------------------------------------------------------------------
+// Main Converter Entry Point
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts an intermediate config to SRX set commands.
+ *
+ * @param {Object} config - Intermediate JSON config from the parser
+ * @param {Object} [interfaceMappings] - User-defined PAN-OS → SRX interface mappings
+ * @returns {{ commands: string[], warnings: Object[], summary: Object }}
+ */
+export function convertToSrxSetCommands(config, interfaceMappings = {}) {
+  const commands = [];
+  const warnings = [];
+  const summary = {
+    zones_converted: 0,
+    addresses_converted: 0,
+    address_groups_converted: 0,
+    services_converted: 0,
+    policies_converted: 0,
+    nat_rules_converted: 0,
+    total_warnings: 0,
+    unsupported_items: 0,
+  };
+
+  // Generate commands in Junos hierarchy order
+  convertZones(config.zones, commands, warnings, summary, interfaceMappings);
+  convertAddressObjects(config.address_objects, commands, warnings, summary);
+  convertAddressGroups(config.address_groups, commands, warnings, summary);
+  convertServiceObjects(config.service_objects, commands, warnings, summary);
+  convertServiceGroups(config.service_groups, commands, warnings, summary);
+  convertApplications(config.applications, commands, warnings, summary);
+  convertSecurityPolicies(config.security_policies, commands, warnings, summary);
+  convertNatRules(config.nat_rules, commands, warnings, summary);
+
+  summary.total_warnings = warnings.length;
+
+  return { commands, warnings, summary };
+}
+
+// ---------------------------------------------------------------------------
+// Zone Converter
+// ---------------------------------------------------------------------------
+
+function convertZones(zones, commands, warnings, summary, interfaceMappings = {}) {
+  if (!zones || zones.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Security Zones');
+  commands.push('# =============================================');
+
+  for (const zone of zones) {
+    const zoneName = sanitizeJunosName(zone.name);
+    commands.push(`set security zones security-zone ${zoneName}`);
+
+    // Add interfaces to zone
+    for (const iface of zone.interfaces || []) {
+      // Map PAN-OS interface names to SRX convention if needed
+      const srxIface = mapInterfaceName(iface, interfaceMappings);
+      commands.push(`set security zones security-zone ${zoneName} interfaces ${srxIface}`);
+    }
+
+    // Allow host-inbound traffic defaults (common SRX requirement)
+    commands.push(`set security zones security-zone ${zoneName} host-inbound-traffic system-services ping`);
+
+    if (zone.description) {
+      commands.push(`set security zones security-zone ${zoneName} description "${zone.description}"`);
+    }
+
+    summary.zones_converted++;
+  }
+
+  commands.push('');
+}
+
+/**
+ * Maps PAN-OS interface naming (ethernet1/1, ethernet1/1.100) to
+ * SRX interface naming (ge-0/0/0, ge-0/0/0.100).
+ *
+ * This is a best-effort mapping — real deployments will need the user to
+ * confirm interface assignments, which is handled in the interview phase.
+ */
+function mapInterfaceName(panosIface, interfaceMappings = {}) {
+  // Check user-defined mappings first
+  if (interfaceMappings[panosIface]) {
+    const srx = interfaceMappings[panosIface];
+    // Append .0 unit if not already specified
+    return srx.includes('.') ? srx : `${srx}.0`;
+  }
+
+  // Strip VLAN unit for lookup, then re-add
+  const base = panosIface.split('.')[0];
+  const unit = panosIface.includes('.') ? panosIface.split('.')[1] : null;
+  if (interfaceMappings[base]) {
+    const srx = interfaceMappings[base];
+    const srxBase = srx.split('.')[0];
+    return `${srxBase}.${unit || '0'}`;
+  }
+
+  // Fallback: auto-map PAN-OS ethernet naming to SRX ge- naming
+  const match = panosIface.match(/^ethernet(\d+)\/(\d+)(\.(\d+))?$/i);
+  if (match) {
+    const slot = parseInt(match[1]) - 1;
+    const port = parseInt(match[2]) - 1;
+    const u = match[4] || '0';
+    return `ge-0/${slot}/${port}.${u}`;
+  }
+  // If it doesn't match PAN-OS format, return as-is
+  return panosIface;
+}
+
+// ---------------------------------------------------------------------------
+// Address Object Converter
+// ---------------------------------------------------------------------------
+
+function convertAddressObjects(objects, commands, warnings, summary) {
+  if (!objects || objects.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Address Book (Global)');
+  commands.push('# =============================================');
+
+  for (const obj of objects) {
+    const name = sanitizeJunosName(obj.name);
+
+    switch (obj.type) {
+      case 'host':
+      case 'subnet':
+        commands.push(`set security address-book global address ${name} ${obj.value}`);
+        break;
+      case 'range':
+        // SRX supports range-address
+        commands.push(`set security address-book global address ${name} range-address ${obj.value.replace('-', ' to ')}`);
+        break;
+      case 'fqdn':
+        commands.push(`set security address-book global address ${name} dns-name ${obj.value}`);
+        break;
+      case 'wildcard':
+        // No SRX equivalent — add as comment
+        commands.push(`# UNSUPPORTED: Wildcard address "${obj.name}" (${obj.value}) — convert manually`);
+        warnings.push(createWarning('unsupported', `address/${name}`,
+          `Wildcard address "${obj.name}" cannot be converted to SRX format`,
+          'Replace with subnet or range address'));
+        summary.unsupported_items++;
+        continue; // Skip the description line
+      default:
+        commands.push(`# WARNING: Unknown address type "${obj.type}" for "${obj.name}"`);
+        break;
+    }
+
+    if (obj.description) {
+      commands.push(`set security address-book global address ${name} description "${obj.description}"`);
+    }
+
+    summary.addresses_converted++;
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// Address Group Converter
+// ---------------------------------------------------------------------------
+
+function convertAddressGroups(groups, commands, warnings, summary) {
+  if (!groups || groups.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Address Sets (Groups)');
+  commands.push('# =============================================');
+
+  for (const group of groups) {
+    const groupName = sanitizeJunosName(group.name);
+
+    for (const member of group.members) {
+      const memberName = sanitizeJunosName(member);
+      commands.push(`set security address-book global address-set ${groupName} address ${memberName}`);
+    }
+
+    if (group.description) {
+      commands.push(`set security address-book global address-set ${groupName} description "${group.description}"`);
+    }
+
+    summary.address_groups_converted++;
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// Service Object Converter → SRX Applications
+// ---------------------------------------------------------------------------
+
+function convertServiceObjects(services, commands, warnings, summary) {
+  if (!services || services.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Applications (from PAN-OS Service Objects)');
+  commands.push('# =============================================');
+
+  for (const svc of services) {
+    const name = sanitizeJunosName(svc.name);
+    const protocol = svc.protocol || 'tcp';
+    const port = svc.port_range || '';
+
+    if (!port) {
+      commands.push(`# WARNING: Service "${svc.name}" has no port defined — skipping`);
+      warnings.push(createWarning('warning', `service/${name}`,
+        `Service "${svc.name}" has no port range defined`,
+        'Define the port range for this service'));
+      continue;
+    }
+
+    commands.push(`set applications application ${name} protocol ${protocol}`);
+    commands.push(`set applications application ${name} destination-port ${port}`);
+
+    if (svc.source_port) {
+      commands.push(`set applications application ${name} source-port ${svc.source_port}`);
+    }
+
+    if (svc.description) {
+      commands.push(`set applications application ${name} description "${svc.description}"`);
+    }
+
+    summary.services_converted++;
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// Service Group Converter → SRX Application Sets
+// ---------------------------------------------------------------------------
+
+function convertServiceGroups(groups, commands, warnings, summary) {
+  if (!groups || groups.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Application Sets (from PAN-OS Service Groups)');
+  commands.push('# =============================================');
+
+  for (const group of groups) {
+    const groupName = sanitizeJunosName(group.name);
+
+    for (const member of group.members) {
+      const memberName = sanitizeJunosName(member);
+      commands.push(`set applications application-set ${groupName} application ${memberName}`);
+    }
+
+    summary.services_converted++;
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// Custom Application Converter
+// ---------------------------------------------------------------------------
+
+function convertApplications(apps, commands, warnings, summary) {
+  if (!apps || apps.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Custom Applications');
+  commands.push('# =============================================');
+
+  for (const app of apps) {
+    const name = sanitizeJunosName(app.name);
+
+    if (!app.protocol || !app.port) {
+      commands.push(`# INTERVIEW REQUIRED: Custom application "${app.name}" needs protocol/port definition`);
+      continue;
+    }
+
+    commands.push(`set applications application ${name} protocol ${app.protocol}`);
+    commands.push(`set applications application ${name} destination-port ${app.port}`);
+
+    if (app.description) {
+      commands.push(`set applications application ${name} description "${app.description}"`);
+    }
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// Security Policy Converter
+// ---------------------------------------------------------------------------
+
+function convertSecurityPolicies(policies, commands, warnings, summary) {
+  if (!policies || policies.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Security Policies');
+  commands.push('# =============================================');
+
+  // Collect deactivate commands for disabled rules (applied at the end)
+  const deactivateCommands = [];
+
+  for (const policy of policies) {
+    const policyName = sanitizeJunosName(policy.name);
+
+    // SRX policies are organized by from-zone/to-zone pair.
+    // For "any" zones, SRX uses "global" policy (or we enumerate all zone pairs).
+    const srcZones = policy.src_zones.length > 0 ? policy.src_zones : ['any'];
+    const dstZones = policy.dst_zones.length > 0 ? policy.dst_zones : ['any'];
+
+    // Handle zone-based policy paths
+    for (const srcZone of srcZones) {
+      for (const dstZone of dstZones) {
+        const fromZone = sanitizeJunosName(srcZone);
+        const toZone = sanitizeJunosName(dstZone);
+        const policyPath = `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
+
+        // Description (include PAN-OS tags as comments)
+        let fullDescription = policy.description || '';
+        if (policy.tags && policy.tags.length > 0) {
+          const tagNote = `[PAN-OS tags: ${policy.tags.join(', ')}]`;
+          fullDescription = fullDescription ? `${fullDescription} ${tagNote}` : tagNote;
+        }
+        if (fullDescription) {
+          commands.push(`set ${policyPath} description "${fullDescription}"`);
+        }
+
+        // Match criteria: source addresses
+        const srcAddrs = policy.src_addresses.length > 0 ? policy.src_addresses : ['any'];
+        for (const addr of srcAddrs) {
+          commands.push(`set ${policyPath} match source-address ${sanitizeJunosName(addr)}`);
+        }
+
+        // Match criteria: destination addresses
+        const dstAddrs = policy.dst_addresses.length > 0 ? policy.dst_addresses : ['any'];
+        for (const addr of dstAddrs) {
+          commands.push(`set ${policyPath} match destination-address ${sanitizeJunosName(addr)}`);
+        }
+
+        // Match criteria: applications
+        const apps = resolveApplications(policy.applications, policy.services, warnings, policyName);
+        for (const app of apps) {
+          commands.push(`set ${policyPath} match application ${app}`);
+        }
+
+        // Action
+        const srxAction = mapAction(policy.action);
+        commands.push(`set ${policyPath} then ${srxAction}`);
+
+        // Logging
+        if (policy.log_start) {
+          commands.push(`set ${policyPath} then log session-init`);
+        }
+        if (policy.log_end) {
+          commands.push(`set ${policyPath} then log session-close`);
+        }
+
+        // Security profile group → add as comment (Phase 2: UTM mapping)
+        if (policy.profile_group) {
+          commands.push(`# NOTE: PAN-OS profile group "${policy.profile_group}" applied to rule "${policy.name}" — requires manual UTM configuration`);
+        }
+
+        // Disabled rules → deactivate command
+        if (policy.disabled) {
+          deactivateCommands.push(`deactivate ${policyPath}`);
+        }
+      }
+    }
+
+    summary.policies_converted++;
+  }
+
+  // Append deactivate commands at the end
+  if (deactivateCommands.length > 0) {
+    commands.push('');
+    commands.push('# Disabled rules (PAN-OS disabled → Junos deactivate)');
+    commands.push(...deactivateCommands);
+  }
+
+  commands.push('');
+}
+
+/**
+ * Resolves PAN-OS application/service fields to SRX application names.
+ *
+ * PAN-OS allows both "application" and "service" fields on a rule:
+ *   - application: ["web-browsing"] → maps to junos-http
+ *   - service: ["application-default"] → use the application's default port
+ *   - service: ["tcp-8080"] → use the custom service object
+ *
+ * SRX only has "application" in policy match — we unify both fields.
+ */
+function resolveApplications(applications, services, warnings, policyName) {
+  const resolved = [];
+
+  // Map PAN-OS applications to Junos equivalents
+  if (applications && applications.length > 0) {
+    for (const app of applications) {
+      if (app === 'any') {
+        resolved.push('any');
+        continue;
+      }
+      const junosApp = mapPanosAppToJunos(app);
+      if (junosApp) {
+        resolved.push(junosApp);
+      } else {
+        // Custom or unmapped application — use sanitized name and hope
+        // a custom application definition was generated
+        resolved.push(sanitizeJunosName(app));
+      }
+    }
+  }
+
+  // Handle explicit service references (not "application-default")
+  if (services && services.length > 0) {
+    for (const svc of services) {
+      if (svc === 'application-default' || svc === 'any') continue;
+      // Service objects were converted to SRX applications — reference by name
+      resolved.push(sanitizeJunosName(svc));
+    }
+  }
+
+  // If nothing resolved, use "any"
+  if (resolved.length === 0) {
+    resolved.push('any');
+  }
+
+  return [...new Set(resolved)]; // Deduplicate
+}
+
+/**
+ * Maps PAN-OS action to SRX policy action.
+ *
+ * PAN-OS actions: allow, deny, drop, reset-client, reset-server, reset-both
+ * SRX actions: permit, deny, reject
+ */
+function mapAction(panosAction) {
+  switch (panosAction) {
+    case 'allow':
+      return 'permit';
+    case 'deny':
+      return 'deny';
+    case 'drop':
+      return 'deny';
+    case 'reset-client':
+    case 'reset-server':
+    case 'reset-both':
+      return 'reject';
+    default:
+      return 'deny';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NAT Rule Converter
+// ---------------------------------------------------------------------------
+
+function convertNatRules(natRules, commands, warnings, summary) {
+  if (!natRules || natRules.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# NAT Rules');
+  commands.push('# =============================================');
+
+  // Group NAT rules by type for SRX rule-set organization
+  const sourceNatRules = natRules.filter(r => r.type === 'source' || r.type === 'source-and-destination');
+  const destNatRules = natRules.filter(r => r.type === 'destination' || r.type === 'source-and-destination');
+  const staticNatRules = natRules.filter(r => r.type === 'static');
+
+  // --- Source NAT ---
+  if (sourceNatRules.length > 0) {
+    // Group by zone pair for SRX rule-sets
+    const ruleSetGroups = groupByZonePair(sourceNatRules);
+
+    for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
+      const [fromZone, toZone] = zonePair.split('->');
+      const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
+      const ruleSetPath = `security nat source rule-set ${ruleSetName}`;
+
+      commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
+      commands.push(`set ${ruleSetPath} to zone ${sanitizeJunosName(toZone)}`);
+
+      for (const rule of rules) {
+        const ruleName = sanitizeJunosName(rule.name);
+        const rulePath = `${ruleSetPath} rule ${ruleName}`;
+
+        // Match criteria
+        for (const addr of (rule.src_addresses || ['0.0.0.0/0'])) {
+          if (addr === 'any') {
+            commands.push(`set ${rulePath} match source-address 0.0.0.0/0`);
+          } else {
+            commands.push(`set ${rulePath} match source-address ${addr}`);
+          }
+        }
+        for (const addr of (rule.dst_addresses || ['0.0.0.0/0'])) {
+          if (addr === 'any') {
+            commands.push(`set ${rulePath} match destination-address 0.0.0.0/0`);
+          } else {
+            commands.push(`set ${rulePath} match destination-address ${addr}`);
+          }
+        }
+
+        // Translation action
+        if (rule.translated_src) {
+          if (rule.translated_src.type === 'interface') {
+            commands.push(`set ${rulePath} then source-nat interface`);
+          } else if (rule.translated_src.type === 'dynamic-ip-pool') {
+            // Create a source NAT pool
+            const poolName = sanitizeJunosName(`pool-${rule.name}`);
+            for (const addr of rule.translated_src.addresses) {
+              commands.push(`set security nat source pool ${poolName} address ${addr}`);
+            }
+            commands.push(`set ${rulePath} then source-nat pool ${poolName}`);
+          } else if (rule.translated_src.type === 'static') {
+            commands.push(`set ${rulePath} then source-nat pool ${sanitizeJunosName(rule.name)}-static`);
+            commands.push(`set security nat source pool ${sanitizeJunosName(rule.name)}-static address ${rule.translated_src.address}`);
+          }
+        }
+
+        summary.nat_rules_converted++;
+      }
+    }
+  }
+
+  // --- Destination NAT ---
+  if (destNatRules.length > 0) {
+    const ruleSetGroups = groupByZonePair(destNatRules);
+
+    for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
+      const [fromZone, toZone] = zonePair.split('->');
+      const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
+      const ruleSetPath = `security nat destination rule-set ${ruleSetName}`;
+
+      commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
+
+      for (const rule of rules) {
+        const ruleName = sanitizeJunosName(rule.name);
+        const rulePath = `${ruleSetPath} rule ${ruleName}`;
+
+        // Match
+        for (const addr of (rule.dst_addresses || ['0.0.0.0/0'])) {
+          if (addr === 'any') {
+            commands.push(`set ${rulePath} match destination-address 0.0.0.0/0`);
+          } else {
+            commands.push(`set ${rulePath} match destination-address ${addr}`);
+          }
+        }
+
+        // Translation
+        if (rule.translated_dst) {
+          const dstAddr = typeof rule.translated_dst === 'string' ? rule.translated_dst : rule.translated_dst.address || '';
+          if (dstAddr) {
+            const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
+            commands.push(`set security nat destination pool ${poolName} address ${dstAddr}`);
+            if (rule.translated_port) {
+              commands.push(`set security nat destination pool ${poolName} address port ${rule.translated_port}`);
+            }
+            commands.push(`set ${rulePath} then destination-nat pool ${poolName}`);
+          }
+        }
+
+        summary.nat_rules_converted++;
+      }
+    }
+  }
+
+  // --- Static NAT ---
+  if (staticNatRules.length > 0) {
+    commands.push('# Static NAT Rules');
+    for (const rule of staticNatRules) {
+      const ruleName = sanitizeJunosName(rule.name);
+      const ruleSetPath = `security nat static rule-set STATIC-NAT rule ${ruleName}`;
+
+      for (const addr of (rule.dst_addresses || [])) {
+        if (addr !== 'any') {
+          commands.push(`set ${ruleSetPath} match destination-address ${addr}`);
+        }
+      }
+
+      if (rule.translated_src && rule.translated_src.address) {
+        commands.push(`set ${ruleSetPath} then static-nat prefix ${rule.translated_src.address}`);
+      }
+
+      summary.nat_rules_converted++;
+    }
+  }
+
+  commands.push('');
+}
+
+/**
+ * Groups NAT rules by source-zone → destination-zone pair.
+ * SRX organizes NAT rules into rule-sets per zone pair.
+ */
+function groupByZonePair(rules) {
+  const groups = {};
+  for (const rule of rules) {
+    const fromZones = rule.src_zones.length > 0 ? rule.src_zones : ['any'];
+    const toZones = rule.dst_zones.length > 0 ? rule.dst_zones : ['any'];
+
+    for (const from of fromZones) {
+      for (const to of toZones) {
+        const key = `${from}->${to}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(rule);
+      }
+    }
+  }
+  return groups;
+}
