@@ -11,10 +11,10 @@
  */
 import React, { useState, useCallback } from 'react';
 
-export default function SRXOutput({ output, format, summary, isParsed }) {
+export default function SRXOutput({ output, format, summary, isParsed, sanitizationTable }) {
   const [copied, setCopied] = useState(false);
 
-  /** Get the output text based on format */
+  /** Get the raw output text based on format */
   const getOutputText = useCallback(() => {
     if (!output) return '';
     if (format === 'xml') {
@@ -24,9 +24,25 @@ export default function SRXOutput({ output, format, summary, isParsed }) {
     return (output.commands || []).join('\n');
   }, [output, format]);
 
-  /** Copy output to clipboard */
+  /**
+   * Restore sanitized values that should be put back on export.
+   * Currently restores public IPs (marked with restore: true).
+   * Hashes, keys, usernames stay redacted.
+   */
+  const restoreForExport = useCallback((text) => {
+    if (!sanitizationTable || sanitizationTable.length === 0) return text;
+    let result = text;
+    for (const entry of sanitizationTable) {
+      if (entry.restore) {
+        result = result.replaceAll(entry.placeholder, entry.original);
+      }
+    }
+    return result;
+  }, [sanitizationTable]);
+
+  /** Copy output to clipboard — restores public IPs */
   const handleCopy = useCallback(async () => {
-    const text = getOutputText();
+    const text = restoreForExport(getOutputText());
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -42,11 +58,11 @@ export default function SRXOutput({ output, format, summary, isParsed }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
-  }, [getOutputText]);
+  }, [getOutputText, restoreForExport]);
 
-  /** Download output as file */
+  /** Download output as file — restores public IPs */
   const handleDownload = useCallback(() => {
-    const text = getOutputText();
+    const text = restoreForExport(getOutputText());
     const extension = format === 'xml' ? 'xml' : 'txt';
     const mimeType = format === 'xml' ? 'application/xml' : 'text/plain';
     const filename = `srx-config-${new Date().toISOString().slice(0, 10)}.${extension}`;
@@ -58,7 +74,7 @@ export default function SRXOutput({ output, format, summary, isParsed }) {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-  }, [getOutputText, format]);
+  }, [getOutputText, restoreForExport, format]);
 
   // --- Not yet parsed ---
   if (!isParsed) {
