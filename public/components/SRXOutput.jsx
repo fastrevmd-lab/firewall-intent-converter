@@ -1,0 +1,155 @@
+/**
+ * SRXOutput Component
+ *
+ * Bottom panel displaying the generated SRX configuration.
+ * Supports:
+ *   - Set commands view (syntax-highlighted)
+ *   - XML view
+ *   - Download as .txt or .xml
+ *   - Copy to clipboard
+ *   - Conversion summary stats
+ */
+import React, { useState, useCallback } from 'react';
+
+export default function SRXOutput({ output, format, summary, isParsed }) {
+  const [copied, setCopied] = useState(false);
+
+  /** Get the output text based on format */
+  const getOutputText = useCallback(() => {
+    if (!output) return '';
+    if (format === 'xml') {
+      return output.xml || '';
+    }
+    // Set commands format
+    return (output.commands || []).join('\n');
+  }, [output, format]);
+
+  /** Copy output to clipboard */
+  const handleCopy = useCallback(async () => {
+    const text = getOutputText();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [getOutputText]);
+
+  /** Download output as file */
+  const handleDownload = useCallback(() => {
+    const text = getOutputText();
+    const extension = format === 'xml' ? 'xml' : 'txt';
+    const mimeType = format === 'xml' ? 'application/xml' : 'text/plain';
+    const filename = `srx-config-${new Date().toISOString().slice(0, 10)}.${extension}`;
+
+    const blob = new Blob([text], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [getOutputText, format]);
+
+  // --- Not yet parsed ---
+  if (!isParsed) {
+    return (
+      <div className="empty-state">
+        <p>Parse a PAN-OS config and click "Convert to SRX" to see the generated output here.</p>
+      </div>
+    );
+  }
+
+  // --- Parsed but not yet converted ---
+  if (!output) {
+    return (
+      <div className="empty-state">
+        <p>Click "Convert to SRX" in the policy table to generate the SRX configuration.</p>
+      </div>
+    );
+  }
+
+  const outputText = getOutputText();
+
+  return (
+    <div>
+      {/* Conversion summary */}
+      {summary && (
+        <div className="conversion-summary">
+          <SummaryCard label="Zones" value={summary.zones_converted} />
+          <SummaryCard label="Addresses" value={summary.addresses_converted} />
+          <SummaryCard label="Groups" value={summary.address_groups_converted} />
+          <SummaryCard label="Services" value={summary.services_converted} />
+          <SummaryCard label="Policies" value={summary.policies_converted} />
+          <SummaryCard label="NAT Rules" value={summary.nat_rules_converted} />
+          <SummaryCard label="Warnings" value={summary.total_warnings} color="var(--warning)" />
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <button className="btn btn-secondary btn-sm" onClick={handleDownload}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download .{format === 'xml' ? 'xml' : 'txt'}
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
+          {copied ? 'Copied!' : 'Copy to Clipboard'}
+        </button>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', alignSelf: 'center', marginLeft: 'auto' }}>
+          {outputText.split('\n').length} lines
+        </span>
+      </div>
+
+      {/* Output code block */}
+      <pre className="output-code">
+        {format === 'xml' ? (
+          outputText
+        ) : (
+          // Syntax highlighting for set commands
+          outputText.split('\n').map((line, i) => {
+            if (line.startsWith('#')) {
+              return <span key={i} className="comment-line">{line}{'\n'}</span>;
+            }
+            if (line.startsWith('set ') || line.startsWith('deactivate ')) {
+              // Highlight the 'set' or 'deactivate' keyword
+              const firstSpace = line.indexOf(' ');
+              return (
+                <span key={i} className="set-command">
+                  <span className="keyword">{line.substring(0, firstSpace)}</span>
+                  {line.substring(firstSpace)}
+                  {'\n'}
+                </span>
+              );
+            }
+            return <span key={i}>{line}{'\n'}</span>;
+          })
+        )}
+      </pre>
+    </div>
+  );
+}
+
+/** Small summary statistic card */
+function SummaryCard({ label, value, color }) {
+  return (
+    <div className="summary-card">
+      <div className="summary-value" style={color ? { color } : undefined}>
+        {value}
+      </div>
+      <div className="summary-label">{label}</div>
+    </div>
+  );
+}
