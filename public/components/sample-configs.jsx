@@ -579,8 +579,8 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 3: Complex Enterprise
   // =========================================================================
   complex: {
-    label: 'Complex (18 rules)',
-    description: 'Enterprise: 4 zones, custom apps, security profiles, disabled rules, tags, 18 security rules',
+    label: 'Complex (19 rules)',
+    description: 'Enterprise: 4 zones, custom apps, security profiles (UTM/IDP), EDL threat feeds (SecIntel), disabled rules, tags',
     xml: `<?xml version="1.0"?>
 <config version="11.0.0" urldb="paloaltonetworks">
   <devices>
@@ -667,9 +667,29 @@ export const SAMPLE_CONFIGS = {
               <description>ACME Corp metrics collection agent</description>
             </entry>
           </application>
+          <external-list>
+            <entry name="panw-bulletproof-ip-list">
+              <type><predefined-ip><url>panw-bulletproof-ip-list</url></predefined-ip></type>
+            </entry>
+            <entry name="panw-highrisk-ip-list">
+              <type><predefined-ip><url>panw-highrisk-ip-list</url></predefined-ip></type>
+            </entry>
+          </external-list>
           <rulebase>
             <security>
               <rules>
+                <entry name="block-threat-feeds">
+                  <from><member>untrust</member></from>
+                  <to><member>trust</member><member>dmz</member></to>
+                  <source><member>panw-bulletproof-ip-list</member><member>panw-highrisk-ip-list</member></source>
+                  <destination><member>any</member></destination>
+                  <application><member>any</member></application>
+                  <service><member>any</member></service>
+                  <action>deny</action>
+                  <log-start>yes</log-start>
+                  <log-end>yes</log-end>
+                  <description>Block known malicious IPs from PAN-OS EDL feeds</description>
+                </entry>
                 <entry name="web-to-app-tier">
                   <from><member>dmz</member></from>
                   <to><member>trust</member></to>
@@ -682,7 +702,14 @@ export const SAMPLE_CONFIGS = {
                   <log-end>yes</log-end>
                   <tag><member>pci-scope</member><member>tier-link</member></tag>
                   <profile-setting>
-                    <group><member>strict-security</member></group>
+                    <profiles>
+                      <virus><member>default</member></virus>
+                      <spyware><member>strict</member></spyware>
+                      <vulnerability><member>strict</member></vulnerability>
+                      <url-filtering><member>corporate-url-filter</member></url-filtering>
+                      <file-blocking><member>strict file blocking</member></file-blocking>
+                      <wildfire-analysis><member>default</member></wildfire-analysis>
+                    </profiles>
                   </profile-setting>
                 </entry>
                 <entry name="app-to-db-mysql">
@@ -728,7 +755,11 @@ export const SAMPLE_CONFIGS = {
                   <log-start>yes</log-start>
                   <log-end>yes</log-end>
                   <profile-setting>
-                    <group><member>strict-security</member></group>
+                    <profiles>
+                      <virus><member>default</member></virus>
+                      <spyware><member>strict</member></spyware>
+                      <vulnerability><member>strict</member></vulnerability>
+                    </profiles>
                   </profile-setting>
                 </entry>
                 <entry name="inbound-web-http-redirect">

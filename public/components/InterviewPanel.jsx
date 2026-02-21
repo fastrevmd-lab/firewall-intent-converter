@@ -115,6 +115,17 @@ export default function InterviewPanel({
     handleFieldChange(field, !selectedRule[field]);
   };
 
+  /** Handle individual security profile changes */
+  const handleProfileChange = (profileType, value) => {
+    const profiles = { ...(selectedRule.security_profiles || {}) };
+    if (value) {
+      profiles[profileType] = value;
+    } else {
+      delete profiles[profileType];
+    }
+    handleFieldChange('security_profiles', profiles);
+  };
+
   const isAccepted = selectedRule?._review_status === 'accepted';
 
   // --- No rule selected ---
@@ -293,12 +304,30 @@ export default function InterviewPanel({
         {/* Security Profiles */}
         <div className="detail-section">
           <h3>Security Profiles</h3>
-          <EditableField
-            label="Profile Group"
-            value={selectedRule.profile_group || ''}
-            onChange={(v) => handleFieldChange('profile_group', v)}
-            placeholder="None"
-          />
+          {(selectedRule.profile_group || !hasSecurityProfiles(selectedRule)) && (
+            <EditableField
+              label="Profile Group"
+              value={selectedRule.profile_group || ''}
+              onChange={(v) => handleFieldChange('profile_group', v)}
+              placeholder="None"
+            />
+          )}
+          {['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'spyware', 'vulnerability'].map(pType => (
+            <div className="detail-field" key={pType}>
+              <span className="field-label">{formatProfileLabel(pType)}</span>
+              <input
+                className="field-edit-input"
+                value={(selectedRule.security_profiles || {})[pType] || ''}
+                onChange={(e) => handleProfileChange(pType, e.target.value)}
+                placeholder="none"
+              />
+            </div>
+          ))}
+          {selectedRule._secIntelAddresses?.length > 0 && (
+            <div className="secIntel-notice">
+              SecIntel: {selectedRule._secIntelAddresses.join(', ')} &rarr; SRX Security Intelligence
+            </div>
+          )}
         </div>
 
         {/* Tags */}
@@ -395,6 +424,24 @@ export default function InterviewPanel({
       </div>
     </div>
   );
+}
+
+/** Format PAN-OS profile type to friendly label */
+function formatProfileLabel(type) {
+  const labels = {
+    'virus': 'Antivirus',
+    'wildfire-analysis': 'WildFire Analysis',
+    'url-filtering': 'URL Filtering',
+    'file-blocking': 'File Blocking',
+    'spyware': 'Anti-Spyware',
+    'vulnerability': 'Vulnerability Protection',
+  };
+  return labels[type] || type;
+}
+
+/** Check if a rule has any individual security profiles set */
+function hasSecurityProfiles(rule) {
+  return rule.security_profiles && Object.keys(rule.security_profiles).length > 0;
 }
 
 /** Format a value for display */

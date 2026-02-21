@@ -1909,3 +1909,14 @@ html, body, #root {
 .status-filter-select:focus {
   border-color: var(--accent);
 }
+
+/* --- SecIntel Notice (InterviewPanel) --- */
+.secIntel-notice {
+  background: rgba(77, 208, 200, 0.1);
+  border: 1px solid rgba(77, 208, 200, 0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 4px;
+}

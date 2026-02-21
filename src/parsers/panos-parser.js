@@ -106,6 +106,10 @@ export function parsePanosConfig(configText) {
   const applications = parseApplications(vsys, warnings);
   const securityPolicies = parseSecurityRules(vsys, warnings);
   const natRules = parseNatRules(vsys, warnings);
+  const externalLists = parseExternalLists(vsys, warnings);
+
+  // Flag rules that reference EDL block lists for SecIntel mapping
+  flagSecIntelRules(securityPolicies, externalLists, warnings);
 
   const intermediateConfig = {
     zones,
@@ -116,6 +120,7 @@ export function parsePanosConfig(configText) {
     security_policies: securityPolicies,
     nat_rules: natRules,
     applications,
+    external_lists: externalLists,
     vpn_tunnels: [], // Phase 2
     metadata: {
       source_vendor: 'panos',
@@ -447,6 +452,7 @@ function parseSecurityRules(vsys, warnings) {
 
     // Security profile group (AV, IPS, URL filtering, etc.)
     let profileGroup = '';
+    const security_profiles = {};
     if (entry['profile-setting']) {
       const group = getNestedValue(entry, 'profile-setting.group');
       if (group) {
@@ -455,9 +461,32 @@ function parseSecurityRules(vsys, warnings) {
         warnings.push(createWarning(
           'interview_required',
           `security-rule/${name}`,
-          `Rule "${name}" uses security profile group "${profileGroup}" — SRX has limited UTM equivalent`,
-          'Choose whether to insert as comment, attempt UTM mapping, or skip'
+          `Rule "${name}" uses security profile group "${profileGroup}" — will apply default UTM+IDP if no individual profiles specified`,
+          'Expand the profile group into individual profiles for more precise SRX mapping'
         ));
+      }
+
+      // Extract individual security profiles
+      const profiles = getNestedValue(entry, 'profile-setting.profiles');
+      if (profiles) {
+        const profileTypes = ['virus', 'spyware', 'vulnerability', 'url-filtering', 'file-blocking', 'wildfire-analysis'];
+        for (const pType of profileTypes) {
+          if (profiles[pType]) {
+            const members = extractMembers(profiles[pType]);
+            if (members.length > 0) {
+              security_profiles[pType] = members[0]; // PAN-OS uses single profile per type
+            }
+          }
+        }
+        if (Object.keys(security_profiles).length > 0) {
+          const profileList = Object.entries(security_profiles).map(([k, v]) => `${k}:${v}`).join(', ');
+          warnings.push(createWarning(
+            'warning',
+            `security-rule/${name}`,
+            `Rule "${name}" has individual security profiles [${profileList}] — will map to SRX UTM/IDP`,
+            'Verify the generated UTM and IDP policies match your security requirements'
+          ));
+        }
       }
     }
 
@@ -513,6 +542,7 @@ function parseSecurityRules(vsys, warnings) {
       log_start: logStart,
       log_end: logEnd,
       profile_group: profileGroup,
+      security_profiles,
       description,
       tags,
       disabled,
@@ -534,6 +564,102 @@ function parseAction(actionField) {
     return keys[0] || 'deny';
   }
   return 'deny';
+}
+
+// ---------------------------------------------------------------------------
+// External Dynamic Lists (EDL) Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses PAN-OS External Dynamic Lists (EDLs) from the device config.
+ * Detects predefined Palo Alto threat feeds and custom block lists.
+ */
+function parseExternalLists(vsys, warnings) {
+  const edls = [];
+  const externalList = getNestedValue(vsys, 'external-list.entry');
+  if (!externalList) return edls;
+
+  const entries = ensureArray(externalList);
+  for (const entry of entries) {
+    const name = entry['@_name'] || entry.name || 'unnamed-edl';
+    const typeNode = entry.type || {};
+
+    let isPredefined = false;
+    let url = '';
+    let listType = 'ip';
+
+    if (typeNode['predefined-ip']) {
+      isPredefined = true;
+      url = typeNode['predefined-ip'].url || name;
+      listType = 'ip';
+    } else if (typeNode['predefined-url']) {
+      isPredefined = true;
+      url = typeNode['predefined-url'].url || name;
+      listType = 'url';
+    } else if (typeNode.ip) {
+      url = typeNode.ip.url || '';
+      listType = 'ip';
+    } else if (typeNode.domain) {
+      url = typeNode.domain.url || '';
+      listType = 'domain';
+    } else if (typeNode.url) {
+      url = typeNode.url.url || '';
+      listType = 'url';
+    }
+
+    // Heuristic: is this a threat/block list?
+    const blockListPatterns = [
+      'bulletproof', 'highrisk', 'high-risk', 'known-ip', 'malicious',
+      'tor-exit', 'c2', 'command-and-control', 'botnet', 'ransomware',
+      'threat', 'block', 'deny', 'blacklist', 'blocklist',
+    ];
+    const isBlockList = isPredefined || blockListPatterns.some(p =>
+      name.toLowerCase().includes(p) || url.toLowerCase().includes(p)
+    );
+
+    if (isBlockList) {
+      warnings.push(createWarning(
+        'warning',
+        `external-list/${name}`,
+        `EDL "${name}" detected as threat block list — will map to SRX Security Intelligence (SecIntel)`,
+        'Verify the SRX platform supports Security Intelligence feeds'
+      ));
+    }
+
+    edls.push({ name, url, listType, isPredefined, isBlockList });
+  }
+  return edls;
+}
+
+/**
+ * Scans security rules for references to EDL block list addresses.
+ * Adds `_secIntelAddresses` to rules that reference detected block lists.
+ */
+function flagSecIntelRules(policies, externalLists, warnings) {
+  if (!externalLists || externalLists.length === 0) return;
+
+  const blockListNames = new Set(
+    externalLists.filter(e => e.isBlockList).map(e => e.name)
+  );
+  if (blockListNames.size === 0) return;
+
+  for (const policy of policies) {
+    const secIntelAddrs = [];
+    for (const addr of [...policy.src_addresses, ...policy.dst_addresses]) {
+      if (blockListNames.has(addr)) {
+        secIntelAddrs.push(addr);
+      }
+    }
+    if (secIntelAddrs.length > 0) {
+      policy._secIntelAddresses = secIntelAddrs;
+      warnings.push(createWarning(
+        'warning',
+        `security-rule/${policy.name}`,
+        `Rule "${policy.name}" references threat feed(s) [${secIntelAddrs.join(', ')}] — will map to SRX SecIntel`,
+        'EDL addresses will be removed from rule match criteria and replaced with SecIntel policy attachment'
+      ));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
