@@ -7,6 +7,8 @@
  *
  * Throughput metric toggle: L4 Firewall / L7 Application / IPS/Threat
  * Changing the metric re-calculates the recommended SRX model.
+ *
+ * Also collects SRX license level (A1/A2/P1/P2) for feature gating.
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import {
@@ -18,17 +20,20 @@ import {
   THROUGHPUT_LABELS,
   METRIC_PREFIX,
 } from '../data/hardware-db.js';
+import { SRX_LICENSE_TIERS } from '../utils/srx-view-transforms.js';
 
 export default function ModelSelector({
   intermediateConfig,
   sourceModel,
   targetModel,
+  srxLicense,
   onModelSelection,
   onContinue,
   onClose,
 }) {
   const [selectedSource, setSelectedSource] = useState(sourceModel || '');
   const [selectedTarget, setSelectedTarget] = useState(targetModel || '');
+  const [selectedLicense, setSelectedLicense] = useState(srxLicense || '');
   const [detection, setDetection] = useState(null);
   const [throughputMetric, setThroughputMetric] = useState('l7');
   const [recommendedSrx, setRecommendedSrx] = useState(null); // { model, recommended }
@@ -68,6 +73,7 @@ export default function ModelSelector({
     onModelSelection({
       sourceModel: selectedSource || null,
       targetModel: selectedTarget || null,
+      srxLicense: selectedLicense || null,
     });
     onContinue();
   };
@@ -177,6 +183,31 @@ export default function ModelSelector({
               <ModelInfoCard model={targetInfo} vendor="srx" metric={throughputMetric} />
             )}
           </div>
+
+          {/* SRX License Level */}
+          {selectedTarget && (
+            <div className="model-section" style={{ marginTop: 16 }}>
+              <h3 className="model-section-title">SRX License Level</h3>
+              <div className="license-tier-grid">
+                {Object.entries(SRX_LICENSE_TIERS).map(([key, tier]) => (
+                  <label
+                    key={key}
+                    className={`license-tier-card${selectedLicense === key ? ' active' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="srxLicense"
+                      value={key}
+                      checked={selectedLicense === key}
+                      onChange={() => setSelectedLicense(key)}
+                    />
+                    <div className="license-tier-name">{tier.name}</div>
+                    <div className="license-tier-desc">{tier.description}</div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">

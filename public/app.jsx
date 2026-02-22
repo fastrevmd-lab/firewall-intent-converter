@@ -44,6 +44,7 @@ export default function App() {
   // --- Hardware model state ---
   const [sourceModel, setSourceModel] = useState('');
   const [targetModel, setTargetModel] = useState('');
+  const [srxLicense, setSrxLicense] = useState('');
   const [interfaceMappings, setInterfaceMappings] = useState({});
 
   // --- Modal state ---
@@ -52,6 +53,7 @@ export default function App() {
 
   // --- Center panel tab state ---
   const [editTab, setEditTab] = useState('rules');
+  const [platformView, setPlatformView] = useState('panos'); // 'panos' | 'srx'
 
   // --- Review mode state ---
   const [reviewMode, setReviewMode] = useState(false);
@@ -321,22 +323,35 @@ export default function App() {
     );
   }, [selectedRule, intermediateConfig]);
 
-  /** Handle Review button click */
+  /** Handle Review button click — only available in SRX view */
   const handleReviewClick = useCallback(() => {
+    if (platformView !== 'srx') {
+      setError('Switch to the SRX view to start the full-ruleset review.');
+      return;
+    }
     if (!allRulesAccepted) {
       setError(`All rules must be accepted before full review (${reviewProgress.accepted}/${reviewProgress.total} accepted)`);
       return;
     }
     setReviewMode(true);
-  }, [allRulesAccepted, reviewProgress]);
+  }, [allRulesAccepted, reviewProgress, platformView]);
+
+  /** Switch platform view — exit review mode when leaving SRX */
+  const handlePlatformViewChange = useCallback((view) => {
+    setPlatformView(view);
+    if (view !== 'srx' && reviewMode) {
+      setReviewMode(false);
+    }
+  }, [reviewMode]);
 
   // ------------------------------------------------------------------
   // Model / mapping handlers
   // ------------------------------------------------------------------
 
-  const handleModelSelection = useCallback(({ sourceModel: src, targetModel: tgt }) => {
+  const handleModelSelection = useCallback(({ sourceModel: src, targetModel: tgt, srxLicense: lic }) => {
     setSourceModel(src || '');
     setTargetModel(tgt || '');
+    setSrxLicense(lic || '');
   }, []);
 
   const handleModelContinue = useCallback(() => {
@@ -370,6 +385,11 @@ export default function App() {
             {sourceModel && (
               <span className="stat-badge model-badge" onClick={() => setShowModelSelector(true)} style={{ cursor: 'pointer' }}>
                 {sourceModel} <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span> {targetModel || '?'}
+              </span>
+            )}
+            {srxLicense && (
+              <span className="stat-badge license-badge" onClick={() => setShowModelSelector(true)} style={{ cursor: 'pointer' }}>
+                License <span className="stat-value">{srxLicense}</span>
               </span>
             )}
             <span className="stat-badge">
@@ -480,26 +500,42 @@ export default function App() {
         <div className="panel policy-table-panel">
           {intermediateConfig ? (
             <>
-              {/* Tab bar */}
+              {/* Platform view toggle + Tab bar */}
               <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'stretch', padding: 0 }}>
+                {/* Platform view toggle */}
+                <div className="platform-view-bar">
+                  <button
+                    className={`platform-view-btn ${platformView === 'panos' ? 'active' : ''}`}
+                    onClick={() => handlePlatformViewChange('panos')}
+                  >
+                    from {sourceModel || 'PAN-OS'}
+                  </button>
+                  <button
+                    className={`platform-view-btn ${platformView === 'srx' ? 'active' : ''}`}
+                    onClick={() => handlePlatformViewChange('srx')}
+                  >
+                    to {targetModel || 'SRX'}
+                  </button>
+                </div>
+
                 <div className="center-tab-bar">
                   <button
                     className={`center-tab-btn ${editTab === 'rules' ? 'active' : ''}`}
                     onClick={() => setEditTab('rules')}
                   >
-                    Security Rules ({intermediateConfig.security_policies?.length || 0})
+                    {platformView === 'srx' ? 'Security Policies' : 'Security Rules'} ({intermediateConfig.security_policies?.length || 0})
                   </button>
                   <button
                     className={`center-tab-btn ${editTab === 'zones' ? 'active' : ''}`}
                     onClick={() => setEditTab('zones')}
                   >
-                    Zones ({intermediateConfig.zones?.length || 0})
+                    {platformView === 'srx' ? 'Security Zones' : 'Zones'} ({intermediateConfig.zones?.length || 0})
                   </button>
                   <button
                     className={`center-tab-btn ${editTab === 'objects' ? 'active' : ''}`}
                     onClick={() => setEditTab('objects')}
                   >
-                    Objects
+                    {platformView === 'srx' ? 'Address Book' : 'Objects'}
                   </button>
                   <button
                     className={`center-tab-btn ${editTab === 'nat' ? 'active' : ''}`}
@@ -513,9 +549,15 @@ export default function App() {
                     onClick={handleReviewClick}
                     style={{
                       margin: '6px 4px',
-                      opacity: allRulesAccepted ? 1 : 0.5,
+                      opacity: allRulesAccepted && platformView === 'srx' ? 1 : 0.5,
                     }}
-                    title={allRulesAccepted ? 'Start full ruleset review with LLM' : `${reviewProgress.accepted}/${reviewProgress.total} rules accepted`}
+                    title={
+                      platformView !== 'srx'
+                        ? 'Switch to SRX view for full review'
+                        : allRulesAccepted
+                          ? 'Start full ruleset review with LLM'
+                          : `${reviewProgress.accepted}/${reviewProgress.total} rules accepted`
+                    }
                   >
                     Review
                   </button>
@@ -541,24 +583,29 @@ export default function App() {
                     onUpdateRule={handleUpdateRule}
                     onDeleteRule={handleDeleteRule}
                     onAddRule={handleAddRule}
+                    viewMode={platformView}
                   />
                 )}
                 {editTab === 'zones' && (
                   <ZoneEditor
                     zones={intermediateConfig.zones || []}
                     onZonesUpdate={handleZonesUpdate}
+                    viewMode={platformView}
+                    interfaceMappings={interfaceMappings}
                   />
                 )}
                 {editTab === 'objects' && (
                   <ObjectEditor
                     intermediateConfig={intermediateConfig}
                     onConfigUpdate={handleConfigUpdate}
+                    viewMode={platformView}
                   />
                 )}
                 {editTab === 'nat' && (
                   <NATEditor
                     natRules={intermediateConfig.nat_rules || []}
                     onNATUpdate={handleNATUpdate}
+                    viewMode={platformView}
                   />
                 )}
               </div>
@@ -589,6 +636,7 @@ export default function App() {
             intermediateConfig={intermediateConfig}
             onUpdateRule={handleUpdateRule}
             targetModel={targetModel}
+            srxLicense={srxLicense}
             isSanitized={isSanitized}
             llmWarningDismissed={llmWarningDismissed}
             onLLMWarning={() => setShowLLMWarning(true)}
@@ -610,6 +658,8 @@ export default function App() {
               }
             }}
             targetModel={targetModel}
+            srxLicense={srxLicense}
+            viewMode={platformView}
             isSanitized={isSanitized}
             llmWarningDismissed={llmWarningDismissed}
             onLLMWarning={() => setShowLLMWarning(true)}
@@ -689,6 +739,7 @@ export default function App() {
           intermediateConfig={intermediateConfig}
           sourceModel={sourceModel}
           targetModel={targetModel}
+          srxLicense={srxLicense}
           onModelSelection={handleModelSelection}
           onContinue={handleModelContinue}
           onClose={() => setShowModelSelector(false)}

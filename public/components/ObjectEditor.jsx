@@ -12,8 +12,9 @@
 import React, { useState } from 'react';
 import { ChipEditor } from './ZoneEditor.jsx';
 
-export default function ObjectEditor({ intermediateConfig, onConfigUpdate }) {
+export default function ObjectEditor({ intermediateConfig, onConfigUpdate, viewMode }) {
   const [subTab, setSubTab] = useState('addresses');
+  const isSrx = viewMode === 'srx';
 
   const addresses = intermediateConfig?.address_objects || [];
   const groups = intermediateConfig?.address_groups || [];
@@ -28,25 +29,25 @@ export default function ObjectEditor({ intermediateConfig, onConfigUpdate }) {
           className={`sub-tab-btn ${subTab === 'addresses' ? 'active' : ''}`}
           onClick={() => setSubTab('addresses')}
         >
-          Addresses ({addresses.length})
+          {isSrx ? 'Addresses (Global)' : 'Addresses'} ({addresses.length})
         </button>
         <button
           className={`sub-tab-btn ${subTab === 'groups' ? 'active' : ''}`}
           onClick={() => setSubTab('groups')}
         >
-          Groups ({groups.length})
+          {isSrx ? 'Address Sets' : 'Groups'} ({groups.length})
         </button>
         <button
           className={`sub-tab-btn ${subTab === 'services' ? 'active' : ''}`}
           onClick={() => setSubTab('services')}
         >
-          Services ({services.length})
+          {isSrx ? 'Applications' : 'Services'} ({services.length})
         </button>
         <button
           className={`sub-tab-btn ${subTab === 'profiles' ? 'active' : ''}`}
           onClick={() => setSubTab('profiles')}
         >
-          Security Profiles ({secProfiles.length})
+          {isSrx ? 'UTM / IDP Policies' : 'Security Profiles'} ({secProfiles.length})
         </button>
       </div>
 
