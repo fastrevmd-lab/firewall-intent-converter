@@ -4,8 +4,11 @@
  * Sortable, filterable, editable security rules table.
  * Supports inline cell editing (double-click), add/delete rows.
  * Shows review status labels (Disabled/Unreviewed/LLM Reviewed/Accepted).
+ *
+ * viewMode: 'panos' shows PAN-OS terminology, 'srx' shows SRX terminology.
  */
 import React, { useState, useMemo } from 'react';
+import { mapActionToSrx, buildApplicationServices } from '../utils/srx-view-transforms.js';
 
 export default function PolicyTable({
   policies,
@@ -15,6 +18,7 @@ export default function PolicyTable({
   onUpdateRule,
   onDeleteRule,
   onAddRule,
+  viewMode,
 }) {
   const [sortField, setSortField] = useState('_rule_index');
   const [sortDir, setSortDir] = useState('asc');
@@ -22,6 +26,8 @@ export default function PolicyTable({
   const [statusFilter, setStatusFilter] = useState('all');
   const [editingCell, setEditingCell] = useState(null); // { index, field }
   const [editValue, setEditValue] = useState('');
+
+  const isSrx = viewMode === 'srx';
 
   // Build a lookup of warning counts per rule
   const warningsByRule = useMemo(() => {
@@ -59,6 +65,12 @@ export default function PolicyTable({
     unreviewed: 'Unreviewed',
     'llm-reviewed': 'LLM Reviewed',
     accepted: 'Accepted',
+  };
+
+  const warningTooltips = {
+    warning: 'Conversion warning — feature partially supported',
+    unsupported: 'Unsupported — feature not available on target platform',
+    interview: 'Needs review — manual input required to resolve',
   };
 
   const handleSort = (field) => {
@@ -153,8 +165,9 @@ export default function PolicyTable({
     ));
   };
 
-  /** Render security profiles for a policy row */
+  /** Render security profiles / application services for a policy row */
   const renderProfileCell = (policy) => {
+    // PAN-OS view: show profile type abbreviations
     const sp = policy.security_profiles || {};
     const profileEntries = Object.entries(sp);
     const hasGroup = !!policy.profile_group;
@@ -190,6 +203,173 @@ export default function PolicyTable({
     }
 
     return chips;
+  };
+
+  /** SRX view: render Security Subscriptions column (vertical label/value pairs) */
+  const renderSrxSubscriptions = (policy) => {
+    const sp = policy.security_profiles || {};
+    const hasSecIntel = policy._secIntelAddresses?.length > 0;
+    const rows = [];
+
+    // IPS = spyware + vulnerability (maps to IDP on SRX)
+    if (sp.spyware || sp.vulnerability) {
+      const parts = [sp.vulnerability, sp.spyware].filter(Boolean).join(', ');
+      rows.push({ label: 'IPS', cls: 'ips', value: parts });
+    }
+
+    // SecIntel
+    if (hasSecIntel) {
+      rows.push({ label: 'SecIntel', cls: 'secintel', value: 'Security Intelligence' });
+    }
+
+    // Anti-malware = virus + wildfire
+    if (sp.virus || sp['wildfire-analysis']) {
+      const parts = [sp.virus, sp['wildfire-analysis']].filter(Boolean).join(', ');
+      rows.push({ label: 'Anti-malware', cls: 'antimalware', value: parts });
+    }
+
+    // URL Filtering
+    if (sp['url-filtering']) {
+      rows.push({ label: 'URL Filter', cls: 'urlfilter', value: sp['url-filtering'] });
+    }
+
+    // File blocking
+    if (sp['file-blocking']) {
+      rows.push({ label: 'File Block', cls: 'fileblock', value: sp['file-blocking'] });
+    }
+
+    if (rows.length === 0) {
+      return <span className="srx-sub-none">none</span>;
+    }
+
+    return (
+      <div className="srx-subscriptions">
+        {rows.map((r, i) => (
+          <div key={i} className="srx-sub-row">
+            <span className={`srx-sub-label ${r.cls}`}>{r.label}</span>
+            <span className="srx-sub-value">{r.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  /** SRX view: render combined source/destination cell with type icons */
+  const renderSrxSourceDest = (policy, type) => {
+    const zones = type === 'src' ? policy.src_zones : policy.dst_zones;
+    const addrs = type === 'src' ? policy.src_addresses : policy.dst_addresses;
+    const MAX_SHOW = 2;
+
+    return (
+      <div className="srx-cell-stack">
+        {/* Zones */}
+        {(zones || []).length === 0 ? (
+          <div className="srx-cell-row">
+            <span className="srx-cell-icon zone">Z</span>
+            <span className="srx-cell-value" style={{ opacity: 0.5 }}>any</span>
+          </div>
+        ) : (
+          zones.map((z, i) => (
+            <div key={`z-${i}`} className="srx-cell-row">
+              <span className="srx-cell-icon zone">Z</span>
+              <span className="srx-cell-value">{z}</span>
+            </div>
+          ))
+        )}
+        {/* Addresses */}
+        {(addrs || []).length === 0 ? (
+          <div className="srx-cell-row">
+            <span className="srx-cell-icon addr">A</span>
+            <span className="srx-cell-value" style={{ opacity: 0.5 }}>Any</span>
+          </div>
+        ) : (
+          <>
+            {addrs.slice(0, MAX_SHOW).map((a, i) => (
+              <div key={`a-${i}`} className="srx-cell-row">
+                <span className="srx-cell-icon addr">A</span>
+                <span className="srx-cell-value">{a}</span>
+              </div>
+            ))}
+            {addrs.length > MAX_SHOW && (
+              <div className="srx-cell-row">
+                <span className="srx-cell-icon addr">A</span>
+                <span className="srx-cell-extra" title={addrs.slice(MAX_SHOW).join(', ')}>
+                  +{addrs.length - MAX_SHOW}
+                </span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  /** SRX view: render action with circle icon */
+  const renderSrxAction = (policy) => {
+    const action = mapActionToSrx(policy.action);
+    const cls = action === 'permit' ? 'permit' : action === 'reject' ? 'reject' : 'deny';
+    const icon = action === 'permit' ? '\u2713' : action === 'reject' ? '!' : '\u2715';
+    return (
+      <div className="srx-action">
+        <span className={`srx-action-icon ${cls}`}>{icon}</span>
+        <span className={`srx-action-text action-${cls}`}>{action.charAt(0).toUpperCase() + action.slice(1)}</span>
+      </div>
+    );
+  };
+
+  /** SRX view: render applications/services cell with icons */
+  const renderSrxApps = (policy) => {
+    const apps = policy.applications || [];
+    const svcs = (policy.services || []).filter(s => s !== 'application-default');
+    const hasSvcDefault = (policy.services || []).includes('application-default');
+    const MAX_SHOW = 3;
+
+    if (apps.length === 0 && svcs.length === 0) {
+      return (
+        <div className="srx-cell-stack">
+          <div className="srx-cell-row">
+            <span className="srx-cell-icon app">A</span>
+            <span className="srx-cell-value" style={{ opacity: 0.5 }}>any</span>
+          </div>
+          {hasSvcDefault && (
+            <div className="srx-cell-row">
+              <span className="srx-cell-icon svc">S</span>
+              <span className="srx-cell-value" style={{ opacity: 0.5 }}>defaults</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const allItems = [
+      ...apps.map(a => ({ type: 'app', value: a })),
+      ...svcs.map(s => ({ type: 'svc', value: s })),
+    ];
+
+    return (
+      <div className="srx-cell-stack">
+        {allItems.slice(0, MAX_SHOW).map((item, i) => (
+          <div key={i} className="srx-cell-row">
+            <span className={`srx-cell-icon ${item.type}`}>{item.type === 'app' ? 'A' : 'S'}</span>
+            <span className="srx-cell-value">{item.value}</span>
+          </div>
+        ))}
+        {allItems.length > MAX_SHOW && (
+          <div className="srx-cell-row">
+            <span className="srx-cell-icon app">A</span>
+            <span className="srx-cell-extra" title={allItems.slice(MAX_SHOW).map(i => i.value).join(', ')}>
+              +{allItems.length - MAX_SHOW}
+            </span>
+          </div>
+        )}
+        {hasSvcDefault && (
+          <div className="srx-cell-row">
+            <span className="srx-cell-icon svc">S</span>
+            <span className="srx-cell-value" style={{ opacity: 0.5 }}>defaults</span>
+          </div>
+        )}
+      </div>
+    );
   };
 
   /** Render an editable cell */
@@ -230,6 +410,244 @@ export default function PolicyTable({
     return sortDir === 'asc' ? ' \u25B2' : ' \u25BC';
   };
 
+  /** Get display action text based on view mode */
+  const getDisplayAction = (policy) => {
+    if (isSrx) return mapActionToSrx(policy.action);
+    return policy.action;
+  };
+
+  /** Get display log text based on view mode */
+  const getDisplayLog = (policy) => {
+    if (isSrx) {
+      const parts = [];
+      if (policy.log_end) parts.push('close');
+      if (policy.log_start) parts.push('init');
+      return parts.join('/') || '-';
+    }
+    return (
+      <>
+        {policy.log_start && 'S'}
+        {policy.log_end && 'E'}
+      </>
+    );
+  };
+
+  /** Group policies by zone-pair for SRX view */
+  const groupByZonePair = (pols) => {
+    const groups = [];
+    const groupMap = {};
+    for (const p of pols) {
+      const from = (p.src_zones || []).join(', ') || 'any';
+      const to = (p.dst_zones || []).join(', ') || 'any';
+      const key = `${from} → ${to}`;
+      if (!groupMap[key]) {
+        groupMap[key] = { key, from, to, policies: [] };
+        groups.push(groupMap[key]);
+      }
+      groupMap[key].policies.push(p);
+    }
+    return groups;
+  };
+
+  /** Render the PAN-OS view table (original layout) */
+  const renderPanosTable = () => (
+    <table className="policy-table">
+      <thead>
+        <tr>
+          <th onClick={() => handleSort('_rule_index')}>#{sortIndicator('_rule_index')}</th>
+          <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
+          <th onClick={() => handleSort('src_zones')}>Src Zone{sortIndicator('src_zones')}</th>
+          <th onClick={() => handleSort('dst_zones')}>Dst Zone{sortIndicator('dst_zones')}</th>
+          <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
+          <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          <th onClick={() => handleSort('applications')}>App / Service{sortIndicator('applications')}</th>
+          <th>Profiles</th>
+          <th onClick={() => handleSort('action')}>Action{sortIndicator('action')}</th>
+          <th>Log</th>
+          <th>Status</th>
+          <th style={{ width: 36 }}></th>
+        </tr>
+      </thead>
+      <tbody>
+        {displayPolicies.map((policy) => {
+          const status = getRuleStatus(policy);
+          const warnStatus = getWarningStatus(policy);
+          const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
+          const realIndex = getRealIndex(policy);
+
+          return (
+            <tr
+              key={`${policy.name}-${policy._rule_index}`}
+              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''}`}
+              onClick={() => onSelectRule(isSelected ? null : policy)}
+              style={{ cursor: 'pointer' }}
+            >
+              <td>{policy._rule_index}</td>
+              <td title={policy.name}>
+                {renderEditableCell(policy, 'name', policy.name)}
+              </td>
+              <td>{renderEditableCell(policy, 'src_zones', renderCellValues(policy.src_zones))}</td>
+              <td>{renderEditableCell(policy, 'dst_zones', renderCellValues(policy.dst_zones))}</td>
+              <td>{renderEditableCell(policy, 'src_addresses', renderCellValues(policy.src_addresses))}</td>
+              <td>{renderEditableCell(policy, 'dst_addresses', renderCellValues(policy.dst_addresses))}</td>
+              <td>{renderEditableCell(policy, 'applications', renderCellValues([...policy.applications, ...policy.services.filter(s => s !== 'application-default')]))}</td>
+              <td>{renderProfileCell(policy)}</td>
+              <td>
+                <span className={`action-${policy.action === 'allow' ? 'permit' : 'deny'}`}>
+                  {policy.action}
+                </span>
+              </td>
+              <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                {getDisplayLog(policy)}
+              </td>
+              <td>
+                <span className={`status-label status-${status}`}>
+                  {statusLabels[status]}
+                </span>
+                {warnStatus !== 'clean' && (
+                  <span className={`status-dot ${warnStatus}`} data-tooltip={warningTooltips[warnStatus] || warnStatus} style={{ marginLeft: 4 }} />
+                )}
+              </td>
+              <td>
+                <button
+                  className="btn-icon btn-icon-danger"
+                  onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }}
+                  title="Delete rule"
+                >
+                  x
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
+  /** Render the SRX Security Director-style table */
+  const renderSrxTable = () => {
+    const zonePairGroups = groupByZonePair(displayPolicies);
+    const srxColCount = 8;
+
+    return (
+      <table className="policy-table srx-table">
+        <thead>
+          <tr>
+            <th onClick={() => handleSort('_rule_index')} style={{ width: 52 }}>Seq{sortIndicator('_rule_index')}</th>
+            <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
+            <th>Sources</th>
+            <th>Destinations</th>
+            <th onClick={() => handleSort('applications')}>Applications/Services{sortIndicator('applications')}</th>
+            <th onClick={() => handleSort('action')} style={{ width: 100 }}>Action{sortIndicator('action')}</th>
+            <th>Security Subscriptions</th>
+            <th style={{ width: 70 }}>Options</th>
+          </tr>
+        </thead>
+        <tbody>
+          {zonePairGroups.map((group) => (
+            <React.Fragment key={group.key}>
+              {/* Zone-pair group header */}
+              <tr className="srx-zone-group-row">
+                <td colSpan={srxColCount}>
+                  <div className="srx-zone-group-label">
+                    <span className="srx-zone-group-arrow">{'\u25BC'}</span>
+                    <span>ZONE</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{group.from}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{'\u2192'}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{group.to}</span>
+                    <span className="srx-zone-group-count">({group.policies.length} {group.policies.length === 1 ? 'Rule' : 'Rules'})</span>
+                  </div>
+                </td>
+              </tr>
+              {/* Policies in this group */}
+              {group.policies.map((policy) => {
+                const status = getRuleStatus(policy);
+                const warnStatus = getWarningStatus(policy);
+                const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
+                const realIndex = getRealIndex(policy);
+
+                return (
+                  <tr
+                    key={`${policy.name}-${policy._rule_index}`}
+                    className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''}`}
+                    onClick={() => onSelectRule(isSelected ? null : policy)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>
+                      <div className="srx-seq">{policy._rule_index}</div>
+                    </td>
+                    <td>
+                      <div>
+                        {renderEditableCell(policy, 'name', (
+                          <span style={{ fontWeight: 500 }}>{policy.name}</span>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        <span className={`status-label status-${status}`}>
+                          {statusLabels[status]}
+                        </span>
+                        {warnStatus !== 'clean' && (
+                          <span className={`status-dot ${warnStatus}`} data-tooltip={warningTooltips[warnStatus] || warnStatus} style={{ marginLeft: 4 }} />
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div
+                        className="editable-cell"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          startEdit(realIndex, 'src_addresses', policy.src_addresses);
+                        }}
+                        title="Double-click to edit addresses"
+                      >
+                        {renderSrxSourceDest(policy, 'src')}
+                      </div>
+                    </td>
+                    <td>
+                      <div
+                        className="editable-cell"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          startEdit(realIndex, 'dst_addresses', policy.dst_addresses);
+                        }}
+                        title="Double-click to edit addresses"
+                      >
+                        {renderSrxSourceDest(policy, 'dst')}
+                      </div>
+                    </td>
+                    <td>
+                      <div
+                        className="editable-cell"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          startEdit(realIndex, 'applications', policy.applications);
+                        }}
+                        title="Double-click to edit"
+                      >
+                        {renderSrxApps(policy)}
+                      </div>
+                    </td>
+                    <td>{renderSrxAction(policy)}</td>
+                    <td>{renderSrxSubscriptions(policy)}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        className="btn-icon btn-icon-danger"
+                        onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }}
+                        title="Delete policy"
+                      >
+                        x
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Filter bar */}
@@ -237,7 +655,7 @@ export default function PolicyTable({
         <input
           className="filter-input"
           type="text"
-          placeholder="Filter rules..."
+          placeholder={isSrx ? 'Filter policies...' : 'Filter rules...'}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
@@ -255,87 +673,18 @@ export default function PolicyTable({
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           {displayPolicies.length} of {policies.length}
         </span>
-        <button className="btn btn-secondary btn-sm" onClick={onAddRule}>+ Add Rule</button>
+        <button className="btn btn-secondary btn-sm" onClick={onAddRule}>
+          {isSrx ? '+ Add Policy' : '+ Add Rule'}
+        </button>
       </div>
 
       {/* Table */}
       <div className="policy-table-container">
-        <table className="policy-table">
-          <thead>
-            <tr>
-              <th onClick={() => handleSort('_rule_index')}>#{sortIndicator('_rule_index')}</th>
-              <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
-              <th onClick={() => handleSort('src_zones')}>Src Zone{sortIndicator('src_zones')}</th>
-              <th onClick={() => handleSort('dst_zones')}>Dst Zone{sortIndicator('dst_zones')}</th>
-              <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
-              <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
-              <th onClick={() => handleSort('applications')}>App / Service{sortIndicator('applications')}</th>
-              <th>Profiles</th>
-              <th onClick={() => handleSort('action')}>Action{sortIndicator('action')}</th>
-              <th>Log</th>
-              <th>Status</th>
-              <th style={{ width: 36 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayPolicies.map((policy) => {
-              const status = getRuleStatus(policy);
-              const warnStatus = getWarningStatus(policy);
-              const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
-              const realIndex = getRealIndex(policy);
-
-              return (
-                <tr
-                  key={`${policy.name}-${policy._rule_index}`}
-                  className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''}`}
-                  onClick={() => onSelectRule(isSelected ? null : policy)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <td>{policy._rule_index}</td>
-                  <td title={policy.name}>
-                    {renderEditableCell(policy, 'name', policy.name)}
-                  </td>
-                  <td>{renderEditableCell(policy, 'src_zones', renderCellValues(policy.src_zones))}</td>
-                  <td>{renderEditableCell(policy, 'dst_zones', renderCellValues(policy.dst_zones))}</td>
-                  <td>{renderEditableCell(policy, 'src_addresses', renderCellValues(policy.src_addresses))}</td>
-                  <td>{renderEditableCell(policy, 'dst_addresses', renderCellValues(policy.dst_addresses))}</td>
-                  <td>{renderEditableCell(policy, 'applications', renderCellValues([...policy.applications, ...policy.services.filter(s => s !== 'application-default')]))}</td>
-                  <td>{renderProfileCell(policy)}</td>
-                  <td>
-                    <span className={`action-${policy.action === 'allow' ? 'permit' : 'deny'}`}>
-                      {policy.action}
-                    </span>
-                  </td>
-                  <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    {policy.log_start && 'S'}
-                    {policy.log_end && 'E'}
-                  </td>
-                  <td>
-                    <span className={`status-label status-${status}`}>
-                      {statusLabels[status]}
-                    </span>
-                    {warnStatus !== 'clean' && (
-                      <span className={`status-dot ${warnStatus}`} title={warnStatus} style={{ marginLeft: 4 }} />
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      className="btn-icon btn-icon-danger"
-                      onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }}
-                      title="Delete rule"
-                    >
-                      x
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {isSrx ? renderSrxTable() : renderPanosTable()}
 
         {displayPolicies.length === 0 && (
           <div className="empty-state">
-            <p>No security rules match your filter.</p>
+            <p>{isSrx ? 'No security policies match your filter.' : 'No security rules match your filter.'}</p>
           </div>
         )}
       </div>

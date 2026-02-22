@@ -8,7 +8,8 @@
 import React from 'react';
 import { ChipEditor } from './ZoneEditor.jsx';
 
-export default function NATEditor({ natRules, onNATUpdate }) {
+export default function NATEditor({ natRules, onNATUpdate, viewMode }) {
+  const isSrx = viewMode === 'srx';
   const handleChange = (index, field, value) => {
     const updated = natRules.map((rule, i) =>
       i === index ? { ...rule, [field]: value } : rule
@@ -90,9 +91,9 @@ export default function NATEditor({ natRules, onNATUpdate }) {
                   onChange={(e) => handleChange(index, 'type', e.target.value)}
                   style={{ width: 130 }}
                 >
-                  <option value="source">Source NAT</option>
-                  <option value="destination">Destination NAT</option>
-                  <option value="static">Static NAT</option>
+                  <option value="source">{isSrx ? 'source-nat rule-set' : 'Source NAT'}</option>
+                  <option value="destination">{isSrx ? 'destination-nat rule-set' : 'Destination NAT'}</option>
+                  <option value="static">{isSrx ? 'static-nat rule-set' : 'Static NAT'}</option>
                 </select>
                 <button className="btn-icon btn-icon-danger" onClick={() => handleDelete(index)} title="Delete">x</button>
               </div>

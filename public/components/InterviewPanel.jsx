@@ -12,6 +12,14 @@ import {
   getLLMStatus,
   buildStructuredRuleSuggestionPrompt,
 } from '../utils/llm-client.js';
+import {
+  mapActionToSrx,
+  mapActionToPanos,
+  buildApplicationServices,
+  getMinimumLicenseForRule,
+  getLicenseGaps,
+  SRX_LICENSE_TIERS,
+} from '../utils/srx-view-transforms.js';
 
 export default function InterviewPanel({
   selectedRule,
@@ -24,7 +32,10 @@ export default function InterviewPanel({
   onLLMWarning,
   onAcceptRule,
   onSetLLMReviewed,
+  viewMode,
+  srxLicense,
 }) {
+  const isSrx = viewMode === 'srx';
   const [structuredSuggestion, setStructuredSuggestion] = useState(null);
   const [rawSuggestion, setRawSuggestion] = useState('');
   const [isLoadingSuggestion, setIsLoadingSuggestion] = useState(false);
@@ -55,7 +66,8 @@ export default function InterviewPanel({
       const prompt = buildStructuredRuleSuggestionPrompt(
         selectedRule,
         targetModel,
-        intermediateConfig?.zones
+        intermediateConfig?.zones,
+        srxLicense
       );
       const result = await getLLMSuggestion(prompt.user, prompt.system);
 
@@ -133,7 +145,7 @@ export default function InterviewPanel({
     return (
       <div className="panel interview-panel">
         <div className="panel-header">
-          <h2>Rule Details</h2>
+          <h2>{isSrx ? 'Policy Details' : 'Rule Details'}</h2>
         </div>
         <div className="panel-body">
           {intermediateConfig ? (
@@ -141,7 +153,7 @@ export default function InterviewPanel({
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
                 <path d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
               </svg>
-              <p>Click a rule in the table to see its full details, edit fields, and get AI suggestions.</p>
+              <p>Click a {isSrx ? 'policy' : 'rule'} in the table to see its full details, edit fields, and get AI suggestions.</p>
             </div>
           ) : (
             <div className="empty-state">
@@ -163,7 +175,7 @@ export default function InterviewPanel({
   return (
     <div className="panel interview-panel">
       <div className="panel-header">
-        <h2>Rule Details</h2>
+        <h2>{isSrx ? 'Policy Details' : 'Rule Details'}</h2>
         <span style={{ fontSize: '11px', color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
           #{selectedRule._rule_index}
         </span>
@@ -190,7 +202,7 @@ export default function InterviewPanel({
             onClick={() => onAcceptRule && onAcceptRule()}
             disabled={isAccepted}
           >
-            {isAccepted ? 'Accepted' : 'Accept Rule'}
+            {isAccepted ? 'Accepted' : isSrx ? 'Accept Policy' : 'Accept Rule'}
           </button>
           {!llmStatus.configured && (
             <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
@@ -205,18 +217,30 @@ export default function InterviewPanel({
           <EditableField label="Name" value={selectedRule.name} onChange={(v) => handleFieldChange('name', v)} />
           <div className="detail-field">
             <span className="field-label">Action</span>
-            <select
-              className="field-select"
-              value={selectedRule.action}
-              onChange={(e) => handleFieldChange('action', e.target.value)}
-            >
-              <option value="allow">allow</option>
-              <option value="deny">deny</option>
-              <option value="drop">drop</option>
-              <option value="reset-client">reset-client</option>
-              <option value="reset-server">reset-server</option>
-              <option value="reset-both">reset-both</option>
-            </select>
+            {isSrx ? (
+              <select
+                className="field-select"
+                value={mapActionToSrx(selectedRule.action)}
+                onChange={(e) => handleFieldChange('action', mapActionToPanos(e.target.value))}
+              >
+                <option value="permit">permit</option>
+                <option value="deny">deny</option>
+                <option value="reject">reject</option>
+              </select>
+            ) : (
+              <select
+                className="field-select"
+                value={selectedRule.action}
+                onChange={(e) => handleFieldChange('action', e.target.value)}
+              >
+                <option value="allow">allow</option>
+                <option value="deny">deny</option>
+                <option value="drop">drop</option>
+                <option value="reset-client">reset-client</option>
+                <option value="reset-server">reset-server</option>
+                <option value="reset-both">reset-both</option>
+              </select>
+            )}
           </div>
           <div className="detail-field">
             <span className="field-label">Disabled</span>
@@ -241,12 +265,12 @@ export default function InterviewPanel({
         <div className="detail-section">
           <h3>Zones</h3>
           <EditableChipsField
-            label="Source"
+            label={isSrx ? 'From Zone' : 'Source'}
             values={selectedRule.src_zones}
             onChange={(v) => handleFieldChange('src_zones', v)}
           />
           <EditableChipsField
-            label="Destination"
+            label={isSrx ? 'To Zone' : 'Destination'}
             values={selectedRule.dst_zones}
             onChange={(v) => handleFieldChange('dst_zones', v)}
           />
@@ -301,28 +325,78 @@ export default function InterviewPanel({
           </div>
         </div>
 
-        {/* Security Profiles */}
+        {/* Security Profiles / Application Services */}
         <div className="detail-section">
-          <h3>Security Profiles</h3>
-          {(selectedRule.profile_group || !hasSecurityProfiles(selectedRule)) && (
-            <EditableField
-              label="Profile Group"
-              value={selectedRule.profile_group || ''}
-              onChange={(v) => handleFieldChange('profile_group', v)}
-              placeholder="None"
-            />
+          <h3>{isSrx ? 'Application Services' : 'Security Profiles'}</h3>
+
+          {/* License warning */}
+          {isSrx && srxLicense && (() => {
+            const gaps = getLicenseGaps(selectedRule, srxLicense);
+            if (gaps.length === 0) return null;
+            return (
+              <div className="license-warning">
+                This rule requires features beyond your {srxLicense} license:
+                {gaps.map((g, i) => (
+                  <div key={i} style={{ fontSize: 11, marginTop: 2 }}>
+                    {g.feature} requires {g.required}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {isSrx ? (
+            <>
+              {/* SRX view: show application-services summary */}
+              <div className="detail-field">
+                <span className="field-label">Services</span>
+                <div className="field-chips-container">
+                  {(() => {
+                    const appSvcs = buildApplicationServices(selectedRule);
+                    if (appSvcs.length === 0) return <span className="cell-chip" style={{ opacity: 0.4 }}>none</span>;
+                    return appSvcs.map(svc => {
+                      const cls = svc === 'utm-policy' ? 'utm' : svc === 'idp-policy' ? 'idp' : 'secintel';
+                      return <span key={svc} className={`app-svc-chip ${cls}`}>{svc}</span>;
+                    });
+                  })()}
+                </div>
+              </div>
+              {/* Still allow editing individual profiles in SRX view */}
+              {['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'spyware', 'vulnerability'].map(pType => (
+                <div className="detail-field" key={pType}>
+                  <span className="field-label">{formatProfileLabel(pType)}</span>
+                  <input
+                    className="field-edit-input"
+                    value={(selectedRule.security_profiles || {})[pType] || ''}
+                    onChange={(e) => handleProfileChange(pType, e.target.value)}
+                    placeholder="none"
+                  />
+                </div>
+              ))}
+            </>
+          ) : (
+            <>
+              {(selectedRule.profile_group || !hasSecurityProfiles(selectedRule)) && (
+                <EditableField
+                  label="Profile Group"
+                  value={selectedRule.profile_group || ''}
+                  onChange={(v) => handleFieldChange('profile_group', v)}
+                  placeholder="None"
+                />
+              )}
+              {['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'spyware', 'vulnerability'].map(pType => (
+                <div className="detail-field" key={pType}>
+                  <span className="field-label">{formatProfileLabel(pType)}</span>
+                  <input
+                    className="field-edit-input"
+                    value={(selectedRule.security_profiles || {})[pType] || ''}
+                    onChange={(e) => handleProfileChange(pType, e.target.value)}
+                    placeholder="none"
+                  />
+                </div>
+              ))}
+            </>
           )}
-          {['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'spyware', 'vulnerability'].map(pType => (
-            <div className="detail-field" key={pType}>
-              <span className="field-label">{formatProfileLabel(pType)}</span>
-              <input
-                className="field-edit-input"
-                value={(selectedRule.security_profiles || {})[pType] || ''}
-                onChange={(e) => handleProfileChange(pType, e.target.value)}
-                placeholder="none"
-              />
-            </div>
-          ))}
           {selectedRule._secIntelAddresses?.length > 0 && (
             <div className="secIntel-notice">
               SecIntel: {selectedRule._secIntelAddresses.join(', ')} &rarr; SRX Security Intelligence

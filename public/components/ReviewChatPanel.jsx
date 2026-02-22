@@ -21,6 +21,7 @@ export default function ReviewChatPanel({
   llmWarningDismissed,
   onLLMWarning,
   onExitReview,
+  srxLicense,
 }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -56,7 +57,7 @@ export default function ReviewChatPanel({
 
   /** Send the initial full-ruleset review prompt */
   const sendInitialReview = async () => {
-    const prompt = buildFullReviewPrompt(intermediateConfig, targetModel);
+    const prompt = buildFullReviewPrompt(intermediateConfig, targetModel, srxLicense);
     const userMsg = { role: 'user', content: prompt.user };
 
     setMessages([userMsg]);

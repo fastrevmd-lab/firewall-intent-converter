@@ -419,19 +419,60 @@ html, body, #root {
   color: var(--warning);
 }
 
-/* Status indicator */
+/* Status indicator with tooltip */
 .status-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   margin-right: 4px;
+  position: relative;
+  cursor: help;
 }
 
 .status-dot.clean { background: var(--status-clean); }
 .status-dot.warning { background: var(--status-warning); }
 .status-dot.unsupported { background: var(--status-unsupported); }
 .status-dot.interview { background: var(--status-interview); }
+
+/* Tooltip popup on hover */
+.status-dot::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.status-dot::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--border-color);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+}
+.status-dot:hover::after,
+.status-dot:hover::before {
+  opacity: 1;
+}
 
 /* --- Right Panel: Interview / Details --- */
 .interview-panel {
@@ -1954,4 +1995,346 @@ html, body, #root {
   font-size: 11px;
   color: var(--accent);
   margin-top: 4px;
+}
+
+/* =============================================
+   Platform View Toggle (PAN-OS / SRX)
+   ============================================= */
+
+.platform-view-bar {
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px 0;
+  background: var(--bg-secondary);
+  gap: 0;
+}
+
+.platform-view-btn {
+  padding: 6px 20px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.platform-view-btn:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+  border-right: none;
+}
+
+.platform-view-btn:last-child {
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.platform-view-btn.active {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.platform-view-btn:hover:not(.active) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* =============================================
+   License Tier Selection (ModelSelector)
+   ============================================= */
+
+.license-tier-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.license-tier-card {
+  display: block;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.license-tier-card:hover {
+  border-color: var(--accent-dim);
+}
+
+.license-tier-card.active {
+  border-color: var(--accent);
+  background: rgba(77, 208, 200, 0.08);
+}
+
+.license-tier-card input[type="radio"] {
+  display: none;
+}
+
+.license-tier-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.license-tier-card.active .license-tier-name {
+  color: var(--accent);
+}
+
+.license-tier-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* =============================================
+   License Warning Banner (InterviewPanel)
+   ============================================= */
+
+.license-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--warning);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.license-warning strong {
+  font-weight: 600;
+}
+
+/* License badge in navbar */
+.license-badge {
+  color: var(--accent) !important;
+  font-family: var(--font-mono);
+}
+
+/* SRX view label (zone cards) */
+.srx-zone-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+/* Application services chips (SRX view) */
+.app-svc-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  margin: 1px 2px;
+}
+
+.app-svc-chip.utm {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.app-svc-chip.idp {
+  background: rgba(96, 165, 250, 0.15);
+  color: var(--info);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+.app-svc-chip.secintel {
+  background: rgba(77, 208, 200, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(77, 208, 200, 0.3);
+}
+
+/* =============================================================
+   SRX Security Director-style Policy Table
+   Shown when viewMode === 'srx'. Mimics Juniper SD Cloud layout:
+   combined Sources/Destinations, action icons, vertical subscriptions.
+   ============================================================= */
+
+/* SRX table has taller, more spacious rows */
+.policy-table.srx-table td {
+  padding: 10px 10px;
+  vertical-align: top;
+}
+.policy-table.srx-table th {
+  font-size: 11px;
+  padding: 8px 10px;
+}
+
+/* Zone-pair group header row */
+.srx-zone-group-row td {
+  background: var(--bg-tertiary) !important;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 6px 10px !important;
+  border-bottom: 1px solid var(--border-color);
+  cursor: default !important;
+}
+.srx-zone-group-row:hover td {
+  background: var(--bg-tertiary) !important;
+}
+.srx-zone-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.srx-zone-group-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.srx-zone-group-count {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* Combined source/destination cell with type icons */
+.srx-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.srx-cell-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.srx-cell-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.srx-cell-icon.zone {
+  background: rgba(96, 165, 250, 0.2);
+  color: var(--info);
+}
+.srx-cell-icon.addr {
+  background: rgba(77, 208, 200, 0.2);
+  color: var(--accent);
+}
+.srx-cell-icon.app {
+  background: rgba(167, 139, 250, 0.2);
+  color: var(--status-interview);
+}
+.srx-cell-icon.svc {
+  background: rgba(251, 191, 36, 0.2);
+  color: var(--warning);
+}
+.srx-cell-value {
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srx-cell-extra {
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: help;
+}
+
+/* SRX Action cell with circle icon */
+.srx-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.srx-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.srx-action-icon.permit {
+  background: rgba(52, 211, 153, 0.2);
+  color: var(--success);
+  border: 1.5px solid rgba(52, 211, 153, 0.5);
+}
+.srx-action-icon.deny {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--error);
+  border: 1.5px solid rgba(248, 113, 113, 0.5);
+}
+.srx-action-icon.reject {
+  background: rgba(251, 191, 36, 0.2);
+  color: var(--warning);
+  border: 1.5px solid rgba(251, 191, 36, 0.5);
+}
+.srx-action-text {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* SRX Security Subscriptions (vertical list) */
+.srx-subscriptions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.srx-sub-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.srx-sub-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.srx-sub-label.ips { color: var(--info); }
+.srx-sub-label.secintel { color: var(--accent); }
+.srx-sub-label.antimalware { color: var(--success); }
+.srx-sub-label.urlfilter { color: var(--warning); }
+.srx-sub-label.fileblock { color: var(--status-interview); }
+.srx-sub-value {
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srx-sub-none {
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+/* Seq cell in SRX view */
+.srx-seq {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.srx-seq-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 400;
 }

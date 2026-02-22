@@ -4,10 +4,14 @@
  * Editable zone panel for the "Zones" tab in the center panel.
  * Each zone shows: name (editable), description (editable), interfaces (chip editor).
  * Supports adding new zones and deleting existing ones.
+ *
+ * viewMode: 'panos' shows PAN-OS terms, 'srx' shows SRX security-zone terms.
  */
 import React, { useState } from 'react';
+import { mapInterfaceToSrx } from '../utils/srx-view-transforms.js';
 
-export default function ZoneEditor({ zones, onZonesUpdate }) {
+export default function ZoneEditor({ zones, onZonesUpdate, viewMode, interfaceMappings }) {
+  const isSrx = viewMode === 'srx';
   const [editingZone, setEditingZone] = useState(null); // index of zone being edited
 
   /** Update a single field on a zone */
@@ -59,47 +63,96 @@ export default function ZoneEditor({ zones, onZonesUpdate }) {
   return (
     <div className="panel-body" style={{ padding: 0 }}>
       <div className="editor-list">
-        {zones.map((zone, index) => (
-          <div key={index} className="editor-card">
-            <div className="editor-card-header">
-              <input
-                className="editor-inline-input editor-name-input"
-                value={zone.name}
-                onChange={(e) => handleFieldChange(index, 'name', e.target.value)}
-                placeholder="Zone name"
-              />
-              <button
-                className="btn-icon btn-icon-danger"
-                onClick={() => handleDelete(index)}
-                title="Delete zone"
-              >
-                x
-              </button>
-            </div>
+        {zones.map((zone, index) => {
+          // In SRX view, display mapped interface names
+          const displayInterfaces = isSrx
+            ? zone.interfaces.map(iface => mapInterfaceToSrx(iface, interfaceMappings || {}))
+            : zone.interfaces;
 
-            <div className="editor-card-body">
-              <div className="editor-field">
-                <label>Description</label>
-                <input
-                  className="editor-inline-input"
-                  value={zone.description || ''}
-                  onChange={(e) => handleFieldChange(index, 'description', e.target.value)}
-                  placeholder="Optional description"
-                />
+          return (
+            <div key={index} className="editor-card">
+              <div className="editor-card-header">
+                <div style={{ flex: 1 }}>
+                  {isSrx && <div className="srx-zone-label">security-zone</div>}
+                  <input
+                    className="editor-inline-input editor-name-input"
+                    value={zone.name}
+                    onChange={(e) => handleFieldChange(index, 'name', e.target.value)}
+                    placeholder="Zone name"
+                  />
+                </div>
+                <button
+                  className="btn-icon btn-icon-danger"
+                  onClick={() => handleDelete(index)}
+                  title="Delete zone"
+                >
+                  x
+                </button>
               </div>
 
-              <div className="editor-field">
-                <label>Interfaces</label>
-                <ChipEditor
-                  values={zone.interfaces}
-                  onAdd={(val) => handleAddInterface(index, val)}
-                  onRemove={(val) => handleRemoveInterface(index, val)}
-                  placeholder="Add interface..."
-                />
+              <div className="editor-card-body">
+                <div className="editor-field">
+                  <label>Description</label>
+                  <input
+                    className="editor-inline-input"
+                    value={zone.description || ''}
+                    onChange={(e) => handleFieldChange(index, 'description', e.target.value)}
+                    placeholder="Optional description"
+                  />
+                </div>
+
+                <div className="editor-field">
+                  <label>{isSrx ? 'Interfaces (SRX)' : 'Interfaces'}</label>
+                  {isSrx ? (
+                    <div className="chip-editor">
+                      {displayInterfaces.map((iface, i) => (
+                        <span key={i} className="chip" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                          {iface}
+                          <button className="chip-remove" onClick={() => handleRemoveInterface(index, zone.interfaces[i])}>x</button>
+                        </span>
+                      ))}
+                      <input
+                        className="chip-input"
+                        placeholder="Add interface..."
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && e.target.value.trim()) {
+                            handleAddInterface(index, e.target.value.trim());
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <ChipEditor
+                      values={zone.interfaces}
+                      onAdd={(val) => handleAddInterface(index, val)}
+                      onRemove={(val) => handleRemoveInterface(index, val)}
+                      placeholder="Add interface..."
+                    />
+                  )}
+                </div>
+
+                {isSrx && (
+                  <div className="editor-field">
+                    <label>host-inbound-traffic</label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-secondary)' }}>
+                      {['ping', 'ssh', 'https', 'dhcp', 'dns', 'snmp'].map(svc => (
+                        <label key={svc} style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            defaultChecked={svc === 'ping'}
+                            style={{ accentColor: 'var(--accent)' }}
+                          />
+                          {svc}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ padding: '12px 16px' }}>

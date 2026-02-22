@@ -528,9 +528,25 @@ Provide 2-4 specific, actionable suggestions for this rule. Focus on security be
 /**
  * Builds a structured rule suggestion prompt that instructs the LLM to respond with JSON.
  */
-export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones) {
+export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense) {
   const zoneList = (zones || []).map(z => z.name).join(', ');
   const systemPrompt = loadSystemPrompt();
+
+  const licenseContext = srxLicense ? `
+
+LICENSE CONTEXT:
+The target SRX has license level: ${srxLicense}
+- A1: AppID, basic IPS, stateful firewall
+- A2: A1 + advanced IPS, AppQoS
+- P1: A2 + UTM (antivirus, anti-spam, web filtering), SecIntel
+- P2: P1 + ATP Cloud, encrypted traffic analysis
+If this rule uses security features requiring a higher license tier than ${srxLicense}, flag this in your analysis and suggest alternatives available at the ${srxLicense} tier.` : '';
+
+  // Build security profiles summary
+  const profileEntries = Object.entries(rule.security_profiles || {});
+  const profileSummary = profileEntries.length > 0
+    ? profileEntries.map(([t, n]) => `${t}=${n}`).join(', ')
+    : rule.profile_group || '(none)';
 
   return {
     system: systemPrompt + `
@@ -558,9 +574,9 @@ Valid field names and their types:
 - profile_group (string), tags (array)
 
 For array fields, use JSON arrays like ["value1", "value2"].
-For boolean fields, use true or false (no quotes).`,
+For boolean fields, use true or false (no quotes).` + licenseContext,
 
-    user: `Review this firewall security rule for a PAN-OS to SRX (${targetModel || 'SRX'}) migration:
+    user: `Review this firewall security rule for a PAN-OS to SRX (${targetModel || 'SRX'}) migration${srxLicense ? ` (license: ${srxLicense})` : ''}:
 
 Rule: "${rule.name}"
   Action: ${rule.action}
@@ -573,7 +589,7 @@ Rule: "${rule.name}"
   Logging: start=${rule.log_start}, end=${rule.log_end}
   Disabled: ${rule.disabled}
   Description: ${rule.description || '(none)'}
-  Profile group: ${rule.profile_group || '(none)'}
+  Security profiles: ${profileSummary}
   Tags: ${(rule.tags || []).join(', ') || '(none)'}
 
 Available zones: ${zoneList}
@@ -629,8 +645,23 @@ Provide 3-4 high-level migration recommendations and potential issues to watch f
 /**
  * Builds the initial prompt for full-ruleset review chat.
  */
-export function buildFullReviewPrompt(intermediateConfig, targetModel) {
+export function buildFullReviewPrompt(intermediateConfig, targetModel, srxLicense) {
   const policies = intermediateConfig?.security_policies || [];
+
+  const licenseAnalysis = srxLicense ? `
+
+LICENSE TIER ANALYSIS:
+The target SRX has license level: ${srxLicense}
+- A1: AppID, basic IPS, stateful firewall
+- A2: A1 + advanced IPS, AppQoS
+- P1: A2 + UTM (antivirus, anti-spam, web filtering), SecIntel
+- P2: P1 + ATP Cloud, encrypted traffic analysis
+Flag any rules that use security profiles requiring a higher license tier than ${srxLicense}. Specifically:
+- Antivirus/URL-filtering/file-blocking/anti-spam require P1+
+- WildFire/ATP Cloud features require P2
+- Advanced IPS requires A2+
+Suggest alternatives or configuration adjustments for features not covered by the ${srxLicense} license.` : '';
+
   const systemPrompt = loadSystemPrompt() + `
 
 When reviewing the full ruleset, also analyze:
@@ -646,7 +677,7 @@ When suggesting changes to specific rules, include a JSON code block with this f
 {"rule_name": "the-rule-name", "field": "field_name", "current": "current_value", "suggested": "new_value", "reason": "Why this change"}
 \`\`\`
 
-You may include multiple JSON blocks in your response, interspersed with explanatory text.`;
+You may include multiple JSON blocks in your response, interspersed with explanatory text.` + licenseAnalysis;
 
   // Build compact one-line-per-rule summary
   const ruleSummary = policies.map((r, i) => {
@@ -654,18 +685,20 @@ You may include multiple JSON blocks in your response, interspersed with explana
     const dst = (r.dst_zones || []).join(',') || 'any';
     const apps = (r.applications || []).join(',') || 'any';
     const svcs = (r.services || []).join(',') || 'any';
+    const profileInfo = Object.entries(r.security_profiles || {}).map(([t, n]) => `${t}=${n}`).join(',');
     const flags = [
       r.disabled ? 'DISABLED' : '',
       r.log_end ? 'logE' : '',
       r.log_start ? 'logS' : '',
       r.profile_group ? `prof=${r.profile_group}` : '',
+      profileInfo ? `profiles=[${profileInfo}]` : '',
     ].filter(Boolean).join(' ');
     return `${i + 1}. [${r.action}] "${r.name}" ${src}->${dst} apps=${apps} svc=${svcs} ${flags}`;
   }).join('\n');
 
   return {
     system: systemPrompt,
-    user: `Review this complete firewall ruleset (${policies.length} rules) for a PAN-OS to SRX (${targetModel || 'SRX'}) migration. Identify issues, suggest improvements, and flag any security concerns.
+    user: `Review this complete firewall ruleset (${policies.length} rules) for a PAN-OS to SRX (${targetModel || 'SRX'}) migration.${srxLicense ? ` Target license: ${srxLicense}.` : ''} Identify issues, suggest improvements, and flag any security concerns.
 
 Ruleset:
 ${ruleSummary}
