@@ -847,8 +847,9 @@ export function getThroughputDisplay(model, metric = 'l7') {
  * SRX:    L4 = Firewall (IMIX), L7 = NGFW/AppSecure, Threat = IPS/Threat
  */
 export const THROUGHPUT_LABELS = {
-  panos: { l4: 'L4 Firewall', l7: 'L7 App-ID', threat: 'Threat Prevention' },
-  srx:   { l4: 'L4 Firewall (IMIX)', l7: 'L7 NGFW', threat: 'IPS/Threat' },
+  panos:     { l4: 'L4 Firewall', l7: 'L7 App-ID', threat: 'Threat Prevention' },
+  srx:       { l4: 'L4 Firewall (IMIX)', l7: 'L7 NGFW', threat: 'IPS/Threat' },
+  fortigate: { l4: 'L4 Firewall', l7: 'NGFW', threat: 'Threat Protection' },
 };
 
 /** Short metric prefix for dropdown labels */
@@ -963,6 +964,437 @@ export function detectPanosModel(intermediateConfig) {
  */
 export const SRX_SOURCE_MODELS = { ...SRX_EOS_MODELS, ...SRX_MODELS };
 
+
+// ---------------------------------------------------------------------------
+// FortiGate / FortiNet Firewall Models
+// ---------------------------------------------------------------------------
+
+function genFortiPorts(names, type, speed) {
+  return names.map(n => ({ name: n, type, speed, label: n }));
+}
+
+function genFortiNumberedPorts(prefix, start, end, type, speed) {
+  const ports = [];
+  for (let i = start; i <= end; i++) {
+    const name = `${prefix}${i}`;
+    ports.push({ name, type, speed, label: name });
+  }
+  return ports;
+}
+
+/**
+ * EOS / Legacy FortiGate models (E-series and older).
+ * Common migration sources.
+ */
+export const FORTIGATE_EOS_MODELS = {
+  'FG-30E': {
+    name: 'FG-30E', tier: 'branch', eol: true,
+    description: 'Entry-level branch firewall (End of Order)',
+    throughput: { l4: '950 Mbps', l7: '150 Mbps', threat: '150 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 4, 'copper', '1G'),
+    ],
+  },
+  'FG-50E': {
+    name: 'FG-50E', tier: 'branch', eol: true,
+    description: 'Branch firewall with 7 GE ports (End of Order)',
+    throughput: { l4: '2.5 Gbps', l7: '350 Mbps', threat: '350 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 5, 'copper', '1G'),
+    ],
+  },
+  'FG-60E': {
+    name: 'FG-60E', tier: 'branch', eol: true,
+    description: 'Branch firewall with 10 GE ports (End of Order)',
+    throughput: { l4: '3 Gbps', l7: '300 Mbps', threat: '300 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 7, 'copper', '1G'),
+    ],
+  },
+  'FG-80E': {
+    name: 'FG-80E', tier: 'branch', eol: true,
+    description: 'Branch firewall with 14 ports (End of Order)',
+    throughput: { l4: '4 Gbps', l7: '360 Mbps', threat: '360 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz1', 'dmz2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 8, 'copper', '1G'),
+      ...genFortiPorts(['wan1-sfp', 'wan2-sfp'], 'SFP', '1G'),
+    ],
+  },
+  'FG-100E': {
+    name: 'FG-100E', tier: 'midrange', eol: true,
+    description: 'Mid-range firewall with 20 GE ports (End of Order)',
+    throughput: { l4: '7.4 Gbps', l7: '800 Mbps', threat: '800 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz', 'mgmt', 'ha1', 'ha2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 14, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 2, 'SFP', '1G'),
+    ],
+  },
+  'FG-200E': {
+    name: 'FG-200E', tier: 'midrange', eol: true,
+    description: 'Mid-range firewall with 18 GE + 4 SFP (End of Order)',
+    throughput: { l4: '12 Gbps', l7: '1.8 Gbps', threat: '1.8 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt', 'ha'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 4, 'SFP', '1G'),
+    ],
+  },
+  'FG-300E': {
+    name: 'FG-300E', tier: 'midrange', eol: true,
+    description: 'Mid-range firewall with 10GE (End of Order)',
+    throughput: { l4: '32 Gbps', l7: '3.5 Gbps', threat: '3.5 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt', 'ha'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 4, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+    ],
+  },
+  'FG-500E': {
+    name: 'FG-500E', tier: 'enterprise', eol: true,
+    description: 'Enterprise firewall with 10GE (End of Order)',
+    throughput: { l4: '36 Gbps', l7: '4.7 Gbps', threat: '4.7 Gbps' },
+    ports: [
+      ...genFortiNumberedPorts('port', 1, 8, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+    ],
+  },
+};
+
+/**
+ * Current FortiGate models (F-series and G-series).
+ */
+export const FORTIGATE_MODELS = {
+  // ---- Entry-Level / Branch (F-Series) ----
+  'FG-40F': {
+    name: 'FG-40F', tier: 'branch',
+    description: 'Entry-level branch firewall',
+    throughput: { l4: '5 Gbps', l7: '800 Mbps', threat: '600 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 4, 'copper', '1G'),
+    ],
+  },
+  'FG-60F': {
+    name: 'FG-60F', tier: 'branch',
+    description: 'Branch firewall with 10 GE ports',
+    throughput: { l4: '10 Gbps', l7: '1 Gbps', threat: '700 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 7, 'copper', '1G'),
+    ],
+  },
+  'FG-70F': {
+    name: 'FG-70F', tier: 'branch',
+    description: 'Branch firewall with 10 GE ports + FortiLink',
+    throughput: { l4: '10 Gbps', l7: '1 Gbps', threat: '800 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 5, 'copper', '1G'),
+      ...genFortiPorts(['a', 'b'], 'copper', '1G'),
+    ],
+  },
+  'FG-80F': {
+    name: 'FG-80F', tier: 'branch',
+    description: 'Branch firewall with SFP combo WAN',
+    throughput: { l4: '10 Gbps', l7: '1 Gbps', threat: '900 Mbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 6, 'copper', '1G'),
+      ...genFortiPorts(['wan1-sfp', 'wan2-sfp'], 'SFP', '1G'),
+    ],
+  },
+
+  // ---- Entry-Level / Branch (G-Series) ----
+  'FG-70G': {
+    name: 'FG-70G', tier: 'branch', current: true,
+    description: 'G-series branch firewall',
+    throughput: { l4: '12 Gbps', l7: '1.5 Gbps', threat: '1.3 Gbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz'], 'copper', '1G'),
+      ...genFortiNumberedPorts('internal', 1, 7, 'copper', '1G'),
+    ],
+  },
+  'FG-90G': {
+    name: 'FG-90G', tier: 'branch', current: true,
+    description: 'G-series branch firewall with 10G WAN',
+    throughput: { l4: '28 Gbps', l7: '2.5 Gbps', threat: '2 Gbps' },
+    ports: [
+      ...genFortiNumberedPorts('port', 1, 8, 'copper', '1G'),
+      ...genFortiPorts(['wan1', 'wan2'], 'SFP+', '10G'),
+    ],
+  },
+  'FG-120G': {
+    name: 'FG-120G', tier: 'midrange', current: true,
+    description: 'G-series mid-range with 10GE SFP+',
+    throughput: { l4: '39 Gbps', l7: '3.1 Gbps', threat: '2.8 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt', 'ha'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+    ],
+  },
+  'FG-200G': {
+    name: 'FG-200G', tier: 'midrange', current: true,
+    description: 'G-series mid-range with 5GE + 10GE',
+    throughput: { l4: '39 Gbps', l7: '7 Gbps', threat: '6.5 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt', 'ha'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 8, 'copper', '1G'),
+      ...genFortiNumberedPorts('5g-port', 1, 8, 'copper', '5G'),
+      ...genFortiNumberedPorts('sfp', 1, 4, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 8, 'SFP+', '10G'),
+    ],
+  },
+
+  // ---- Mid-Range (F-Series) ----
+  'FG-100F': {
+    name: 'FG-100F', tier: 'midrange',
+    description: 'Mid-range firewall with 22 GE + 2 SFP+',
+    throughput: { l4: '20 Gbps', l7: '1.6 Gbps', threat: '1 Gbps' },
+    ports: [
+      ...genFortiPorts(['wan1', 'wan2', 'dmz', 'mgmt', 'ha1', 'ha2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 4, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 2, 'SFP+', '10G'),
+    ],
+  },
+  'FG-200F': {
+    name: 'FG-200F', tier: 'midrange',
+    description: 'Mid-range firewall with 18 GE + 4 SFP+',
+    throughput: { l4: '27 Gbps', l7: '3 Gbps', threat: '2.2 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt', 'ha'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+    ],
+  },
+  'FG-400F': {
+    name: 'FG-400F', tier: 'enterprise',
+    description: 'Enterprise firewall with 18 GE + 8 SFP+',
+    throughput: { l4: '79.5 Gbps', l7: '10 Gbps', threat: '9 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt', 'ha'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 8, 'SFP+', '10G'),
+    ],
+  },
+  'FG-600F': {
+    name: 'FG-600F', tier: 'enterprise',
+    description: 'Enterprise firewall with 25GE SFP28',
+    throughput: { l4: '80 Gbps', l7: '11.5 Gbps', threat: '10.5 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 4, 'SFP28', '25G'),
+    ],
+  },
+
+  // ---- Mid-Range (G-Series) ----
+  'FG-700G': {
+    name: 'FG-700G', tier: 'enterprise', current: true,
+    description: 'G-series enterprise with 25GE SFP28',
+    throughput: { l4: '164 Gbps', l7: '29 Gbps', threat: '27 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 4, 'SFP28', '25G'),
+    ],
+  },
+  'FG-900G': {
+    name: 'FG-900G', tier: 'enterprise', current: true,
+    description: 'G-series enterprise with 25GE SFP28 + HA',
+    throughput: { l4: '164 Gbps', l7: '31 Gbps', threat: '30 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt'], 'copper', '1G'),
+      ...genFortiPorts(['ha'], 'copper', '2.5G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp+', 1, 4, 'SFP+', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 4, 'SFP28', '25G'),
+    ],
+  },
+
+  // ---- High-End / Data Center (F-Series) ----
+  'FG-1000F': {
+    name: 'FG-1000F', tier: 'datacenter',
+    description: 'Data center firewall with 100GE QSFP28',
+    throughput: { l4: '198 Gbps', l7: '15 Gbps', threat: '13 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt'], 'copper', '1G'),
+      ...genFortiPorts(['ha'], 'copper', '2.5G'),
+      ...genFortiNumberedPorts('port', 1, 8, 'copper', '10G'),
+      ...genFortiNumberedPorts('sfp+', 1, 16, 'SFP+', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 8, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp28-', 1, 2, 'QSFP28', '100G'),
+    ],
+  },
+  'FG-1800F': {
+    name: 'FG-1800F', tier: 'datacenter',
+    description: 'Data center firewall with 100GE QSFP28',
+    throughput: { l4: '198 Gbps', l7: '17 Gbps', threat: '15 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp', 1, 8, 'SFP', '1G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 12, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp28-', 1, 4, 'QSFP28', '100G'),
+    ],
+  },
+  'FG-2600F': {
+    name: 'FG-2600F', tier: 'datacenter',
+    description: 'Data center firewall, 2600 series',
+    throughput: { l4: '397 Gbps', l7: '27 Gbps', threat: '24 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('port', 1, 16, 'copper', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 16, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp28-', 1, 4, 'QSFP28', '100G'),
+    ],
+  },
+  'FG-3200F': {
+    name: 'FG-3200F', tier: 'datacenter',
+    description: 'Data center firewall with 400GE QSFP-DD',
+    throughput: { l4: '595 Gbps', l7: '47 Gbps', threat: '45 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '10G'),
+      ...genFortiNumberedPorts('sfp56-', 1, 10, 'SFP56', '50G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 4, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp-dd-', 1, 4, 'QSFP-DD', '400G'),
+    ],
+  },
+  'FG-3500F': {
+    name: 'FG-3500F', tier: 'datacenter',
+    description: 'Data center firewall with 100GE QSFP28',
+    throughput: { l4: '595 Gbps', l7: '65 Gbps', threat: '60 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 32, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp28-', 1, 6, 'QSFP28', '100G'),
+    ],
+  },
+  'FG-3700F': {
+    name: 'FG-3700F', tier: 'datacenter',
+    description: 'Data center firewall with 400GE QSFP-DD',
+    throughput: { l4: '589 Gbps', l7: '80 Gbps', threat: '75 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '10G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 4, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('sfp56-', 1, 20, 'SFP56', '50G'),
+      ...genFortiNumberedPorts('qsfp-dd-', 1, 4, 'QSFP-DD', '400G'),
+    ],
+  },
+  'FG-4200F': {
+    name: 'FG-4200F', tier: 'datacenter',
+    description: 'High-end data center firewall',
+    throughput: { l4: '800 Gbps', l7: '47 Gbps', threat: '45 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 18, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp28-', 1, 8, 'QSFP28', '100G'),
+    ],
+  },
+  'FG-4400F': {
+    name: 'FG-4400F', tier: 'datacenter',
+    description: 'Hyperscale data center firewall',
+    throughput: { l4: '1.2 Tbps', l7: '82 Gbps', threat: '70 Gbps' },
+    ports: [
+      ...genFortiPorts(['mgmt1', 'mgmt2'], 'copper', '1G'),
+      ...genFortiNumberedPorts('sfp28-', 1, 18, 'SFP28', '25G'),
+      ...genFortiNumberedPorts('qsfp28-', 1, 12, 'QSFP28', '100G'),
+    ],
+  },
+};
+
+/**
+ * All FortiGate models available as source (current + EOS).
+ */
+export const FORTIGATE_SOURCE_MODELS = { ...FORTIGATE_EOS_MODELS, ...FORTIGATE_MODELS };
+
+/**
+ * Attempts to detect the FortiGate hardware model from the parsed config.
+ * Examines zone/interface names to match against known port layouts.
+ *
+ * @param {Object} intermediateConfig - The parsed intermediate JSON
+ * @returns {{ model: string, confidence: number } | null}
+ */
+export function detectFortigateModel(intermediateConfig) {
+  if (!intermediateConfig?.zones) return null;
+
+  const allInterfaces = new Set();
+  for (const zone of intermediateConfig.zones) {
+    for (const iface of (zone.interfaces || [])) {
+      allInterfaces.add(iface);
+    }
+  }
+
+  if (allInterfaces.size === 0) return null;
+
+  // Detect naming patterns
+  const hasWan = [...allInterfaces].some(i => /^wan\d?$/i.test(i));
+  const hasInternal = [...allInterfaces].some(i => /^internal\d*$/i.test(i));
+  const hasDmz = [...allInterfaces].some(i => /^dmz\d?$/i.test(i));
+  const hasPort = [...allInterfaces].some(i => /^port\d+$/i.test(i));
+  const hasSfpPlus = [...allInterfaces].some(i => /^sfp\+/i.test(i));
+  const hasSfp28 = [...allInterfaces].some(i => /^sfp28/i.test(i));
+  const hasQsfp = [...allInterfaces].some(i => /^qsfp/i.test(i));
+
+  // Count numbered ports
+  const portNumbers = [...allInterfaces]
+    .filter(i => /^port\d+$/i.test(i))
+    .map(i => parseInt(i.replace(/^port/i, ''), 10));
+  const maxPort = portNumbers.length > 0 ? Math.max(...portNumbers) : 0;
+
+  const internalNumbers = [...allInterfaces]
+    .filter(i => /^internal\d+$/i.test(i))
+    .map(i => parseInt(i.replace(/^internal/i, ''), 10));
+  const maxInternal = internalNumbers.length > 0 ? Math.max(...internalNumbers) : 0;
+
+  // Match patterns to models
+  if (hasQsfp || hasSfp28) {
+    // Data center class
+    if (maxPort >= 16) return { model: 'FG-2600F', confidence: 0.6 };
+    return { model: 'FG-1000F', confidence: 0.5 };
+  }
+  if (hasSfpPlus && maxPort >= 16) {
+    return { model: 'FG-400F', confidence: 0.6 };
+  }
+  if (hasPort && maxPort >= 16) {
+    return { model: 'FG-200F', confidence: 0.6 };
+  }
+  if (hasPort && maxPort >= 8) {
+    return { model: 'FG-100F', confidence: 0.6 };
+  }
+  if (hasWan && hasInternal && hasDmz) {
+    if (maxInternal >= 7) return { model: 'FG-60F', confidence: 0.7 };
+    if (maxInternal >= 5) return { model: 'FG-70F', confidence: 0.7 };
+    return { model: 'FG-60F', confidence: 0.5 };
+  }
+  if (hasWan && hasInternal) {
+    if (maxInternal >= 7) return { model: 'FG-60F', confidence: 0.6 };
+    if (maxInternal >= 4) return { model: 'FG-50E', confidence: 0.5 };
+    return { model: 'FG-40F', confidence: 0.5 };
+  }
+  if (hasPort) {
+    return { model: 'FG-90G', confidence: 0.4 };
+  }
+
+  return { model: 'FG-60F', confidence: 0.3 };
+}
+
 /**
  * Attempts to detect the SRX hardware model from the parsed config.
  * Examines zone interfaces to match against known SRX port counts.
@@ -1048,8 +1480,8 @@ export function detectSrxModel(intermediateConfig) {
  * @returns {{ model: string, recommended: boolean } | null}
  */
 export function suggestSrxModel(panosModel, metric = 'l7') {
-  // Look up source model from PAN-OS or SRX databases
-  const source = PANOS_MODELS[panosModel] || SRX_SOURCE_MODELS[panosModel];
+  // Look up source model from PAN-OS, SRX, or FortiGate databases
+  const source = PANOS_MODELS[panosModel] || SRX_SOURCE_MODELS[panosModel] || FORTIGATE_SOURCE_MODELS[panosModel];
   if (!source) return null;
 
   // Virtual always maps to vSRX

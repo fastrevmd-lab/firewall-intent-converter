@@ -46,7 +46,7 @@ export default function App() {
   const [targetModel, setTargetModel] = useState('');
   const [srxLicense, setSrxLicense] = useState('');
   const [interfaceMappings, setInterfaceMappings] = useState({});
-  const [sourceVendor, setSourceVendor] = useState('panos'); // 'panos' | 'srx'
+  const [sourceVendor, setSourceVendor] = useState('panos'); // 'panos' | 'srx' | 'fortigate'
 
   // --- Modal state ---
   const [showModelSelector, setShowModelSelector] = useState(false);
@@ -93,8 +93,8 @@ export default function App() {
 
   const allRulesAccepted = reviewProgress.total > 0 && reviewProgress.accepted === reviewProgress.total;
 
-  // Compute effective viewMode: 'from' tab uses SRX style when source is SRX
-  const effectiveViewMode = platformView === 'srx' ? 'srx' : (sourceVendor === 'srx' ? 'srx' : 'panos');
+  // Compute effective viewMode: 'from' tab uses SRX style when source is SRX, FortiGate style when source is FortiGate
+  const effectiveViewMode = platformView === 'srx' ? 'srx' : (sourceVendor === 'srx' ? 'srx' : sourceVendor === 'fortigate' ? 'fortigate' : 'panos');
 
   // ------------------------------------------------------------------
   // Sanitize handler: strips sensitive data from config text
@@ -175,8 +175,8 @@ export default function App() {
       const detectedVendor = data.detectedVendor || data.intermediateConfig?.metadata?.source_vendor || 'panos';
       setSourceVendor(detectedVendor);
 
-      // If source is SRX, default to 'panos' platform view (shows the "from SRX" tab)
-      if (detectedVendor === 'srx') {
+      // If source is SRX or FortiGate, default to 'panos' platform view (shows the "from" tab)
+      if (detectedVendor === 'srx' || detectedVendor === 'fortigate') {
         setPlatformView('panos');
       }
 
@@ -536,7 +536,7 @@ export default function App() {
                     className={`platform-view-btn ${platformView === 'panos' ? 'active' : ''}`}
                     onClick={() => handlePlatformViewChange('panos')}
                   >
-                    from {sourceModel || (sourceVendor === 'srx' ? 'SRX' : 'PAN-OS')}
+                    from {sourceModel || (sourceVendor === 'srx' ? 'SRX' : sourceVendor === 'fortigate' ? 'FortiGate' : 'PAN-OS')}
                   </button>
                   <button
                     className={`platform-view-btn ${platformView === 'srx' ? 'active' : ''}`}
@@ -551,7 +551,7 @@ export default function App() {
                     className={`center-tab-btn ${editTab === 'rules' ? 'active' : ''}`}
                     onClick={() => setEditTab('rules')}
                   >
-                    {effectiveViewMode === 'srx' ? 'Security Policies' : 'Security Rules'} ({intermediateConfig.security_policies?.length || 0})
+                    {effectiveViewMode === 'srx' ? 'Security Policies' : effectiveViewMode === 'fortigate' ? 'Firewall Policies' : 'Security Rules'} ({intermediateConfig.security_policies?.length || 0})
                   </button>
                   <button
                     className={`center-tab-btn ${editTab === 'zones' ? 'active' : ''}`}
@@ -675,7 +675,7 @@ export default function App() {
                     <line x1="9" y1="21" x2="9" y2="9" />
                   </svg>
                   <h3>No configuration loaded</h3>
-                  <p>Paste a PAN-OS XML or Junos SRX configuration in the left panel and click "Parse" to view security policies here.</p>
+                  <p>Paste a PAN-OS XML, Junos SRX, or FortiGate configuration in the left panel and click "Parse" to view security policies here.</p>
                 </div>
               </div>
             </>

@@ -15,8 +15,10 @@ import {
   PANOS_MODELS,
   SRX_MODELS,
   SRX_SOURCE_MODELS,
+  FORTIGATE_SOURCE_MODELS,
   detectPanosModel,
   detectSrxModel,
+  detectFortigateModel,
   suggestSrxModel,
   getThroughputDisplay,
   THROUGHPUT_LABELS,
@@ -42,19 +44,25 @@ export default function ModelSelector({
   const [recommendedSrx, setRecommendedSrx] = useState(null); // { model, recommended }
 
   const isSrxSource = sourceVendor === 'srx';
+  const isFortigateSource = sourceVendor === 'fortigate';
 
   // Auto-detect source model on mount
   useEffect(() => {
     if (intermediateConfig && !sourceModel) {
-      const detected = isSrxSource
-        ? detectSrxModel(intermediateConfig)
-        : detectPanosModel(intermediateConfig);
+      let detected;
+      if (isSrxSource) {
+        detected = detectSrxModel(intermediateConfig);
+      } else if (isFortigateSource) {
+        detected = detectFortigateModel(intermediateConfig);
+      } else {
+        detected = detectPanosModel(intermediateConfig);
+      }
       setDetection(detected);
       if (detected) {
         setSelectedSource(detected.model);
       }
     }
-  }, [intermediateConfig, sourceModel, isSrxSource]);
+  }, [intermediateConfig, sourceModel, isSrxSource, isFortigateSource]);
 
   // Re-suggest SRX whenever source or metric changes
   useEffect(() => {
@@ -67,12 +75,12 @@ export default function ModelSelector({
     }
   }, [selectedSource, throughputMetric]);
 
-  const sourceModelsDb = isSrxSource ? SRX_SOURCE_MODELS : PANOS_MODELS;
+  const sourceModelsDb = isSrxSource ? SRX_SOURCE_MODELS : isFortigateSource ? FORTIGATE_SOURCE_MODELS : PANOS_MODELS;
   const sourceInfo = sourceModelsDb[selectedSource];
   const targetInfo = SRX_MODELS[selectedTarget];
 
   // Group models by tier for dropdown optgroups
-  const sourceGroups = useMemo(() => groupByTier(sourceModelsDb), [isSrxSource]);
+  const sourceGroups = useMemo(() => groupByTier(sourceModelsDb), [isSrxSource, isFortigateSource]);
   const srxGroups = useMemo(() => groupByTier(SRX_MODELS), []);
 
   const metricLabel = METRIC_PREFIX[throughputMetric] || 'L7';
@@ -121,7 +129,7 @@ export default function ModelSelector({
           {/* Source Model */}
           <div className="model-section">
             <h3 className="model-section-title">
-              Source Firewall ({isSrxSource ? 'Juniper SRX' : 'PAN-OS'})
+              Source Firewall ({isSrxSource ? 'Juniper SRX' : isFortigateSource ? 'FortiGate' : 'PAN-OS'})
             </h3>
 
             {detection && (
@@ -138,7 +146,7 @@ export default function ModelSelector({
               value={selectedSource}
               onChange={(e) => setSelectedSource(e.target.value)}
             >
-              <option value="">-- Select {isSrxSource ? 'SRX' : 'PAN-OS'} Model (optional) --</option>
+              <option value="">-- Select {isSrxSource ? 'SRX' : isFortigateSource ? 'FortiGate' : 'PAN-OS'} Model (optional) --</option>
               {Object.entries(sourceGroups).map(([tier, models]) => (
                 <optgroup key={tier} label={tierLabel(tier)}>
                   {models.map(m => (
@@ -151,7 +159,7 @@ export default function ModelSelector({
             </select>
 
             {sourceInfo && (
-              <ModelInfoCard model={sourceInfo} vendor={isSrxSource ? 'srx' : 'panos'} metric={throughputMetric} />
+              <ModelInfoCard model={sourceInfo} vendor={isSrxSource ? 'srx' : isFortigateSource ? 'fortigate' : 'panos'} metric={throughputMetric} />
             )}
           </div>
 

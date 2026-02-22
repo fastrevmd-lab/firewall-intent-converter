@@ -15,6 +15,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { parsePanosConfig } from './src/parsers/panos-parser.js';
 import { parseSrxConfig } from './src/parsers/srx-parser.js';
+import { parseFortigateConfig } from './src/parsers/fortigate-parser.js';
 import { detectVendor } from './src/parsers/parser-utils.js';
 import { convertToSrxSetCommands } from './src/converters/srx-converter.js';
 import { buildSrxXml } from './src/converters/srx-xml-builder.js';
@@ -52,6 +53,8 @@ app.post('/api/parse', (req, res) => {
 
     if (detection.vendor === 'srx') {
       result = parseSrxConfig(configText);
+    } else if (detection.vendor === 'fortigate') {
+      result = parseFortigateConfig(configText);
     } else {
       result = parsePanosConfig(configText);
     }
