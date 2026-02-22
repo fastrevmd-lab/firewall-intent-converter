@@ -757,12 +757,30 @@ export const SRX_MODELS = {
     ],
   },
 
+  'SRX4700-700': {
+    name: 'SRX4700-700',
+    tier: 'datacenter',
+    current: true,
+    description: '1U datacenter firewall, Trio ASIC, MACsec, 700G L4 license',
+    throughput: { l4: '700 Gbps', l7: '160 Gbps', threat: '60 Gbps' },
+    ports: [
+      // PIC 0: 1x QSFP56-DD (400G) + 5x QSFP28 (100G) + 8x SFP56 (50G)
+      ...genSrxPorts('et', 0, 0, 0, 0, 'QSFP56-DD', '400G'),
+      ...genSrxPorts('et', 0, 0, 1, 5, 'QSFP28', '100G'),
+      ...genSrxPorts('et', 0, 0, 6, 13, 'SFP56', '50G'),
+      // PIC 1: identical layout
+      ...genSrxPorts('et', 0, 1, 0, 0, 'QSFP56-DD', '400G'),
+      ...genSrxPorts('et', 0, 1, 1, 5, 'QSFP28', '100G'),
+      ...genSrxPorts('et', 0, 1, 6, 13, 'SFP56', '50G'),
+    ],
+  },
+
   'SRX4700': {
     name: 'SRX4700',
     tier: 'datacenter',
     current: true,
-    description: 'Highest throughput 1U firewall, Trio ASIC, MACsec',
-    throughput: { l4: '1.4 Tbps', l7: '700 Gbps', threat: '700 Gbps' },
+    description: 'Highest throughput 1U firewall, Trio ASIC, MACsec, full license',
+    throughput: { l4: '1.4 Tbps', l7: '160 Gbps', threat: '60 Gbps' },
     ports: [
       // PIC 0: 1x QSFP56-DD (400G) + 5x QSFP28 (100G) + 8x SFP56 (50G)
       ...genSrxPorts('et', 0, 0, 0, 0, 'QSFP56-DD', '400G'),
@@ -850,6 +868,7 @@ export const THROUGHPUT_LABELS = {
   panos:     { l4: 'L4 Firewall', l7: 'L7 App-ID', threat: 'Threat Prevention' },
   srx:       { l4: 'L4 Firewall (IMIX)', l7: 'L7 NGFW', threat: 'IPS/Threat' },
   fortigate: { l4: 'L4 Firewall', l7: 'NGFW', threat: 'Threat Protection' },
+  cisco_asa: { l4: 'L4 Firewall', l7: 'NGFW (FTD)', threat: 'IPS/Threat' },
 };
 
 /** Short metric prefix for dropdown labels */
@@ -1480,8 +1499,8 @@ export function detectSrxModel(intermediateConfig) {
  * @returns {{ model: string, recommended: boolean } | null}
  */
 export function suggestSrxModel(panosModel, metric = 'l7') {
-  // Look up source model from PAN-OS, SRX, or FortiGate databases
-  const source = PANOS_MODELS[panosModel] || SRX_SOURCE_MODELS[panosModel] || FORTIGATE_SOURCE_MODELS[panosModel];
+  // Look up source model from PAN-OS, SRX, FortiGate, or Cisco databases
+  const source = PANOS_MODELS[panosModel] || SRX_SOURCE_MODELS[panosModel] || FORTIGATE_SOURCE_MODELS[panosModel] || CISCO_SOURCE_MODELS[panosModel];
   if (!source) return null;
 
   // Virtual always maps to vSRX
@@ -1511,11 +1530,18 @@ export function suggestSrxModel(panosModel, metric = 'l7') {
     'SRX4600': 'SRX4700',
   };
 
+  // Prefer SRX4700 over chassis models (5400/5600/5800)
+  const PREFER_OVER_CHASSIS = ['SRX5400', 'SRX5600', 'SRX5800'];
+
   // Find the first SRX with throughput >= source throughput
   // (next higher means strictly greater or equal)
   if (sourceThroughput > 0) {
     const match = candidates.find(c => c.throughput >= sourceThroughput);
     if (match) {
+      // If matched a chassis model, recommend SRX4700 instead
+      if (PREFER_OVER_CHASSIS.includes(match.name)) {
+        return { model: 'SRX4700', recommended: true };
+      }
       const model = PREFER_CURRENT[match.name] || match.name;
       return { model, recommended: true };
     }
@@ -1523,4 +1549,378 @@ export function suggestSrxModel(panosModel, metric = 'l7') {
 
   // No match or source throughput is N/A — fall back to SRX4700, not recommended
   return { model: 'SRX4700', recommended: false };
+}
+
+
+// ---------------------------------------------------------------------------
+// Cisco Firewall Models
+// ---------------------------------------------------------------------------
+
+function genCiscoPorts(prefix, start, end, type, speed) {
+  const ports = [];
+  for (let i = start; i <= end; i++) {
+    const name = `${prefix}${i}`;
+    ports.push({ name, type, speed, label: name });
+  }
+  return ports;
+}
+
+function genCiscoNamedPorts(names, type, speed) {
+  return names.map(n => ({ name: n, type, speed, label: n }));
+}
+
+/**
+ * Cisco ASA 5500-X Series (End of Sale / End of Support — last 10 years)
+ */
+export const CISCO_EOS_MODELS = {
+  'ASA-5506-X': {
+    name: 'ASA-5506-X', tier: 'branch', eol: true,
+    description: 'Desktop form factor branch firewall (End of Sale)',
+    throughput: { l4: '750 Mbps', l7: '250 Mbps', threat: '125 Mbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet1/', 1, 8, 'copper', '1G'),
+    ],
+  },
+  'ASA-5508-X': {
+    name: 'ASA-5508-X', tier: 'branch', eol: true,
+    description: 'Branch firewall with 8 GbE ports (End of Sale)',
+    throughput: { l4: '1 Gbps', l7: '450 Mbps', threat: '250 Mbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet1/', 1, 8, 'copper', '1G'),
+    ],
+  },
+  'ASA-5516-X': {
+    name: 'ASA-5516-X', tier: 'branch', eol: true,
+    description: 'Branch firewall with 8 GbE ports (End of Sale)',
+    throughput: { l4: '1.8 Gbps', l7: '850 Mbps', threat: '450 Mbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet1/', 1, 8, 'copper', '1G'),
+    ],
+  },
+  'ASA-5525-X': {
+    name: 'ASA-5525-X', tier: 'midrange', eol: true,
+    description: 'Mid-range firewall with 8 GbE + 2 SFP (End of Sale)',
+    throughput: { l4: '2 Gbps', l7: '1.1 Gbps', threat: '650 Mbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet0/', 0, 7, 'copper', '1G'),
+      ...genCiscoNamedPorts(['GigabitEthernet0/8', 'GigabitEthernet0/9'], 'SFP', '1G'),
+    ],
+  },
+  'ASA-5545-X': {
+    name: 'ASA-5545-X', tier: 'midrange', eol: true,
+    description: 'Mid-range firewall with 8 GbE + 4 SFP (End of Sale)',
+    throughput: { l4: '3 Gbps', l7: '1.5 Gbps', threat: '1 Gbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet0/', 0, 7, 'copper', '1G'),
+      ...genCiscoPorts('GigabitEthernet0/', 8, 11, 'SFP', '1G'),
+    ],
+  },
+  'ASA-5555-X': {
+    name: 'ASA-5555-X', tier: 'midrange', eol: true,
+    description: 'Mid-range firewall with 8 GbE + 4 SFP+ (End of Sale)',
+    throughput: { l4: '4 Gbps', l7: '1.75 Gbps', threat: '1.25 Gbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet0/', 0, 7, 'copper', '1G'),
+      ...genCiscoPorts('TenGigabitEthernet0/', 8, 11, 'SFP+', '10G'),
+    ],
+  },
+};
+
+/**
+ * Cisco Secure Firewall / Firepower Models (current, last 10 years, no chassis)
+ */
+export const CISCO_MODELS = {
+  // ---- Firepower 1000 Series ----
+  'FPR-1010': {
+    name: 'FPR-1010', tier: 'branch',
+    description: 'Desktop form factor NGFW, 8 GbE',
+    throughput: { l4: '2 Gbps', l7: '890 Mbps', threat: '880 Mbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+    ],
+  },
+  'FPR-1010E': {
+    name: 'FPR-1010E', tier: 'branch',
+    description: 'Desktop NGFW with PoE, 8 GbE',
+    throughput: { l4: '2 Gbps', l7: '890 Mbps', threat: '880 Mbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+    ],
+  },
+  'FPR-1120': {
+    name: 'FPR-1120', tier: 'branch',
+    description: 'Branch NGFW with 8 GbE + 4 SFP',
+    throughput: { l4: '3 Gbps', l7: '1.5 Gbps', threat: '1.5 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 12, 'SFP', '1G'),
+    ],
+  },
+  'FPR-1140': {
+    name: 'FPR-1140', tier: 'branch',
+    description: 'Branch NGFW with 8 GbE + 4 SFP',
+    throughput: { l4: '5 Gbps', l7: '2.2 Gbps', threat: '2.2 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 12, 'SFP', '1G'),
+    ],
+  },
+  'FPR-1150': {
+    name: 'FPR-1150', tier: 'branch',
+    description: 'Branch NGFW with 8 GbE + 2 SFP+',
+    throughput: { l4: '7.5 Gbps', l7: '3 Gbps', threat: '3 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoNamedPorts(['Ethernet1/9', 'Ethernet1/10'], 'SFP+', '10G'),
+    ],
+  },
+
+  // ---- Firepower 2100 Series ----
+  'FPR-2110': {
+    name: 'FPR-2110', tier: 'midrange',
+    description: 'Mid-range NGFW, 12 GbE + 4 SFP',
+    throughput: { l4: '3 Gbps', l7: '2 Gbps', threat: '2 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 12, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 13, 16, 'SFP', '1G'),
+    ],
+  },
+  'FPR-2120': {
+    name: 'FPR-2120', tier: 'midrange',
+    description: 'Mid-range NGFW, 12 GbE + 4 SFP',
+    throughput: { l4: '6 Gbps', l7: '3 Gbps', threat: '3 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 12, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 13, 16, 'SFP', '1G'),
+    ],
+  },
+  'FPR-2130': {
+    name: 'FPR-2130', tier: 'midrange',
+    description: 'Mid-range NGFW with SFP+ uplinks',
+    throughput: { l4: '10 Gbps', l7: '5 Gbps', threat: '5 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 12, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 13, 16, 'SFP+', '10G'),
+    ],
+  },
+  'FPR-2140': {
+    name: 'FPR-2140', tier: 'midrange',
+    description: 'Mid-range NGFW with SFP+ uplinks',
+    throughput: { l4: '20 Gbps', l7: '8.5 Gbps', threat: '8.5 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 12, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 13, 16, 'SFP+', '10G'),
+    ],
+  },
+
+  // ---- Firepower 3100 Series ----
+  'FPR-3105': {
+    name: 'FPR-3105', tier: 'enterprise',
+    description: 'Enterprise NGFW, 8 GbE + 8 SFP+ + 2 NM',
+    throughput: { l4: '20 Gbps', l7: '10 Gbps', threat: '10 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+    ],
+  },
+  'FPR-3110': {
+    name: 'FPR-3110', tier: 'enterprise',
+    description: 'Enterprise NGFW, 8 GbE + 8 SFP+ + 2 NM',
+    throughput: { l4: '22.5 Gbps', l7: '11 Gbps', threat: '11 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+    ],
+  },
+  'FPR-3120': {
+    name: 'FPR-3120', tier: 'enterprise',
+    description: 'Enterprise NGFW with 25G SFP28',
+    throughput: { l4: '38 Gbps', l7: '15 Gbps', threat: '15 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+      ...genCiscoNamedPorts(['Ethernet1/17', 'Ethernet1/18'], 'SFP28', '25G'),
+    ],
+  },
+  'FPR-3130': {
+    name: 'FPR-3130', tier: 'enterprise',
+    description: 'Enterprise NGFW with 25G SFP28 + NM slots',
+    throughput: { l4: '45 Gbps', l7: '22 Gbps', threat: '22 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+      ...genCiscoPorts('Ethernet1/', 17, 20, 'SFP28', '25G'),
+    ],
+  },
+  'FPR-3140': {
+    name: 'FPR-3140', tier: 'enterprise',
+    description: 'Enterprise NGFW, top of 3100 series',
+    throughput: { l4: '57 Gbps', l7: '30 Gbps', threat: '30 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+      ...genCiscoPorts('Ethernet1/', 17, 20, 'SFP28', '25G'),
+    ],
+  },
+
+  // ---- Firepower 4100 Series ----
+  'FPR-4112': {
+    name: 'FPR-4112', tier: 'datacenter',
+    description: 'Data center NGFW, 4100 series entry',
+    throughput: { l4: '40 Gbps', l7: '20 Gbps', threat: '20 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+      ...genCiscoPorts('Ethernet1/', 17, 20, 'QSFP+', '40G'),
+    ],
+  },
+  'FPR-4115': {
+    name: 'FPR-4115', tier: 'datacenter',
+    description: 'Data center NGFW with 40G uplinks',
+    throughput: { l4: '60 Gbps', l7: '30 Gbps', threat: '30 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP+', '10G'),
+      ...genCiscoPorts('Ethernet1/', 17, 20, 'QSFP+', '40G'),
+    ],
+  },
+  'FPR-4125': {
+    name: 'FPR-4125', tier: 'datacenter',
+    description: 'Data center NGFW with 40G uplinks',
+    throughput: { l4: '80 Gbps', l7: '50 Gbps', threat: '50 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 20, 'SFP+', '10G'),
+      ...genCiscoPorts('Ethernet1/', 21, 24, 'QSFP+', '40G'),
+    ],
+  },
+  'FPR-4145': {
+    name: 'FPR-4145', tier: 'datacenter',
+    description: 'Data center NGFW, top of 4100 series',
+    throughput: { l4: '115 Gbps', l7: '70 Gbps', threat: '70 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '1G'),
+      ...genCiscoPorts('Ethernet1/', 9, 20, 'SFP+', '10G'),
+      ...genCiscoPorts('Ethernet1/', 21, 26, 'QSFP+', '40G'),
+    ],
+  },
+
+  // ---- Firepower 4200 Series (newest) ----
+  'FPR-4215': {
+    name: 'FPR-4215', tier: 'datacenter', current: true,
+    description: 'Next-gen data center NGFW, 4200 series',
+    throughput: { l4: '80 Gbps', l7: '35 Gbps', threat: '35 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '10G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP28', '25G'),
+      ...genCiscoNamedPorts(['Ethernet1/17', 'Ethernet1/18'], 'QSFP28', '100G'),
+    ],
+  },
+  'FPR-4225': {
+    name: 'FPR-4225', tier: 'datacenter', current: true,
+    description: 'Next-gen data center NGFW with 100G',
+    throughput: { l4: '120 Gbps', l7: '54 Gbps', threat: '54 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '10G'),
+      ...genCiscoPorts('Ethernet1/', 9, 16, 'SFP28', '25G'),
+      ...genCiscoPorts('Ethernet1/', 17, 20, 'QSFP28', '100G'),
+    ],
+  },
+  'FPR-4245': {
+    name: 'FPR-4245', tier: 'datacenter', current: true,
+    description: 'Next-gen data center NGFW, top of 4200 series',
+    throughput: { l4: '190 Gbps', l7: '90 Gbps', threat: '90 Gbps' },
+    ports: [
+      ...genCiscoPorts('Ethernet1/', 1, 8, 'copper', '10G'),
+      ...genCiscoPorts('Ethernet1/', 9, 20, 'SFP28', '25G'),
+      ...genCiscoPorts('Ethernet1/', 21, 24, 'QSFP28', '100G'),
+    ],
+  },
+
+  // ---- Virtual ----
+  'ASAv': {
+    name: 'ASAv', tier: 'virtual',
+    description: 'Virtual ASA for cloud/virtualization',
+    throughput: { l4: '10 Gbps', l7: 'N/A', threat: 'N/A' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet0/', 0, 9, 'virtual', 'virtual'),
+    ],
+  },
+  'FTDv': {
+    name: 'FTDv', tier: 'virtual', current: true,
+    description: 'Virtual Firepower Threat Defense for cloud',
+    throughput: { l4: '15.5 Gbps', l7: '10 Gbps', threat: '10 Gbps' },
+    ports: [
+      ...genCiscoPorts('GigabitEthernet0/', 0, 9, 'virtual', 'virtual'),
+    ],
+  },
+};
+
+/**
+ * All Cisco models available as source (current + EOS).
+ */
+export const CISCO_SOURCE_MODELS = { ...CISCO_EOS_MODELS, ...CISCO_MODELS };
+
+/**
+ * Attempts to detect the Cisco hardware model from the parsed config.
+ * Examines interface names (GigabitEthernet, Ethernet, Management, etc.)
+ * to match against known port layouts.
+ *
+ * @param {Object} intermediateConfig - The parsed intermediate JSON
+ * @returns {{ model: string, confidence: number } | null}
+ */
+export function detectCiscoModel(intermediateConfig) {
+  if (!intermediateConfig?.zones) return null;
+
+  const allInterfaces = new Set();
+  for (const zone of intermediateConfig.zones) {
+    for (const iface of (zone.interfaces || [])) {
+      allInterfaces.add(iface);
+    }
+  }
+
+  if (allInterfaces.size === 0) return null;
+
+  const hasGig = [...allInterfaces].some(i => /^GigabitEthernet/i.test(i));
+  const hasTenGig = [...allInterfaces].some(i => /^TenGigabitEthernet/i.test(i));
+  const hasEthernet = [...allInterfaces].some(i => /^Ethernet1\//i.test(i));
+  const hasQsfp = [...allInterfaces].some(i => /QSFP|40G|100G/i.test(i));
+
+  // Count max port number
+  const portNumbers = [...allInterfaces]
+    .map(i => {
+      const m = i.match(/(\d+)$/);
+      return m ? parseInt(m[1], 10) : 0;
+    })
+    .filter(n => n > 0);
+  const maxPort = portNumbers.length > 0 ? Math.max(...portNumbers) : 0;
+
+  // FPR-4200 series: Ethernet naming + high port numbers + 100G
+  if (hasEthernet && maxPort >= 17) {
+    return { model: 'FPR-4225', confidence: 0.6 };
+  }
+
+  // FPR-3100 series: Ethernet naming + 10G range
+  if (hasEthernet && maxPort >= 9 && maxPort < 17) {
+    return { model: 'FPR-3110', confidence: 0.6 };
+  }
+
+  // FPR-1000 series: Ethernet naming + small port count
+  if (hasEthernet && maxPort <= 8) {
+    return { model: 'FPR-1010', confidence: 0.5 };
+  }
+
+  // ASA 5500-X: TenGigabitEthernet present
+  if (hasTenGig) {
+    return { model: 'ASA-5555-X', confidence: 0.5 };
+  }
+
+  // ASA 5500-X: GigabitEthernet naming
+  if (hasGig) {
+    if (maxPort >= 10) return { model: 'ASA-5545-X', confidence: 0.5 };
+    if (maxPort >= 8) return { model: 'ASA-5516-X', confidence: 0.5 };
+    return { model: 'ASA-5506-X', confidence: 0.4 };
+  }
+
+  return { model: 'FPR-1010', confidence: 0.3 };
 }

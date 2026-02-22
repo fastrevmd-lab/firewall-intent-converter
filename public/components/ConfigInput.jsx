@@ -58,6 +58,7 @@ export default function ConfigInput({
           <option value="srx">Junos SRX</option>
           <option value="panos">PAN-OS</option>
           <option value="fortigate">FortiGate</option>
+          <option value="cisco_asa">Cisco ASA/FTD</option>
         </select>
       </div>
 
@@ -134,6 +135,8 @@ export default function ConfigInput({
             ? "Paste your Junos SRX configuration here...\n\nSupported formats:\n• SRX set commands\n• SRX hierarchical config"
             : selectedVendor === 'fortigate'
             ? "Paste your FortiGate configuration here...\n\nSupported format:\n• FortiOS config (config/edit/set/next/end)"
+            : selectedVendor === 'cisco_asa'
+            ? "Paste your Cisco ASA/FTD configuration here...\n\nSupported formats:\n• ASA running-config (access-list, object, nat)\n• FTD show running-config output"
             : "Paste your PAN-OS configuration here...\n\nSupported format:\n• PAN-OS XML configuration"
           }
           spellCheck={false}

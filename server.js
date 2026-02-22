@@ -16,6 +16,7 @@ import { dirname, resolve } from 'path';
 import { parsePanosConfig } from './src/parsers/panos-parser.js';
 import { parseSrxConfig } from './src/parsers/srx-parser.js';
 import { parseFortigateConfig } from './src/parsers/fortigate-parser.js';
+import { parseCiscoAsaConfig } from './src/parsers/cisco-asa-parser.js';
 import { detectVendor } from './src/parsers/parser-utils.js';
 import { convertToSrxSetCommands } from './src/converters/srx-converter.js';
 import { buildSrxXml } from './src/converters/srx-xml-builder.js';
@@ -55,6 +56,8 @@ app.post('/api/parse', (req, res) => {
       result = parseSrxConfig(configText);
     } else if (detection.vendor === 'fortigate') {
       result = parseFortigateConfig(configText);
+    } else if (detection.vendor === 'cisco_asa') {
+      result = parseCiscoAsaConfig(configText);
     } else {
       result = parsePanosConfig(configText);
     }

@@ -7,42 +7,42 @@
  */
 
 // ---------------------------------------------------------------------------
-// SRX License Tiers
+// SRX Subscriptions
 // ---------------------------------------------------------------------------
 
 export const SRX_LICENSE_TIERS = {
   Base: {
-    name: 'Base (No License)',
+    name: 'Base (no subscriptions)',
     short: 'Base',
-    description: 'Stateful firewall only — no subscriptions',
+    description: 'Stateful FW, SSL B&I, Full Routing, VxLAN included',
     features: ['stateful-firewall'],
   },
   A1: {
-    name: 'A1 (AppSecure 1)',
+    name: 'A1 (Advanced Data Protection)',
     short: 'A1',
-    description: 'Base + AppID, basic IPS, stateful firewall',
-    features: ['appid', 'basic-ips', 'stateful-firewall'],
+    description: 'Base + SDC, AppSecure, IPS, & SecIntel',
+    features: ['appid', 'basic-ips', 'stateful-firewall', 'secintel', 'sdc'],
   },
   A2: {
-    name: 'A2 (AppSecure 2)',
+    name: 'A2 (Advanced Edge Protection)',
     short: 'A2',
-    description: 'A1 + advanced IPS, AppQoS',
-    features: ['appid', 'basic-ips', 'advanced-ips', 'stateful-firewall', 'appqos'],
+    description: 'Base, A1 subs, and URL + Content filtering',
+    features: ['appid', 'basic-ips', 'advanced-ips', 'stateful-firewall', 'secintel', 'sdc',
+               'url-filtering', 'content-filtering'],
   },
   P1: {
-    name: 'P1 (Premium 1)',
+    name: 'P1 (Premium Data Protection)',
     short: 'P1',
-    description: 'A2 + UTM (AV, anti-spam, web filtering), SecIntel',
-    features: ['appid', 'basic-ips', 'advanced-ips', 'stateful-firewall', 'appqos',
-               'utm-av', 'utm-antispam', 'utm-webfiltering', 'secintel'],
+    description: 'Base, A1 subs, and ATP Cloud',
+    features: ['appid', 'basic-ips', 'stateful-firewall', 'secintel', 'sdc',
+               'atp-cloud'],
   },
   P2: {
-    name: 'P2 (Premium 2)',
+    name: 'P2 (Premium Edge Protection)',
     short: 'P2',
-    description: 'P1 + ATP Cloud, encrypted traffic analysis',
-    features: ['appid', 'basic-ips', 'advanced-ips', 'stateful-firewall', 'appqos',
-               'utm-av', 'utm-antispam', 'utm-webfiltering', 'secintel',
-               'atp-cloud', 'encrypted-traffic-analysis'],
+    description: 'Base, A2 subs, and ATP Cloud',
+    features: ['appid', 'basic-ips', 'advanced-ips', 'stateful-firewall', 'secintel', 'sdc',
+               'url-filtering', 'content-filtering', 'atp-cloud'],
   },
 };
 
