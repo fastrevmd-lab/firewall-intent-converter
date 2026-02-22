@@ -2154,6 +2154,18 @@ html, body, #root {
   line-height: 1.4;
 }
 
+.subscription-footnote {
+  margin-top: 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: 0 2px;
+}
+
+.subscription-footnote strong {
+  color: var(--text-secondary);
+}
+
 /* =============================================
    License Warning Banner (InterviewPanel)
    ============================================= */
@@ -2627,4 +2639,176 @@ html, body, #root {
   font-size: 11px;
   color: var(--accent);
   font-weight: 500;
+}
+
+/* =========================================================================
+   Cisco ASDM / FMC Style Table
+   ========================================================================= */
+
+.policy-table.cisco-table td {
+  padding: 6px 8px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+.policy-table.cisco-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 8px;
+}
+
+/* ACE number column */
+.cisco-ace-num {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.cisco-inactive-badge {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--error);
+  background: rgba(248, 113, 113, 0.15);
+  padding: 1px 3px;
+  border-radius: 2px;
+  line-height: 1;
+}
+.cisco-inactive-row {
+  opacity: 0.5;
+}
+
+/* Action: Permit / Deny — Cisco style */
+.cisco-action {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.cisco-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.cisco-permit .cisco-action-icon {
+  background: rgba(52, 211, 153, 0.2);
+  color: var(--success);
+}
+.cisco-deny .cisco-action-icon {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--error);
+}
+.cisco-action-text {
+  font-size: 12px;
+}
+.cisco-permit .cisco-action-text { color: var(--success); }
+.cisco-deny .cisco-action-text { color: var(--error); }
+
+/* Name / Remark cell */
+.cisco-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cisco-rule-name {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.cisco-acl-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--info);
+  letter-spacing: 0.3px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Security Level badge */
+.cisco-sec-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+}
+.cisco-sec-high { background: rgba(52, 211, 153, 0.15); color: var(--success); }
+.cisco-sec-med  { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+.cisco-sec-low  { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+
+/* Protocol chip */
+.cisco-protocol {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
+  letter-spacing: 0.3px;
+}
+
+/* Address cell with interface label */
+.cisco-addr-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cisco-iface-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+  padding-bottom: 1px;
+}
+
+/* Service chip */
+.cisco-svc-chip {
+  display: inline-block;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  margin: 1px 2px 1px 0;
+}
+
+/* Log indicator */
+.cisco-log-on {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--success);
+}
+.cisco-log-off {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+/* Hit count */
+.cisco-hitcount {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  opacity: 0.5;
 }

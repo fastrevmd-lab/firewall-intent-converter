@@ -534,13 +534,14 @@ export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, sr
 
   const licenseContext = srxLicense ? `
 
-LICENSE CONTEXT:
-The target SRX has license level: ${srxLicense}
-- A1: AppID, basic IPS, stateful firewall
-- A2: A1 + advanced IPS, AppQoS
-- P1: A2 + UTM (antivirus, anti-spam, web filtering), SecIntel
-- P2: P1 + ATP Cloud, encrypted traffic analysis
-If this rule uses security features requiring a higher license tier than ${srxLicense}, flag this in your analysis and suggest alternatives available at the ${srxLicense} tier.` : '';
+SUBSCRIPTION CONTEXT:
+The target SRX subscription: ${srxLicense}
+- Base (no subscriptions): Stateful FW, SSL B&I, Full Routing, VxLAN included
+- A1 (Advanced Data Protection): Base + SDC, AppSecure, IPS, & SecIntel
+- A2 (Advanced Edge Protection): Base, A1 subs, and URL + Content filtering
+- P1 (Premium Data Protection): Base, A1 subs, and ATP Cloud
+- P2 (Premium Edge Protection): Base, A2 subs, and ATP Cloud
+If this rule uses security features requiring a higher subscription than ${srxLicense}, flag this in your analysis and suggest alternatives available at the ${srxLicense} subscription.` : '';
 
   // Build security profiles summary
   const profileEntries = Object.entries(rule.security_profiles || {});
@@ -656,17 +657,18 @@ export function buildFullReviewPrompt(intermediateConfig, targetModel, srxLicens
 
   const licenseAnalysis = srxLicense ? `
 
-LICENSE TIER ANALYSIS:
-The target SRX has license level: ${srxLicense}
-- A1: AppID, basic IPS, stateful firewall
-- A2: A1 + advanced IPS, AppQoS
-- P1: A2 + UTM (antivirus, anti-spam, web filtering), SecIntel
-- P2: P1 + ATP Cloud, encrypted traffic analysis
-Flag any rules that use security profiles requiring a higher license tier than ${srxLicense}. Specifically:
-- Antivirus/URL-filtering/file-blocking/anti-spam require P1+
-- WildFire/ATP Cloud features require P2
-- Advanced IPS requires A2+
-Suggest alternatives or configuration adjustments for features not covered by the ${srxLicense} license.` : '';
+SUBSCRIPTION ANALYSIS:
+The target SRX subscription: ${srxLicense}
+- Base (no subscriptions): Stateful FW, SSL B&I, Full Routing, VxLAN included
+- A1 (Advanced Data Protection): Base + SDC, AppSecure, IPS, & SecIntel
+- A2 (Advanced Edge Protection): Base, A1 subs, and URL + Content filtering
+- P1 (Premium Data Protection): Base, A1 subs, and ATP Cloud
+- P2 (Premium Edge Protection): Base, A2 subs, and ATP Cloud
+Flag any rules that use security features requiring a higher subscription than ${srxLicense}. Specifically:
+- URL/Content filtering requires A2+
+- ATP Cloud features require P1 or P2
+- IPS/AppSecure/SecIntel require A1+
+Suggest alternatives or configuration adjustments for features not covered by the ${srxLicense} subscription.` : '';
 
   const systemPrompt = loadSystemPrompt() + `
 

@@ -2537,4 +2537,97 @@ config firewall policy
     next
 end`,
   },
+
+  // =========================================================================
+  // SAMPLE: Cisco ASA Basic
+  // =========================================================================
+  cisco_basic: {
+    vendor: 'cisco_asa',
+    label: 'Basic (8 rules)',
+    description: 'Cisco ASA: 3 zones, object networks, object-groups, 8 ACL rules, NAT',
+    xml: `ASA Version 9.16
+!
+hostname FW-EDGE-01
+!
+interface GigabitEthernet1/1
+ nameif inside
+ security-level 100
+ ip address 10.1.1.1 255.255.255.0
+!
+interface GigabitEthernet1/2
+ nameif outside
+ security-level 0
+ ip address 203.0.113.1 255.255.255.252
+!
+interface GigabitEthernet1/3
+ nameif dmz
+ security-level 50
+ ip address 172.16.1.1 255.255.255.0
+!
+object network web-server
+ host 172.16.1.10
+ description Primary web server in DMZ
+object network mail-server
+ host 172.16.1.20
+ description Exchange mail server
+object network internal-net
+ subnet 10.1.0.0 255.255.0.0
+ description Internal corporate network
+object network db-server
+ host 10.1.2.50
+ description PostgreSQL database server
+object network dns-server
+ host 10.1.1.53
+ description Internal DNS resolver
+object network guest-net
+ subnet 10.99.0.0 255.255.255.0
+ description Guest WiFi network
+!
+object-group network DMZ-SERVERS
+ network-object object web-server
+ network-object object mail-server
+object-group network INTERNAL-ALL
+ network-object object internal-net
+ network-object object guest-net
+!
+object-group service WEB-SERVICES tcp
+ port-object eq www
+ port-object eq https
+object-group service MAIL-SERVICES tcp
+ port-object eq smtp
+ port-object eq 993
+ port-object eq 587
+object-group service MGMT-SERVICES tcp
+ port-object eq ssh
+ port-object eq 3389
+!
+access-list outside_access_in extended remark Allow inbound web traffic to DMZ
+access-list outside_access_in extended permit tcp any object web-server object-group WEB-SERVICES log
+access-list outside_access_in extended remark Allow inbound mail
+access-list outside_access_in extended permit tcp any object mail-server object-group MAIL-SERVICES log
+access-list outside_access_in extended remark Deny all other inbound
+access-list outside_access_in extended deny ip any any log
+!
+access-list inside_access_in extended remark Allow internal to internet
+access-list inside_access_in extended permit tcp object internal-net any object-group WEB-SERVICES
+access-list inside_access_in extended remark Allow DNS
+access-list inside_access_in extended permit udp object internal-net any eq domain
+access-list inside_access_in extended remark Allow internal to DMZ servers
+access-list inside_access_in extended permit tcp object internal-net object-group DMZ-SERVERS object-group WEB-SERVICES
+access-list inside_access_in extended remark Allow MGMT to servers
+access-list inside_access_in extended permit tcp 10.1.1.0 255.255.255.0 object-group DMZ-SERVERS object-group MGMT-SERVICES
+access-list inside_access_in extended remark Deny all other internal
+access-list inside_access_in extended deny ip any any log
+!
+access-group outside_access_in in interface outside
+access-group inside_access_in in interface inside
+!
+object network internal-net
+ nat (inside,outside) dynamic interface
+object network web-server
+ nat (dmz,outside) static 203.0.113.10
+object network mail-server
+ nat (dmz,outside) static 203.0.113.20
+`,
+  },
 };

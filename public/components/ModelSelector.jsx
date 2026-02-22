@@ -16,9 +16,11 @@ import {
   SRX_MODELS,
   SRX_SOURCE_MODELS,
   FORTIGATE_SOURCE_MODELS,
+  CISCO_SOURCE_MODELS,
   detectPanosModel,
   detectSrxModel,
   detectFortigateModel,
+  detectCiscoModel,
   suggestSrxModel,
   getThroughputDisplay,
   THROUGHPUT_LABELS,
@@ -45,6 +47,7 @@ export default function ModelSelector({
 
   const isSrxSource = sourceVendor === 'srx';
   const isFortigateSource = sourceVendor === 'fortigate';
+  const isCiscoSource = sourceVendor === 'cisco_asa';
 
   // Auto-detect source model on mount
   useEffect(() => {
@@ -54,6 +57,8 @@ export default function ModelSelector({
         detected = detectSrxModel(intermediateConfig);
       } else if (isFortigateSource) {
         detected = detectFortigateModel(intermediateConfig);
+      } else if (isCiscoSource) {
+        detected = detectCiscoModel(intermediateConfig);
       } else {
         detected = detectPanosModel(intermediateConfig);
       }
@@ -62,7 +67,7 @@ export default function ModelSelector({
         setSelectedSource(detected.model);
       }
     }
-  }, [intermediateConfig, sourceModel, isSrxSource, isFortigateSource]);
+  }, [intermediateConfig, sourceModel, isSrxSource, isFortigateSource, isCiscoSource]);
 
   // Re-suggest SRX whenever source or metric changes
   useEffect(() => {
@@ -75,12 +80,12 @@ export default function ModelSelector({
     }
   }, [selectedSource, throughputMetric]);
 
-  const sourceModelsDb = isSrxSource ? SRX_SOURCE_MODELS : isFortigateSource ? FORTIGATE_SOURCE_MODELS : PANOS_MODELS;
+  const sourceModelsDb = isSrxSource ? SRX_SOURCE_MODELS : isFortigateSource ? FORTIGATE_SOURCE_MODELS : isCiscoSource ? CISCO_SOURCE_MODELS : PANOS_MODELS;
   const sourceInfo = sourceModelsDb[selectedSource];
   const targetInfo = SRX_MODELS[selectedTarget];
 
   // Group models by tier for dropdown optgroups
-  const sourceGroups = useMemo(() => groupByTier(sourceModelsDb), [isSrxSource, isFortigateSource]);
+  const sourceGroups = useMemo(() => groupByTier(sourceModelsDb), [isSrxSource, isFortigateSource, isCiscoSource]);
   const srxGroups = useMemo(() => groupByTier(SRX_MODELS), []);
 
   const metricLabel = METRIC_PREFIX[throughputMetric] || 'L7';
@@ -129,7 +134,7 @@ export default function ModelSelector({
           {/* Source Model */}
           <div className="model-section">
             <h3 className="model-section-title">
-              Source Firewall ({isSrxSource ? 'Juniper SRX' : isFortigateSource ? 'FortiGate' : 'PAN-OS'})
+              Source Firewall ({isSrxSource ? 'Juniper SRX' : isFortigateSource ? 'FortiGate' : isCiscoSource ? 'Cisco ASA/FTD' : 'PAN-OS'})
             </h3>
 
             {detection && (
@@ -146,7 +151,7 @@ export default function ModelSelector({
               value={selectedSource}
               onChange={(e) => setSelectedSource(e.target.value)}
             >
-              <option value="">-- Select {isSrxSource ? 'SRX' : isFortigateSource ? 'FortiGate' : 'PAN-OS'} Model (optional) --</option>
+              <option value="">-- Select {isSrxSource ? 'SRX' : isFortigateSource ? 'FortiGate' : isCiscoSource ? 'Cisco' : 'PAN-OS'} Model (optional) --</option>
               {Object.entries(sourceGroups).map(([tier, models]) => (
                 <optgroup key={tier} label={tierLabel(tier)}>
                   {models.map(m => (
@@ -159,7 +164,7 @@ export default function ModelSelector({
             </select>
 
             {sourceInfo && (
-              <ModelInfoCard model={sourceInfo} vendor={isSrxSource ? 'srx' : isFortigateSource ? 'fortigate' : 'panos'} metric={throughputMetric} />
+              <ModelInfoCard model={sourceInfo} vendor={isSrxSource ? 'srx' : isFortigateSource ? 'fortigate' : isCiscoSource ? 'cisco_asa' : 'panos'} metric={throughputMetric} />
             )}
           </div>
 
@@ -202,10 +207,10 @@ export default function ModelSelector({
             )}
           </div>
 
-          {/* SRX License Level */}
+          {/* SRX Subscriptions */}
           {selectedTarget && (
             <div className="model-section" style={{ marginTop: 16 }}>
-              <h3 className="model-section-title">SRX License Level</h3>
+              <h3 className="model-section-title">SRX Subscriptions</h3>
               <div className="license-tier-grid">
                 {Object.entries(SRX_LICENSE_TIERS).map(([key, tier]) => (
                   <label
@@ -223,6 +228,9 @@ export default function ModelSelector({
                     <div className="license-tier-desc">{tier.description}</div>
                   </label>
                 ))}
+              </div>
+              <div className="subscription-footnote">
+                <strong>SDC</strong> = Security Director Cloud &nbsp;|&nbsp; <strong>ATP</strong> = Advanced Threat Protection (Advanced Antimalware with ML on SRX, Adaptive Threat Profiling, Reverse Shell Detection, Encrypted Traffic Insights, Dynamic Signature Generation, and ML DNS Security)
               </div>
             </div>
           )}

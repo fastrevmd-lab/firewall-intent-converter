@@ -224,7 +224,19 @@ export function detectVendor(configText) {
     return { vendor: 'fortigate', format: 'fortigate', confidence: 0.85 };
   }
 
-  // Placeholder: Cisco ASA detection (future)
+  // Cisco ASA: access-list + access-group + nameif/security-level markers
+  if (trimmed.includes('access-list') && trimmed.includes('access-group') && (trimmed.includes('nameif') || trimmed.includes('security-level'))) {
+    return { vendor: 'cisco_asa', format: 'text', confidence: 0.95 };
+  }
+  if (trimmed.includes('ASA Version') && trimmed.includes('access-list')) {
+    return { vendor: 'cisco_asa', format: 'text', confidence: 0.95 };
+  }
+  if (trimmed.includes('access-list') && trimmed.includes('extended') && (trimmed.includes('nameif') || trimmed.includes('object network'))) {
+    return { vendor: 'cisco_asa', format: 'text', confidence: 0.9 };
+  }
+  if (trimmed.includes('object network') && trimmed.includes('object-group network') && trimmed.includes('access-list')) {
+    return { vendor: 'cisco_asa', format: 'text', confidence: 0.85 };
+  }
   if (trimmed.includes('access-list') && trimmed.includes('access-group')) {
     return { vendor: 'cisco_asa', format: 'text', confidence: 0.7 };
   }

@@ -30,6 +30,7 @@ export default function PolicyTable({
 
   const isSrx = viewMode === 'srx';
   const isFortigate = viewMode === 'fortigate';
+  const isCisco = viewMode === 'cisco';
 
   // Build a lookup of warning counts per rule
   const warningsByRule = useMemo(() => {
@@ -822,6 +823,157 @@ export default function PolicyTable({
     </table>
   );
 
+  /** Cisco ASDM/FMC action display */
+  const renderCiscoAction = (policy) => {
+    const cisco = policy._cisco || {};
+    const isPermit = policy.action === 'allow';
+    const label = isPermit ? 'Permit' : 'Deny';
+    const cls = isPermit ? 'cisco-permit' : 'cisco-deny';
+    const icon = isPermit ? '\u2713' : '\u2715';
+    return (
+      <div className={`cisco-action ${cls}`}>
+        <span className="cisco-action-icon">{icon}</span>
+        <span className="cisco-action-text">{label}</span>
+      </div>
+    );
+  };
+
+  /** Cisco protocol display */
+  const renderCiscoProtocol = (policy) => {
+    const cisco = policy._cisco || {};
+    const proto = cisco.protocol || 'ip';
+    return <span className="cisco-protocol">{proto.toUpperCase()}</span>;
+  };
+
+  /** Cisco security level badge */
+  const renderCiscoSecLevel = (policy) => {
+    const cisco = policy._cisco || {};
+    const level = cisco.securityLevel;
+    if (level === undefined || level === null) return null;
+    const cls = level >= 80 ? 'cisco-sec-high' : level >= 40 ? 'cisco-sec-med' : 'cisco-sec-low';
+    return <span className={`cisco-sec-badge ${cls}`} title={`Security Level ${level}`}>L{level}</span>;
+  };
+
+  /** Cisco port/service display */
+  const renderCiscoService = (policy) => {
+    const cisco = policy._cisco || {};
+    const svcs = policy.services || [];
+    if (svcs.length === 0) return <span style={{ opacity: 0.5 }}>any</span>;
+    return svcs.map((s, i) => (
+      <span key={i} className="cisco-svc-chip">{s}</span>
+    ));
+  };
+
+  /** Cisco log level display */
+  const renderCiscoLog = (policy) => {
+    const cisco = policy._cisco || {};
+    if (!policy.log_end && !policy.log_start) return <span className="cisco-log-off">-</span>;
+    return (
+      <span className="cisco-log-on" title={cisco.logLevel ? `Level: ${cisco.logLevel}` : 'Logging enabled'}>
+        {cisco.logLevel || 'Yes'}
+      </span>
+    );
+  };
+
+  /** Cisco hit count placeholder */
+  const renderCiscoHitCount = (policy) => {
+    return <span className="cisco-hitcount">-</span>;
+  };
+
+  /** Render the Cisco ASDM-style table */
+  const renderCiscoTable = () => (
+    <table className="policy-table cisco-table">
+      <thead>
+        <tr>
+          <th onClick={() => handleSort('_rule_index')} style={{ width: 50 }}>#ACE{sortIndicator('_rule_index')}</th>
+          <th onClick={() => handleSort('action')} style={{ width: 80 }}>Action{sortIndicator('action')}</th>
+          <th onClick={() => handleSort('name')}>Name / Remark{sortIndicator('name')}</th>
+          <th>Protocol</th>
+          <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
+          <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          <th>Service / Port</th>
+          <th style={{ width: 52 }}>Log</th>
+          <th style={{ width: 50 }}>Hits</th>
+          <th style={{ width: 36 }}></th>
+        </tr>
+      </thead>
+      <tbody>
+        {displayPolicies.map((policy) => {
+          const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
+          const realIndex = getRealIndex(policy);
+          const cisco = policy._cisco || {};
+
+          return (
+            <tr
+              key={`${policy.name}-${policy._rule_index}`}
+              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule cisco-inactive-row' : ''}`}
+              onClick={() => onSelectRule(isSelected ? null : policy)}
+              style={{ cursor: 'pointer' }}
+            >
+              <td>
+                <div className="cisco-ace-num">
+                  {policy._rule_index}
+                  {policy.disabled && <span className="cisco-inactive-badge">X</span>}
+                </div>
+              </td>
+              <td>{renderCiscoAction(policy)}</td>
+              <td>
+                <div className="cisco-name-cell">
+                  {renderEditableCell(policy, 'name', (
+                    <span className="cisco-rule-name">{policy.name}</span>
+                  ))}
+                  {cisco.aclName && (
+                    <span className="cisco-acl-badge" title={`ACL: ${cisco.aclName}`}>{cisco.aclName}</span>
+                  )}
+                  {renderCiscoSecLevel(policy)}
+                </div>
+              </td>
+              <td>{renderCiscoProtocol(policy)}</td>
+              <td>
+                {renderEditableCell(policy, 'src_addresses', (
+                  <div className="cisco-addr-cell">
+                    {(policy.src_zones || []).length > 0 && (
+                      <span className="cisco-iface-label" title={`Interface: ${policy.src_zones.join(', ')}`}>
+                        {policy.src_zones.join(', ')}
+                      </span>
+                    )}
+                    {policy.negate_source && <span className="cell-chip negate-chip">NOT</span>}
+                    {renderCellValues(policy.src_addresses)}
+                  </div>
+                ))}
+              </td>
+              <td>
+                {renderEditableCell(policy, 'dst_addresses', (
+                  <div className="cisco-addr-cell">
+                    {(policy.dst_zones || []).length > 0 && (
+                      <span className="cisco-iface-label" title={`Interface: ${policy.dst_zones.join(', ')}`}>
+                        {policy.dst_zones.join(', ')}
+                      </span>
+                    )}
+                    {policy.negate_destination && <span className="cell-chip negate-chip">NOT</span>}
+                    {renderCellValues(policy.dst_addresses)}
+                  </div>
+                ))}
+              </td>
+              <td>{renderEditableCell(policy, 'services', renderCiscoService(policy))}</td>
+              <td style={{ textAlign: 'center' }}>{renderCiscoLog(policy)}</td>
+              <td style={{ textAlign: 'center' }}>{renderCiscoHitCount(policy)}</td>
+              <td>
+                <button
+                  className="btn-icon btn-icon-danger"
+                  onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }}
+                  title="Delete ACE"
+                >
+                  x
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Filter bar */}
@@ -829,7 +981,7 @@ export default function PolicyTable({
         <input
           className="filter-input"
           type="text"
-          placeholder={isFortigate ? 'Filter policies...' : isSrx ? 'Filter policies...' : 'Filter rules...'}
+          placeholder={isCisco ? 'Filter ACEs...' : isFortigate ? 'Filter policies...' : isSrx ? 'Filter policies...' : 'Filter rules...'}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
@@ -850,17 +1002,17 @@ export default function PolicyTable({
           {displayPolicies.length} of {policies.length}
         </span>
         <button className="btn btn-secondary btn-sm" onClick={onAddRule}>
-          {isSrx || isFortigate ? '+ Add Policy' : '+ Add Rule'}
+          {isCisco ? '+ Add ACE' : isSrx || isFortigate ? '+ Add Policy' : '+ Add Rule'}
         </button>
       </div>
 
       {/* Table */}
       <div className="policy-table-container">
-        {isFortigate ? renderFortigateTable() : isSrx ? renderSrxTable() : renderPanosTable()}
+        {isCisco ? renderCiscoTable() : isFortigate ? renderFortigateTable() : isSrx ? renderSrxTable() : renderPanosTable()}
 
         {displayPolicies.length === 0 && (
           <div className="empty-state">
-            <p>{isSrx || isFortigate ? 'No security policies match your filter.' : 'No security rules match your filter.'}</p>
+            <p>{isCisco ? 'No access control entries match your filter.' : isSrx || isFortigate ? 'No security policies match your filter.' : 'No security rules match your filter.'}</p>
           </div>
         )}
       </div>

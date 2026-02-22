@@ -1,6 +1,6 @@
 # Firewall to Intent Converter
 
-A browser-based tool that converts firewall configurations into a vendor-neutral intermediate format for review, editing, and conversion to Juniper SRX. Supports **PAN-OS XML**, **Junos SRX**, and **FortiGate / FortiOS** as source formats. Paste or upload a config, review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.
+A browser-based tool that converts firewall configurations into a vendor-neutral intermediate format for review, editing, and conversion to Juniper SRX. Supports **PAN-OS XML**, **Junos SRX**, **FortiGate / FortiOS**, and **Cisco ASA / FTD** as source formats. Paste or upload a config, review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.
 
 ## Features
 
@@ -8,16 +8,18 @@ A browser-based tool that converts firewall configurations into a vendor-neutral
 - **PAN-OS XML parser** — Extracts security policies, NAT rules, zones, address objects, address groups, service objects, service groups, and security profile groups from PAN-OS XML configs
 - **Junos SRX parser** — Parses SRX `set` commands and hierarchical curly-brace format into the same intermediate schema (zones, address-book objects, address sets, security policies, NAT rule-sets, applications)
 - **FortiGate / FortiOS parser** — Parses FortiOS `config`/`edit`/`set`/`next`/`end` block format including firewall policies, address objects, address groups, service objects, service groups, zones, VIPs (destination NAT), IP pools, central SNAT maps, and security profiles (AV, web filter, IPS, application control, SSL inspection, DNS filter, DLP, email filter)
-- **Auto-detection** — Automatically identifies the source format (PAN-OS XML, Junos SRX, or FortiOS) and routes to the correct parser
+- **Cisco ASA / FTD parser** — Parses Cisco ASA/FTD configuration including interfaces (nameif, security-level, IP), object network/service definitions, object-group network/service/protocol groups, extended access-lists with remarks, access-group bindings, and object NAT (dynamic/static). Zones are derived from interface nameif + security-level
+- **Auto-detection** — Automatically identifies the source format (PAN-OS XML, Junos SRX, FortiOS, or Cisco ASA) and routes to the correct parser
 - **SRX output** — Generates Juniper SRX `set` commands or hierarchical XML, including zones, address books, application mappings, security policies, and NAT rule-sets
 - **Application mapping** — Automatically maps PAN-OS application names to Junos equivalents (e.g., `web-browsing` → `junos-http`)
 - **Sanitization** — One-click replacement of sensitive data (IPs, hostnames, keys) with placeholders before sharing or sending to an LLM. Originals are restored on export
 
 ### Dual Platform View
-- **"from" / "to" toggle** — Switch between source view ("from PAN-OS", "from SRX", or "from FortiGate") and target view ("to SRX") above the tab bar
+- **"from" / "to" toggle** — Switch between source view ("from PAN-OS", "from SRX", "from FortiGate", or "from Cisco ASA") and target view ("to SRX") above the tab bar
 - **SRX-style table** — When source is SRX (or viewing the "to SRX" tab), policies display in a zone-grouped table with SRX terminology (permit/deny/reject, security-zone, address-book)
 - **PAN-OS-style table** — When source is PAN-OS, the "from" tab shows the familiar PAN-OS table layout with allow/deny actions
 - **FortiGate-style table** — When source is FortiGate, the "from" tab shows a FortiOS-style policy table with FortiGate terminology (ACCEPT/DENY, From/To interfaces, Schedule, NAT toggle, security profile icons for AV/WF/IPS/App/SSL)
+- **Cisco ASDM-style table** — When source is Cisco ASA/FTD, the "from" tab shows a Cisco ASDM-style access control table with ACE numbering, Permit/Deny actions, ACL name badges, security level indicators, protocol chips, interface labels, log status, and hit counts
 - **Negate support** — Source/destination address negation flags (PAN-OS `negate-source`/`negate-destination`, SRX `except`) displayed and editable in both views
 - **Profile group expansion** — PAN-OS profile group references are automatically resolved into individual security profiles
 
@@ -28,12 +30,13 @@ A browser-based tool that converts firewall configurations into a vendor-neutral
 - **Add / delete rules** — Create new rules or remove existing ones from the UI
 
 ### Hardware Awareness
-- **Model selector** — Pick source firewall model (PAN-OS, SRX, or FortiGate, including EOS/legacy models) and target SRX model from a built-in hardware database with port counts and throughput specs
-- **Auto-detection** — Heuristics detect the likely source model from interface naming in the config (PAN-OS `ethernet`, SRX `ge-`/`xe-`/`et-`, FortiGate `port`/`wan`/`internal`/`dmz` formats)
+- **Model selector** — Pick source firewall model (PAN-OS, SRX, FortiGate, or Cisco, including EOS/legacy models) and target SRX model from a built-in hardware database with port counts and throughput specs
+- **Auto-detection** — Heuristics detect the likely source model from interface naming in the config (PAN-OS `ethernet`, SRX `ge-`/`xe-`/`et-`, FortiGate `port`/`wan`/`internal`/`dmz`, Cisco `GigabitEthernet`/`Ethernet1/`/`TenGigabitEthernet` formats)
 - **FortiGate models** — Full F-series (40F through 4400F), G-series (70G through 900G), and EOS E-series (30E through 500E) with port counts and throughput specs
+- **Cisco models** — Firepower 1000 series (FPR-1010 through FPR-1150), 2100 series (FPR-2110 through FPR-2140), 3100 series (FPR-3105 through FPR-3140), 4100 series (FPR-4112 through FPR-4145), 4200 series (FPR-4215 through FPR-4245), virtual (ASAv, FTDv), and EOS ASA 5500-X series (ASA-5506-X through ASA-5555-X)
 - **EOS SRX models** — Legacy/End-of-Sale SRX models (SRX100, SRX210, SRX240, SRX550, SRX650, SRX1400, SRX3400, SRX3600, etc.) available as source models for migration projects
 - **Interface mapper** — Per-zone mapping of source interfaces to SRX interfaces with auto-mapping, tunnel, and loopback support
-- **SRX license tiers** — Select the target SRX license level (Base, A1, A2, P1, P2) to gate feature availability and inform LLM reviews
+- **SRX subscriptions** — Select the target SRX subscription level (Base, A1 Advanced Data Protection, A2 Advanced Edge Protection, P1 Premium Data Protection, P2 Premium Edge Protection) to gate feature availability and inform LLM reviews. Includes footnote explaining SDC (Security Director Cloud) and ATP (Advanced Threat Protection) capabilities
 
 ### Rule Review Workflow
 - **Review status tracking** — Every rule starts as *Unreviewed* and can progress through *LLM Reviewed* to *Accepted*. Disabled rules show a *Disabled* label. Status labels are color-coded in the policy table
@@ -48,7 +51,7 @@ A browser-based tool that converts firewall configurations into a vendor-neutral
 - **Editable system prompt** — Customize the expert system prompt used for all LLM reviews, with a built-in default covering SRX best practices, zone architecture, logging, UTM, NAT, compliance, and migration guidance
 - **Structured responses** — LLM returns JSON with analysis, per-field suggestions, and a verdict — parsed into interactive cards with Import buttons
 - **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
-- **License-aware prompts** — SRX license level is included in LLM prompts so suggestions account for available features
+- **Subscription-aware prompts** — SRX subscription level is included in LLM prompts so suggestions account for available features
 
 ### Push & Integration
 - **Push via MCP** — Connect to an MCP server to push configurations directly to SRX devices (configurable in Settings)
@@ -87,11 +90,11 @@ NODE_ENV=production node server.js   # Serves static dist/ + API
 
 ### 1. Load a Configuration
 
-Select your source vendor from the dropdown (Junos SRX, PAN-OS, or FortiGate), then paste a configuration into the left panel or click one of the built-in sample configs. Then click **Parse**. The tool auto-detects the source format.
+Select your source vendor from the dropdown (Junos SRX, PAN-OS, FortiGate, or Cisco ASA/FTD), then paste a configuration into the left panel or click one of the built-in sample configs. Then click **Parse**. The tool auto-detects the source format.
 
 ### 2. Select Hardware Models
 
-After parsing, a modal prompts you to select the source model and target SRX model. The tool auto-detects the likely source model from interface names (PAN-OS, SRX, or FortiGate). For FortiGate sources, all current F/G-series and legacy E-series models are available. You can also select the SRX license tier (Base/A1/A2/P1/P2). Skip this or change it later via the **Models** button.
+After parsing, a modal prompts you to select the source model and target SRX model. The tool auto-detects the likely source model from interface names (PAN-OS, SRX, FortiGate, or Cisco). For FortiGate sources, all current F/G-series and legacy E-series models are available. For Cisco sources, all Firepower 1000/2100/3100/4100/4200 series, virtual appliances, and EOS ASA 5500-X models are available. You can also select the SRX subscription (Base/A1/A2/P1/P2). Skip this or change it later via the **Models** button.
 
 ### 3. Map Interfaces
 
@@ -140,6 +143,7 @@ firewall-intent-converter/
 │   │   ├── panos-parser.js       # PAN-OS XML → intermediate JSON
 │   │   ├── srx-parser.js         # Junos SRX set/hierarchical → intermediate JSON
 │   │   ├── fortigate-parser.js   # FortiOS config/edit/set → intermediate JSON
+│   │   ├── cisco-asa-parser.js   # Cisco ASA/FTD → intermediate JSON
 │   │   └── parser-utils.js       # Shared parsing helpers + vendor detection
 │   ├── converters/
 │   │   ├── srx-converter.js      # Intermediate JSON → SRX set commands
@@ -167,12 +171,12 @@ firewall-intent-converter/
 │   │   ├── ModelSelector.jsx     # Modal — source/target hardware model picker
 │   │   ├── InterfaceMapper.jsx   # Modal — per-zone interface mapping
 │   │   ├── LLMSettings.jsx       # Modal — LLM provider config, MCP connection, system prompt
-│   │   └── sample-configs.jsx    # Built-in sample configs (PAN-OS + SRX)
+│   │   └── sample-configs.jsx    # Built-in sample configs (PAN-OS, SRX, FortiGate, Cisco)
 │   ├── utils/
 │   │   ├── llm-client.js         # Browser-side LLM API client (multi-provider)
 │   │   └── srx-view-transforms.js # SRX display transforms + license tier data
 │   └── data/
-│       └── hardware-db.js        # PAN-OS + SRX model database (current + EOS)
+│       └── hardware-db.js        # PAN-OS, SRX, FortiGate + Cisco model database (current + EOS)
 └── dist/                         # Production build output (generated)
 ```
 
@@ -180,7 +184,7 @@ firewall-intent-converter/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/parse` | Parse config text (PAN-OS XML, Junos SRX, or FortiOS) into vendor-neutral intermediate JSON. Auto-detects source format. |
+| `POST` | `/api/parse` | Parse config text (PAN-OS XML, Junos SRX, FortiOS, or Cisco ASA) into vendor-neutral intermediate JSON. Auto-detects source format. |
 | `POST` | `/api/convert` | Convert intermediate JSON to SRX output (set commands or XML) |
 | `POST` | `/api/sanitize` | Replace sensitive data in config text with placeholders |
 
