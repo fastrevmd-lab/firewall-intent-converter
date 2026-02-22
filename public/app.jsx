@@ -352,17 +352,19 @@ export default function App() {
   }, [selectedRule, intermediateConfig]);
 
   /** Handle Review button click — only available in SRX view */
+  const [showReviewWarning, setShowReviewWarning] = useState(false);
+
   const handleReviewClick = useCallback(() => {
     if (platformView !== 'srx') {
       setError('Switch to the SRX view to start the full-ruleset review.');
       return;
     }
     if (!allRulesAccepted) {
-      setError(`All rules must be accepted before full review (${reviewProgress.accepted}/${reviewProgress.total} accepted)`);
+      setShowReviewWarning(true);
       return;
     }
     setReviewMode(true);
-  }, [allRulesAccepted, reviewProgress, platformView]);
+  }, [allRulesAccepted, platformView]);
 
   /** Switch platform view — exit review mode when leaving SRX */
   const handlePlatformViewChange = useCallback((view) => {
@@ -577,11 +579,11 @@ export default function App() {
                       <button
                         className="btn btn-secondary btn-sm"
                         onClick={handleReviewClick}
-                        style={{ margin: '6px 2px', opacity: allRulesAccepted ? 1 : 0.5 }}
+                        style={{ margin: '6px 2px' }}
                         title={
                           allRulesAccepted
                             ? 'Start full ruleset review with LLM'
-                            : `${reviewProgress.accepted}/${reviewProgress.total} rules accepted`
+                            : `${reviewProgress.accepted}/${reviewProgress.total} rules accepted — click to review anyway`
                         }
                       >
                         Review
@@ -813,6 +815,35 @@ export default function App() {
               </button>
               <button className="btn btn-primary" onClick={() => { setShowConvertConfirm(false); handleConvert('set'); }}>
                 Convert Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review warning — unaccepted policies */}
+      {showReviewWarning && (
+        <div className="modal-overlay" onClick={() => setShowReviewWarning(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: 440 }}>
+            <div className="modal-header" style={{ borderBottomColor: 'rgba(234, 179, 8, 0.3)' }}>
+              <h2 style={{ color: 'var(--warning)' }}>Unaccepted Policies</h2>
+              <button className="modal-close" onClick={() => setShowReviewWarning(false)}>x</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: 8 }}>
+                <strong>{reviewProgress.total - reviewProgress.accepted}</strong> of {reviewProgress.total} policies
+                have not been accepted yet.
+              </p>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Starting the full-ruleset review without accepting all policies means the LLM will review rules that haven't been individually validated.
+              </p>
+            </div>
+            <div className="modal-footer" style={{ gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setShowReviewWarning(false)}>
+                Go Back
+              </button>
+              <button className="btn btn-primary" onClick={() => { setShowReviewWarning(false); setReviewMode(true); }}>
+                Review Anyway
               </button>
             </div>
           </div>
