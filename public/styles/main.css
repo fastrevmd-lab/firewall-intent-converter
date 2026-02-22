@@ -186,6 +186,20 @@ html, body, #root {
   padding: 16px;
 }
 
+/* Vendor selector dropdown in panel header */
+.vendor-select {
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+.vendor-select:hover { border-color: var(--accent); }
+.vendor-select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
 /* --- Left Panel: Config Input --- */
 .config-input-panel {
   grid-column: 1;
@@ -2464,4 +2478,153 @@ html, body, #root {
   font-size: 10px;
   color: var(--text-muted);
   font-weight: 400;
+}
+
+/* ================================================================= */
+/* FortiGate / FortiOS Policy Table Styles                           */
+/* ================================================================= */
+
+/* Table-level tweaks */
+.policy-table.fg-table td {
+  vertical-align: middle;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.policy-table.fg-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+}
+
+/* Seq / ID cell with status indicator */
+.fg-seq {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.fg-seq-id {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* Policy name */
+.fg-name {
+  font-weight: 500;
+  font-size: 12px;
+}
+
+/* Status ON/OFF indicator */
+.fg-status-enabled {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+  letter-spacing: 0.5px;
+}
+.fg-status-disabled {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--error);
+  letter-spacing: 0.5px;
+}
+
+/* Disabled row style */
+.fg-disabled-row td {
+  opacity: 0.5;
+}
+
+/* Action cell */
+.fg-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fg-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+}
+.fg-action.fg-accept .fg-action-icon {
+  background: rgba(52, 211, 153, 0.2);
+  color: var(--success);
+  border: 1.5px solid rgba(52, 211, 153, 0.5);
+}
+.fg-action.fg-deny .fg-action-icon {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--error);
+  border: 1.5px solid rgba(239, 68, 68, 0.4);
+}
+.fg-action-text {
+  font-weight: 600;
+  font-size: 12px;
+}
+.fg-action.fg-accept .fg-action-text { color: var(--success); }
+.fg-action.fg-deny .fg-action-text { color: var(--error); }
+
+/* NAT badge */
+.fg-nat-on {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.fg-nat-off {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* Schedule cell */
+.fg-schedule {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Security Profiles icons row */
+.fg-profiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.fg-prof-icon {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+  cursor: default;
+}
+.fg-prof-av    { background: rgba(52, 211, 153, 0.15); color: var(--success); }
+.fg-prof-wf    { background: rgba(96, 165, 250, 0.15); color: var(--info); }
+.fg-prof-ips   { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+.fg-prof-app   { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
+.fg-prof-ssl   { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
+.fg-prof-dns   { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; }
+.fg-prof-email { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
+.fg-prof-dlp   { background: rgba(167, 139, 250, 0.15); color: #c4b5fd; }
+.fg-profile-none {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+.fg-profile-group {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
 }

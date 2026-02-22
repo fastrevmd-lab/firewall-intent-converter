@@ -207,9 +207,21 @@ export function detectVendor(configText) {
     }
   }
 
-  // Placeholder: FortiGate detection (future)
-  if (trimmed.includes('config system global') || trimmed.includes('config firewall policy')) {
-    return { vendor: 'fortigate', format: 'text', confidence: 0.8 };
+  // FortiGate / FortiOS: config/edit/set/next/end block format
+  if (trimmed.includes('config firewall policy') && (trimmed.includes('set srcintf') || trimmed.includes('set dstintf'))) {
+    return { vendor: 'fortigate', format: 'fortigate', confidence: 0.95 };
+  }
+  if (trimmed.includes('config system global') && (trimmed.includes('set hostname') || trimmed.includes('config firewall'))) {
+    return { vendor: 'fortigate', format: 'fortigate', confidence: 0.95 };
+  }
+  if (trimmed.includes('config firewall address') && trimmed.includes('set subnet')) {
+    return { vendor: 'fortigate', format: 'fortigate', confidence: 0.9 };
+  }
+  if (trimmed.includes('config firewall') && /\bedit\s+\d+\b/.test(trimmed) && trimmed.includes('\nnext')) {
+    return { vendor: 'fortigate', format: 'fortigate', confidence: 0.85 };
+  }
+  if (trimmed.includes('set uuid') && trimmed.includes('config firewall')) {
+    return { vendor: 'fortigate', format: 'fortigate', confidence: 0.85 };
   }
 
   // Placeholder: Cisco ASA detection (future)

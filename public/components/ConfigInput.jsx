@@ -9,7 +9,7 @@
  *   - Sanitize configuration to strip sensitive data
  *   - Show source/target model badges after parsing
  */
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { SAMPLE_CONFIGS } from './sample-configs.jsx';
 
 export default function ConfigInput({
@@ -25,6 +25,7 @@ export default function ConfigInput({
   onOpenModels,
 }) {
   const fileInputRef = useRef(null);
+  const [selectedVendor, setSelectedVendor] = useState('srx');
 
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
@@ -49,7 +50,15 @@ export default function ConfigInput({
     <div className="panel config-input-panel">
       <div className="panel-header">
         <h2>Source Configuration</h2>
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>PAN-OS XML / Junos SRX</span>
+        <select
+          className="vendor-select"
+          value={selectedVendor}
+          onChange={(e) => setSelectedVendor(e.target.value)}
+        >
+          <option value="srx">Junos SRX</option>
+          <option value="panos">PAN-OS</option>
+          <option value="fortigate">FortiGate</option>
+        </select>
       </div>
 
       <div className="panel-body" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -97,20 +106,22 @@ export default function ConfigInput({
           />
         </div>
 
-        {/* Sample config selector */}
+        {/* Sample config selector — filtered by selected vendor */}
         <div className="sample-selector">
           <label>Load Sample Config</label>
           <div className="sample-buttons">
-            {Object.entries(SAMPLE_CONFIGS).map(([key, sample]) => (
-              <button
-                key={key}
-                className="sample-btn"
-                onClick={() => loadSample(key)}
-                title={sample.description}
-              >
-                {sample.label}
-              </button>
-            ))}
+            {Object.entries(SAMPLE_CONFIGS)
+              .filter(([, sample]) => sample.vendor === selectedVendor)
+              .map(([key, sample]) => (
+                <button
+                  key={key}
+                  className="sample-btn"
+                  onClick={() => loadSample(key)}
+                  title={sample.description}
+                >
+                  {sample.label}
+                </button>
+              ))}
           </div>
         </div>
 
@@ -119,7 +130,12 @@ export default function ConfigInput({
           className="config-textarea"
           value={configText}
           onChange={(e) => onConfigChange(e.target.value)}
-          placeholder={"Paste your firewall configuration here...\n\nSupported formats:\n• PAN-OS XML configuration\n• Junos SRX set commands\n• Junos SRX hierarchical config"}
+          placeholder={selectedVendor === 'srx'
+            ? "Paste your Junos SRX configuration here...\n\nSupported formats:\n• SRX set commands\n• SRX hierarchical config"
+            : selectedVendor === 'fortigate'
+            ? "Paste your FortiGate configuration here...\n\nSupported format:\n• FortiOS config (config/edit/set/next/end)"
+            : "Paste your PAN-OS configuration here...\n\nSupported format:\n• PAN-OS XML configuration"
+          }
           spellCheck={false}
           style={{ flex: 1 }}
         />

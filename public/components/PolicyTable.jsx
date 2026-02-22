@@ -29,6 +29,7 @@ export default function PolicyTable({
   const [editValue, setEditValue] = useState('');
 
   const isSrx = viewMode === 'srx';
+  const isFortigate = viewMode === 'fortigate';
 
   // Build a lookup of warning counts per rule
   const warningsByRule = useMemo(() => {
@@ -680,6 +681,147 @@ export default function PolicyTable({
     );
   };
 
+  /** FortiGate action display */
+  const renderFortigateAction = (policy) => {
+    const action = policy.action === 'allow' ? 'ACCEPT' : policy.action === 'deny' ? 'DENY' : policy.action.toUpperCase();
+    const cls = policy.action === 'allow' ? 'fg-accept' : 'fg-deny';
+    const icon = policy.action === 'allow' ? '\u2713' : '\u2715';
+    return (
+      <div className={`fg-action ${cls}`}>
+        <span className="fg-action-icon">{icon}</span>
+        <span className="fg-action-text">{action}</span>
+      </div>
+    );
+  };
+
+  /** FortiGate security profile icons */
+  const renderFortigateProfiles = (policy) => {
+    const sp = policy.security_profiles || {};
+    const fg = policy._fortigate || {};
+    if (!fg.utm_status && Object.keys(sp).length === 0 && !policy.profile_group) {
+      return <span className="fg-profile-none">-</span>;
+    }
+
+    const profiles = [];
+    if (sp.virus) profiles.push({ key: 'av', label: 'AV', title: `Antivirus: ${sp.virus}`, cls: 'fg-prof-av' });
+    if (sp['url-filtering']) profiles.push({ key: 'wf', label: 'WF', title: `Web Filter: ${sp['url-filtering']}`, cls: 'fg-prof-wf' });
+    if (sp.vulnerability) profiles.push({ key: 'ips', label: 'IPS', title: `IPS: ${sp.vulnerability}`, cls: 'fg-prof-ips' });
+    if (sp['wildfire-analysis']) profiles.push({ key: 'app', label: 'App', title: `App Control: ${sp['wildfire-analysis']}`, cls: 'fg-prof-app' });
+    if (sp.decryption) profiles.push({ key: 'ssl', label: 'SSL', title: `SSL Inspection: ${sp.decryption}`, cls: 'fg-prof-ssl' });
+    if (sp['dns-security']) profiles.push({ key: 'dns', label: 'DNS', title: `DNS Filter: ${sp['dns-security']}`, cls: 'fg-prof-dns' });
+    if (sp['data-filtering']) profiles.push({ key: 'email', label: 'EM', title: `Email Filter: ${sp['data-filtering']}`, cls: 'fg-prof-email' });
+    if (sp['file-blocking']) profiles.push({ key: 'dlp', label: 'DLP', title: `DLP: ${sp['file-blocking']}`, cls: 'fg-prof-dlp' });
+
+    if (profiles.length === 0 && policy.profile_group) {
+      return <span className="fg-profile-group" title={`Profile Group: ${policy.profile_group}`}>{policy.profile_group}</span>;
+    }
+
+    return (
+      <div className="fg-profiles">
+        {profiles.map(p => (
+          <span key={p.key} className={`fg-prof-icon ${p.cls}`} title={p.title}>{p.label}</span>
+        ))}
+      </div>
+    );
+  };
+
+  /** FortiGate NAT badge */
+  const renderFortigateNat = (policy) => {
+    const fg = policy._fortigate || {};
+    return fg.nat
+      ? <span className="fg-nat-on" title="Source NAT enabled">Enabled</span>
+      : <span className="fg-nat-off">-</span>;
+  };
+
+  /** FortiGate status toggle indicator */
+  const renderFortigateStatus = (policy) => {
+    return policy.disabled
+      ? <span className="fg-status-disabled" title="Policy disabled">OFF</span>
+      : <span className="fg-status-enabled" title="Policy enabled">ON</span>;
+  };
+
+  /** Render the FortiGate / FortiOS view table */
+  const renderFortigateTable = () => (
+    <table className="policy-table fg-table">
+      <thead>
+        <tr>
+          <th onClick={() => handleSort('_rule_index')} style={{ width: 44 }}>Seq{sortIndicator('_rule_index')}</th>
+          <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
+          <th onClick={() => handleSort('src_zones')}>From{sortIndicator('src_zones')}</th>
+          <th onClick={() => handleSort('dst_zones')}>To{sortIndicator('dst_zones')}</th>
+          <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
+          <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          <th>Schedule</th>
+          <th onClick={() => handleSort('services')}>Service{sortIndicator('services')}</th>
+          <th onClick={() => handleSort('action')} style={{ width: 90 }}>Action{sortIndicator('action')}</th>
+          <th style={{ width: 52 }}>NAT</th>
+          <th>Security Profiles</th>
+          <th style={{ width: 40 }}>Log</th>
+          <th style={{ width: 36 }}></th>
+        </tr>
+      </thead>
+      <tbody>
+        {displayPolicies.map((policy) => {
+          const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
+          const realIndex = getRealIndex(policy);
+          const fg = policy._fortigate || {};
+
+          return (
+            <tr
+              key={`${policy.name}-${policy._rule_index}`}
+              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule fg-disabled-row' : ''}`}
+              onClick={() => onSelectRule(isSelected ? null : policy)}
+              style={{ cursor: 'pointer' }}
+            >
+              <td>
+                <div className="fg-seq">
+                  {renderFortigateStatus(policy)}
+                  <span className="fg-seq-id">{fg.policyid || policy._rule_index}</span>
+                </div>
+              </td>
+              <td>
+                {renderEditableCell(policy, 'name', (
+                  <span className="fg-name">{policy.name}</span>
+                ))}
+              </td>
+              <td>{renderEditableCell(policy, 'src_zones', renderCellValues(policy.src_zones))}</td>
+              <td>{renderEditableCell(policy, 'dst_zones', renderCellValues(policy.dst_zones))}</td>
+              <td>
+                {renderEditableCell(policy, 'src_addresses', (
+                  <>{policy.negate_source && <span className="cell-chip negate-chip">NOT</span>}{renderCellValues(policy.src_addresses)}</>
+                ))}
+              </td>
+              <td>
+                {renderEditableCell(policy, 'dst_addresses', (
+                  <>{policy.negate_destination && <span className="cell-chip negate-chip">NOT</span>}{renderCellValues(policy.dst_addresses)}</>
+                ))}
+              </td>
+              <td>
+                <span className="fg-schedule">{fg.schedule || 'always'}</span>
+              </td>
+              <td>{renderEditableCell(policy, 'services', renderCellValues(policy.services))}</td>
+              <td>{renderFortigateAction(policy)}</td>
+              <td>{renderFortigateNat(policy)}</td>
+              <td>{renderFortigateProfiles(policy)}</td>
+              <td style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                {policy.log_start && policy.log_end ? 'All' : policy.log_end ? 'UTM' : '-'}
+              </td>
+              <td>
+                <button
+                  className="btn-icon btn-icon-danger"
+                  onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }}
+                  title="Delete policy"
+                >
+                  x
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Filter bar */}
@@ -687,7 +829,7 @@ export default function PolicyTable({
         <input
           className="filter-input"
           type="text"
-          placeholder={isSrx ? 'Filter policies...' : 'Filter rules...'}
+          placeholder={isFortigate ? 'Filter policies...' : isSrx ? 'Filter policies...' : 'Filter rules...'}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
@@ -708,17 +850,17 @@ export default function PolicyTable({
           {displayPolicies.length} of {policies.length}
         </span>
         <button className="btn btn-secondary btn-sm" onClick={onAddRule}>
-          {isSrx ? '+ Add Policy' : '+ Add Rule'}
+          {isSrx || isFortigate ? '+ Add Policy' : '+ Add Rule'}
         </button>
       </div>
 
       {/* Table */}
       <div className="policy-table-container">
-        {isSrx ? renderSrxTable() : renderPanosTable()}
+        {isFortigate ? renderFortigateTable() : isSrx ? renderSrxTable() : renderPanosTable()}
 
         {displayPolicies.length === 0 && (
           <div className="empty-state">
-            <p>{isSrx ? 'No security policies match your filter.' : 'No security rules match your filter.'}</p>
+            <p>{isSrx || isFortigate ? 'No security policies match your filter.' : 'No security rules match your filter.'}</p>
           </div>
         )}
       </div>

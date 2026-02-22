@@ -17,6 +17,7 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 1: Basic Small Office
   // =========================================================================
   basic: {
+    vendor: 'panos',
     label: 'Basic (6 rules)',
     description: 'Small office: 2 zones, 5 address objects, 6 security rules, 1 source NAT',
     xml: `<?xml version="1.0"?>
@@ -265,6 +266,7 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 2: Medium Branch Office
   // =========================================================================
   medium: {
+    vendor: 'panos',
     label: 'Medium (12 rules)',
     description: 'Branch office: 3 zones (trust/untrust/dmz), address groups, service objects, 12 rules, 3 NAT',
     xml: `<?xml version="1.0"?>
@@ -581,6 +583,7 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 3: Complex Enterprise
   // =========================================================================
   complex: {
+    vendor: 'panos',
     label: 'Complex (19 rules)',
     description: 'Enterprise: 4 zones, custom apps, security profiles (UTM/IDP), EDL threat feeds (SecIntel), disabled rules, tags',
     xml: `<?xml version="1.0"?>
@@ -965,6 +968,7 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 4: Edge Cases
   // =========================================================================
   edgeCases: {
+    vendor: 'panos',
     label: 'Edge Cases (8 rules)',
     description: 'Tricky constructs: FQDN objects, any/any, tags, dynamic groups, drop actions, IP ranges',
     xml: `<?xml version="1.0"?>
@@ -1157,6 +1161,7 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 5: Real-World Production (sanitized)
   // =========================================================================
   realworld: {
+    vendor: 'panos',
     label: 'Real-World (23 rules)',
     description: 'Production PA-440: 5 zones, EDL threat feeds, geo-negate blocking, 3 security profile groups, VPN tunnel zone, application groups, 23 security rules, 3 NAT rules',
     xml: `<?xml version="1.0"?>
@@ -2175,6 +2180,7 @@ export const SAMPLE_CONFIGS = {
   // SAMPLE 6: SRX Set Commands (Junos)
   // =========================================================================
   srx_basic: {
+    vendor: 'srx',
     label: 'SRX Basic (6 rules)',
     description: 'SRX set commands: 3 zones, address objects, 6 security policies, source NAT',
     xml: `set version 21.4R3-S5.4
@@ -2245,5 +2251,290 @@ set security nat source rule-set trust-to-untrust rule source-nat-rule then sour
 
 set applications application custom-app-8080 protocol tcp
 set applications application custom-app-8080 destination-port 8080`,
+  },
+
+  // =========================================================================
+  // SAMPLE 7: FortiGate / FortiOS Configuration
+  // =========================================================================
+  fortigate_basic: {
+    vendor: 'fortigate',
+    label: 'FortiGate Basic (8 rules)',
+    description: 'FortiGate config: 3 zones, address objects, 8 firewall policies, VIP, security profiles',
+    xml: `config system global
+    set hostname "FG-60F-Branch01"
+    set timezone "US/Pacific"
+end
+
+config system interface
+    edit "wan1"
+        set vdom "root"
+        set ip 203.0.113.1 255.255.255.0
+        set type physical
+        set alias "WAN-Primary"
+    next
+    edit "wan2"
+        set vdom "root"
+        set ip 198.51.100.1 255.255.255.0
+        set type physical
+        set alias "WAN-Secondary"
+    next
+    edit "dmz"
+        set vdom "root"
+        set ip 172.16.10.1 255.255.255.0
+        set type physical
+        set alias "DMZ-Servers"
+    next
+    edit "internal1"
+        set vdom "root"
+        set ip 10.1.1.1 255.255.255.0
+        set type physical
+        set alias "LAN-Users"
+    next
+    edit "internal2"
+        set vdom "root"
+        set ip 10.1.2.1 255.255.255.0
+        set type physical
+        set alias "LAN-Servers"
+    next
+end
+
+config system zone
+    edit "LAN"
+        set interface "internal1" "internal2"
+    next
+    edit "WAN"
+        set interface "wan1" "wan2"
+    next
+    edit "DMZ"
+        set interface "dmz"
+    next
+end
+
+config firewall address
+    edit "WebServer1"
+        set type ipmask
+        set subnet 172.16.10.10 255.255.255.255
+        set comment "Primary web server"
+    next
+    edit "WebServer2"
+        set type ipmask
+        set subnet 172.16.10.11 255.255.255.255
+        set comment "Secondary web server"
+    next
+    edit "DBServer"
+        set type ipmask
+        set subnet 10.1.2.50 255.255.255.255
+        set comment "PostgreSQL database"
+    next
+    edit "LAN-Subnet"
+        set type ipmask
+        set subnet 10.1.0.0 255.255.0.0
+        set comment "All LAN networks"
+    next
+    edit "MailServer"
+        set type ipmask
+        set subnet 172.16.10.20 255.255.255.255
+        set comment "Exchange mail server"
+    next
+    edit "DNS-Servers"
+        set type ipmask
+        set subnet 10.1.2.53 255.255.255.255
+        set comment "Internal DNS"
+    next
+    edit "Guest-WiFi"
+        set type ipmask
+        set subnet 10.1.100.0 255.255.255.0
+        set comment "Guest wireless network"
+    next
+    edit "VPN-Pool"
+        set type iprange
+        set start-ip 10.10.10.1
+        set end-ip 10.10.10.254
+        set comment "SSL VPN address pool"
+    next
+end
+
+config firewall addrgrp
+    edit "DMZ-Servers"
+        set member "WebServer1" "WebServer2" "MailServer"
+        set comment "All DMZ servers"
+    next
+    edit "Internal-Servers"
+        set member "DBServer" "DNS-Servers"
+        set comment "Internal server group"
+    next
+end
+
+config firewall service custom
+    edit "Web-Services"
+        set protocol TCP/UDP/SCTP
+        set tcp-portrange 80 443 8080 8443
+        set comment "HTTP and HTTPS variants"
+    next
+    edit "DB-Access"
+        set protocol TCP/UDP/SCTP
+        set tcp-portrange 5432 3306
+        set comment "PostgreSQL and MySQL"
+    next
+end
+
+config firewall service group
+    edit "Internet-Services"
+        set member "HTTP" "HTTPS" "DNS"
+    next
+end
+
+config firewall vip
+    edit "WebServer1-VIP"
+        set type static-nat
+        set extip 203.0.113.10
+        set mappedip "172.16.10.10"
+        set extintf "wan1"
+        set portforward enable
+        set extport 443
+        set mappedport 443
+        set comment "HTTPS to WebServer1"
+    next
+    edit "MailServer-VIP"
+        set type static-nat
+        set extip 203.0.113.20
+        set mappedip "172.16.10.20"
+        set extintf "wan1"
+        set portforward enable
+        set extport 25
+        set mappedport 25
+        set comment "SMTP to mail server"
+    next
+end
+
+config firewall policy
+    edit 1
+        set name "LAN-to-Internet"
+        set uuid 11111111-1111-1111-1111-111111111111
+        set srcintf "LAN"
+        set dstintf "WAN"
+        set action accept
+        set srcaddr "LAN-Subnet"
+        set dstaddr "all"
+        set schedule "always"
+        set service "ALL"
+        set utm-status enable
+        set av-profile "default"
+        set webfilter-profile "default"
+        set ips-sensor "default"
+        set application-list "default"
+        set ssl-ssh-profile "certificate-inspection"
+        set logtraffic all
+        set nat enable
+        set comments "Allow LAN users to internet with full UTM"
+    next
+    edit 2
+        set name "DMZ-to-Internet"
+        set uuid 22222222-2222-2222-2222-222222222222
+        set srcintf "DMZ"
+        set dstintf "WAN"
+        set action accept
+        set srcaddr "DMZ-Servers"
+        set dstaddr "all"
+        set schedule "always"
+        set service "Internet-Services"
+        set utm-status enable
+        set av-profile "default"
+        set ips-sensor "default"
+        set logtraffic all
+        set nat enable
+        set comments "DMZ servers to internet for updates"
+    next
+    edit 3
+        set name "Inbound-HTTPS"
+        set uuid 33333333-3333-3333-3333-333333333333
+        set srcintf "WAN"
+        set dstintf "DMZ"
+        set action accept
+        set srcaddr "all"
+        set dstaddr "WebServer1-VIP"
+        set schedule "always"
+        set service "HTTPS"
+        set utm-status enable
+        set av-profile "default"
+        set ips-sensor "default"
+        set ssl-ssh-profile "deep-inspection"
+        set logtraffic all
+        set comments "Inbound HTTPS to web server via VIP"
+    next
+    edit 4
+        set name "Inbound-SMTP"
+        set uuid 44444444-4444-4444-4444-444444444444
+        set srcintf "WAN"
+        set dstintf "DMZ"
+        set action accept
+        set srcaddr "all"
+        set dstaddr "MailServer-VIP"
+        set schedule "always"
+        set service "SMTP"
+        set utm-status enable
+        set av-profile "default"
+        set ips-sensor "default"
+        set logtraffic all
+        set comments "Inbound SMTP to mail server"
+    next
+    edit 5
+        set name "LAN-to-DMZ"
+        set uuid 55555555-5555-5555-5555-555555555555
+        set srcintf "LAN"
+        set dstintf "DMZ"
+        set action accept
+        set srcaddr "LAN-Subnet"
+        set dstaddr "DMZ-Servers"
+        set schedule "always"
+        set service "Web-Services"
+        set logtraffic all
+        set comments "LAN access to DMZ servers"
+    next
+    edit 6
+        set name "DMZ-to-DB"
+        set uuid 66666666-6666-6666-6666-666666666666
+        set srcintf "DMZ"
+        set dstintf "LAN"
+        set action accept
+        set srcaddr "WebServer1" "WebServer2"
+        set dstaddr "DBServer"
+        set schedule "always"
+        set service "DB-Access"
+        set utm-status enable
+        set ips-sensor "default"
+        set logtraffic all
+        set comments "Web servers to database"
+    next
+    edit 7
+        set name "Guest-Internet-Only"
+        set uuid 77777777-7777-7777-7777-777777777777
+        set srcintf "LAN"
+        set dstintf "WAN"
+        set action accept
+        set srcaddr "Guest-WiFi"
+        set dstaddr "all"
+        set schedule "always"
+        set service "Internet-Services"
+        set utm-status enable
+        set webfilter-profile "default"
+        set logtraffic all
+        set nat enable
+        set comments "Guest WiFi internet only — no internal access"
+    next
+    edit 8
+        set name "Deny-All"
+        set uuid 88888888-8888-8888-8888-888888888888
+        set srcintf "any"
+        set dstintf "any"
+        set action deny
+        set srcaddr "all"
+        set dstaddr "all"
+        set schedule "always"
+        set service "ALL"
+        set logtraffic all
+        set comments "Implicit deny-all cleanup rule"
+    next
+end`,
   },
 };
