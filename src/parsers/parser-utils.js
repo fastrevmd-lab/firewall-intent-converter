@@ -172,7 +172,7 @@ export const JUNOS_PREDEFINED_APPS = new Set([
   // Additional common (widely available on modern Junos)
   'junos-rdp', 'junos-mysql', 'junos-ipsec',
   'junos-smb-session', 'junos-netbios-session', 'junos-twamp',
-  'junos-stun', 'junos-quic',
+  'junos-stun', 'junos-quic', 'junos-ocsp',
 ]);
 
 /**
@@ -243,6 +243,8 @@ const APP_MAP = {
   'stun-base': 'junos-stun',
   'quic': 'junos-quic',
   'quic-base': 'junos-quic',
+  // Certificate / PKI
+  'ocsp': 'junos-ocsp',
   // Database
   'ms-sql-db': 'junos-ms-sql',
   'mssql-db': 'junos-ms-sql',
