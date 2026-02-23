@@ -7,14 +7,23 @@
  *
  * Supports two HA types:
  *   - chassis-cluster: Traditional SRX chassis cluster (RG0/RG1, fabric links)
- *   - mnha: Multinode High Availability (SRX4700 required, uses ICL + SRGs)
+ *   - mnha: Multinode High Availability (SRX1500+, SRX4xxx, SRX5xxx, vSRX — required on SRX4700)
  */
 import React, { useEffect } from 'react';
 import { ChipEditor } from './ZoneEditor.jsx';
 
+const MNHA_SUPPORTED_MODELS = new Set([
+  'SRX1500', 'SRX1600',
+  'SRX4100', 'SRX4120', 'SRX4200', 'SRX4300', 'SRX4600',
+  'SRX4700', 'SRX4700-700',
+  'SRX5400', 'SRX5600', 'SRX5800',
+  'vSRX3.0',
+]);
+
 export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }) {
   const isSrx = viewMode === 'srx';
   const isSrx4700 = (targetModel || '').startsWith('SRX4700');
+  const supportsMnha = MNHA_SUPPORTED_MODELS.has(targetModel || '');
   const haType = haConfig?.ha_type || 'chassis-cluster';
 
   // Force MNHA when SRX4700 is target and HA is enabled
@@ -23,6 +32,13 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
       onHAUpdate({ ...haConfig, ha_type: 'mnha' });
     }
   }, [isSrx4700, haConfig?.enabled]);
+
+  // Force back to chassis-cluster if model doesn't support MNHA
+  useEffect(() => {
+    if (!supportsMnha && haConfig?.enabled && haConfig.ha_type === 'mnha') {
+      onHAUpdate({ ...haConfig, ha_type: 'chassis-cluster' });
+    }
+  }, [supportsMnha, haConfig?.enabled]);
 
   const handleChange = (field, value) => {
     if (field === 'ha_type' && value === 'mnha' && !haConfig.local_id) {
@@ -183,28 +199,40 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
         <div className="editor-card">
           <div className="editor-card-header">
             {/* HA Type Toggle */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: isSrx4700 ? 'default' : 'pointer', color: haType === 'chassis-cluster' ? 'var(--accent)' : 'var(--text-secondary)' }}>
-                <input
-                  type="radio"
-                  name="haType"
-                  value="chassis-cluster"
-                  checked={haType === 'chassis-cluster'}
-                  onChange={() => handleChange('ha_type', 'chassis-cluster')}
-                  disabled={isSrx4700}
-                />
-                Chassis Cluster
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: haType === 'mnha' ? 'var(--accent)' : 'var(--text-secondary)' }}>
-                <input
-                  type="radio"
-                  name="haType"
-                  value="mnha"
-                  checked={haType === 'mnha'}
-                  onChange={() => handleChange('ha_type', 'mnha')}
-                />
-                MNHA
-              </label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {!isSrx4700 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: haType === 'chassis-cluster' ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                  <input
+                    type="radio"
+                    name="haType"
+                    value="chassis-cluster"
+                    checked={haType === 'chassis-cluster'}
+                    onChange={() => handleChange('ha_type', 'chassis-cluster')}
+                  />
+                  Chassis Cluster
+                </label>
+              )}
+              {supportsMnha && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: isSrx4700 ? 'default' : 'pointer', color: haType === 'mnha' ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                  <input
+                    type="radio"
+                    name="haType"
+                    value="mnha"
+                    checked={haType === 'mnha'}
+                    onChange={() => handleChange('ha_type', 'mnha')}
+                    disabled={isSrx4700}
+                  />
+                  MNHA (Multi-Node High Availability)
+                  <a
+                    href="https://www.juniper.net/documentation/us/en/software/junos/high-availability/topics/concept/mnha-overview.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ color: 'var(--accent)', fontSize: 10, marginLeft: 2, textDecoration: 'underline' }}
+                    title="Juniper MNHA documentation"
+                  >docs</a>
+                </label>
+              )}
             </div>
             <span style={{ flex: 1 }} />
             <button className="btn-icon btn-icon-danger" onClick={handleDisable} title="Disable HA">x</button>
