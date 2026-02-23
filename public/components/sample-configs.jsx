@@ -2521,6 +2521,17 @@ set chassis cluster redundancy-group 1 node 1 priority 100
 set interfaces fab0 fabric-options member-interfaces ge-0/0/5
 set interfaces fab1 fabric-options member-interfaces ge-5/0/5
 
+set interfaces ge-0/0/0 unit 0 family inet address 10.1.1.1/24
+set interfaces ge-0/0/0 unit 0 description "Trust LAN"
+set interfaces ge-0/0/1 unit 0 family inet address 10.1.2.1/24
+set interfaces ge-0/0/1 unit 0 description "Trust Server VLAN"
+set interfaces ge-0/0/2 unit 0 family inet address 203.0.113.1/30
+set interfaces ge-0/0/2 unit 0 description "Untrust WAN uplink"
+set interfaces ge-0/0/3 unit 0 family inet address 172.16.10.1/24
+set interfaces ge-0/0/3 unit 0 description "DMZ segment"
+set interfaces lo0 unit 0 family inet address 10.255.0.1/32
+set interfaces st0 unit 0 family inet address 10.10.10.1/30
+
 set security zones security-zone trust interfaces ge-0/0/0.0
 set security zones security-zone trust interfaces ge-0/0/1.0
 set security zones security-zone untrust interfaces ge-0/0/2.0

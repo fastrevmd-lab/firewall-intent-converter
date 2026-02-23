@@ -88,6 +88,9 @@ export function parseSrxConfig(configText) {
   const dhcpConfig = parseSrxDhcpConfig(tree, warnings);
   const qosConfig = parseSrxQosConfig(tree, warnings);
 
+  // Parse interface configurations
+  const interfaces = parseSrxInterfaces(tree, zones, warnings);
+
   const intermediateConfig = {
     zones,
     address_objects: addressObjects,
@@ -107,6 +110,7 @@ export function parseSrxConfig(configText) {
     syslog_config: syslogConfig,
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
+    interfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
     target_context: null,
@@ -118,6 +122,7 @@ export function parseSrxConfig(configText) {
       nat_rule_count: natRules.length,
       object_count: addressObjects.length + addressGroups.length + serviceObjects.length + serviceGroups.length,
       zone_count: zones.length,
+      interface_count: interfaces.length,
       vpn_tunnel_count: vpnTunnels.length,
       syslog_server_count: syslogConfig.length,
       dhcp_config_count: dhcpConfig.length,
@@ -1681,4 +1686,112 @@ function parseSrxQosConfig(tree, warnings) {
     warnings.push(createWarning('info', 'qos', `Parsed ${qosProfiles.length} CoS/QoS config(s)`, 'Class-of-service configuration detected'));
   }
   return qosProfiles;
+}
+
+
+// ---------------------------------------------------------------------------
+// Interface Configuration Parser
+// ---------------------------------------------------------------------------
+
+function parseSrxInterfaces(tree, zones, warnings) {
+  const ifacesNode = tree?.interfaces || {};
+
+  // Build zone lookup: interface name → zone name
+  const ifToZone = {};
+  for (const z of zones) {
+    for (const ifName of (z.interfaces || [])) {
+      ifToZone[ifName] = z.name;
+    }
+  }
+
+  // Detect interface type from name
+  const getType = (name) => {
+    if (/^lo\d/.test(name)) return 'loopback';
+    if (/^st\d/.test(name)) return 'tunnel';
+    if (/^reth\d/.test(name)) return 'redundant';
+    if (/^ae\d/.test(name)) return 'aggregate';
+    if (/^irb/.test(name)) return 'irb';
+    if (/^fab\d/.test(name)) return 'fabric';
+    if (/^fxp\d/.test(name)) return 'management';
+    return 'physical';
+  };
+
+  const interfaces = [];
+  const seenNames = new Set();
+
+  // Walk explicit interface definitions from tree.interfaces
+  for (const [ifName, ifData] of Object.entries(ifacesNode)) {
+    if (ifName.startsWith('_') || typeof ifData !== 'object') continue;
+
+    // Skip fabric interfaces (handled by HA)
+    if (/^fab\d/.test(ifName)) continue;
+
+    const unitNode = ifData?.unit;
+    if (unitNode && typeof unitNode === 'object') {
+      // Walk logical units
+      for (const [unitNum, unitData] of Object.entries(unitNode)) {
+        if (unitNum.startsWith('_') || typeof unitData !== 'object') continue;
+
+        const fullName = `${ifName}.${unitNum}`;
+        const desc = extractStringValue(unitData?.description) || extractStringValue(ifData?.description) || '';
+        const vlanId = extractStringValue(unitData?.['vlan-id']) || '';
+
+        // Extract IPv4 addresses
+        const inetAddr = unitData?.family?.inet?.address;
+        let ip = '';
+        if (inetAddr && typeof inetAddr === 'object') {
+          const addrKeys = Object.keys(inetAddr).filter(k => !k.startsWith('_'));
+          if (addrKeys.length > 0) ip = addrKeys[0]; // First address (CIDR format)
+        }
+
+        seenNames.add(fullName);
+        interfaces.push({
+          name: fullName,
+          ip: ip,
+          zone: ifToZone[fullName] || '',
+          vlan: vlanId,
+          type: getType(ifName),
+          description: desc,
+          status: 'up',
+          speed: '',
+        });
+      }
+    } else {
+      // Interface with no units (e.g., fxp0) — still include
+      const desc = extractStringValue(ifData?.description) || '';
+      seenNames.add(ifName);
+      interfaces.push({
+        name: ifName,
+        ip: '',
+        zone: ifToZone[ifName] || '',
+        vlan: '',
+        type: getType(ifName),
+        description: desc,
+        status: 'up',
+        speed: '',
+      });
+    }
+  }
+
+  // Also create entries for interfaces referenced in zones but not in tree.interfaces
+  for (const [ifName, zoneName] of Object.entries(ifToZone)) {
+    if (seenNames.has(ifName)) continue;
+    const baseName = ifName.split('.')[0];
+    seenNames.add(ifName);
+    interfaces.push({
+      name: ifName,
+      ip: '',
+      zone: zoneName,
+      vlan: '',
+      type: getType(baseName),
+      description: '',
+      status: 'up',
+      speed: '',
+    });
+  }
+
+  if (interfaces.length > 0) {
+    warnings.push(createWarning('info', 'interfaces', `Parsed ${interfaces.length} interface(s)`, 'Interface configuration detected'));
+  }
+  return interfaces;
 }

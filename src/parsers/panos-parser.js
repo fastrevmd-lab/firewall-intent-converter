@@ -253,6 +253,9 @@ export function parsePanosConfig(configText) {
   // Parse QoS/traffic shaping configuration
   const qosConfig = parseQosConfig(config, warnings);
 
+  // Parse interface configurations
+  const interfaces = parseInterfaceConfig(config, allZones, warnings);
+
   // Re-index all policies across vsys for consistent ordering
   for (let i = 0; i < allSecurityPolicies.length; i++) {
     allSecurityPolicies[i]._rule_index = i + 1;
@@ -277,6 +280,7 @@ export function parsePanosConfig(configText) {
     syslog_config: syslogConfig,
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
+    interfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
     target_context: null,
@@ -288,6 +292,7 @@ export function parsePanosConfig(configText) {
       nat_rule_count: allNatRules.length,
       object_count: allAddressObjects.length + allAddressGroups.length + allServiceObjects.length + allServiceGroups.length,
       zone_count: allZones.length,
+      interface_count: interfaces.length,
       routing_context_count: routingContexts.length,
       static_route_count: staticRoutes.length,
       vpn_tunnel_count: vpnTunnels.length,
@@ -1862,4 +1867,121 @@ function parseQosConfig(config, warnings) {
     warnings.push(createWarning('info', 'qos', `Parsed ${qosProfiles.length} QoS profile(s)`, 'QoS configuration detected'));
   }
   return qosProfiles;
+}
+
+
+// ---------------------------------------------------------------------------
+// Interface Configuration Parser
+// ---------------------------------------------------------------------------
+
+function parseInterfaceConfig(config, zones, warnings) {
+  const interfaces = [];
+
+  // Build zone lookup: interface name → zone name
+  const ifToZone = {};
+  for (const z of zones) {
+    for (const ifName of (z.interfaces || [])) {
+      ifToZone[ifName] = z.name;
+    }
+  }
+
+  const network = getNestedValue(config, 'devices.entry.network.interface');
+  if (!network) return interfaces;
+
+  // PAN-OS interface types: ethernet, loopback, tunnel, aggregate-ethernet, vlan
+  const typeMap = {
+    ethernet: 'physical',
+    loopback: 'loopback',
+    tunnel: 'tunnel',
+    'aggregate-ethernet': 'aggregate',
+    vlan: 'vlan',
+  };
+
+  for (const [ifType, container] of Object.entries(network)) {
+    if (!container || typeof container !== 'object') continue;
+    const typeName = typeMap[ifType] || ifType;
+    const entries = extractEntries(container);
+
+    for (const entry of entries) {
+      const ifName = entry['@_name'] || '';
+      if (!ifName) continue;
+
+      // L3 sub-interfaces
+      const l3 = getNestedValue(entry, 'layer3');
+      if (l3) {
+        // Get IP from top-level layer3 (for interfaces without sub-interfaces)
+        const topIps = getNestedValue(l3, 'ip');
+        if (topIps) {
+          const ipEntries = extractEntries(topIps);
+          const ip = ipEntries.length > 0 ? (ipEntries[0]['@_name'] || '') : '';
+          interfaces.push({
+            name: ifName,
+            ip,
+            zone: ifToZone[ifName] || '',
+            vlan: '',
+            type: typeName,
+            description: entry.comment || '',
+            status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
+            speed: '',
+          });
+        }
+
+        // Sub-interfaces (units)
+        const units = getNestedValue(l3, 'units');
+        if (units) {
+          const unitEntries = extractEntries(units);
+          for (const unit of unitEntries) {
+            const unitName = unit['@_name'] || '';
+            const fullName = unitName || ifName;
+            const unitIps = getNestedValue(unit, 'ip');
+            const ip = unitIps ? (extractEntries(unitIps)[0]?.['@_name'] || '') : '';
+            const tag = unit.tag || '';
+            interfaces.push({
+              name: fullName,
+              ip,
+              zone: ifToZone[fullName] || '',
+              vlan: String(tag),
+              type: typeName,
+              description: unit.comment || entry.comment || '',
+              status: 'up',
+              speed: '',
+            });
+          }
+        }
+
+        // If no IPs and no units found, still include the interface
+        if (!topIps && !units) {
+          interfaces.push({
+            name: ifName,
+            ip: '',
+            zone: ifToZone[ifName] || '',
+            vlan: '',
+            type: typeName,
+            description: entry.comment || '',
+            status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
+            speed: '',
+          });
+        }
+      } else {
+        // Non-L3 interface or loopback/tunnel
+        const ipEntries = getNestedValue(entry, 'ip');
+        const ip = ipEntries ? (extractEntries(ipEntries)[0]?.['@_name'] || '') : '';
+        interfaces.push({
+          name: ifName,
+          ip,
+          zone: ifToZone[ifName] || '',
+          vlan: '',
+          type: typeName,
+          description: entry.comment || '',
+          status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
+          speed: '',
+        });
+      }
+    }
+  }
+
+  if (interfaces.length > 0) {
+    warnings.push(createWarning('info', 'interfaces', `Parsed ${interfaces.length} interface(s)`, 'Interface configuration detected'));
+  }
+  return interfaces;
 }

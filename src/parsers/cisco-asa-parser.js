@@ -78,6 +78,30 @@ export function parseCiscoAsaConfig(configText) {
   const dhcpConfig = parseCiscoDhcpConfig(lines, blocks, warnings);
   const qosConfig = parseCiscoQosConfig(lines, blocks, warnings);
 
+  // Normalize interfaces to standard schema
+  const normalizedInterfaces = interfaces.map(iface => {
+    let ip = '';
+    if (iface.ip) {
+      const parts = iface.ip.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        const cidr = maskToCidr(parts[1]);
+        ip = `${parts[0]}/${cidr}`;
+      } else {
+        ip = parts[0];
+      }
+    }
+    return {
+      name: iface.hardware,
+      ip,
+      zone: iface.nameif || '',
+      vlan: iface.vlan || '',
+      type: iface.vlan ? 'vlan' : 'physical',
+      description: iface.description || '',
+      status: iface.shutdown ? 'shutdown' : 'up',
+      speed: '',
+    };
+  });
+
   const intermediateConfig = {
     zones,
     address_objects: addressObjects,
@@ -97,6 +121,7 @@ export function parseCiscoAsaConfig(configText) {
     syslog_config: syslogConfig,
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
+    interfaces: normalizedInterfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
     target_context: null,
@@ -113,6 +138,7 @@ export function parseCiscoAsaConfig(configText) {
       nat_rule_count: natRules.length,
       object_count: addressObjects.length + serviceObjects.length,
       zone_count: zones.length,
+      interface_count: normalizedInterfaces.length,
       vpn_tunnel_count: vpnTunnels.length,
       syslog_server_count: syslogConfig.length,
       dhcp_config_count: dhcpConfig.length,
