@@ -726,6 +726,9 @@ function parseNatRules(tree, warnings) {
     const mappedIp = getString(entry['mappedip']);
     const mappedIpArr = ensureArray(entry['mappedip']);
     const portForward = getString(entry['portforward']) === 'enable';
+    const extPort = getString(entry['extport']) || '';
+    const mappedPort = getString(entry['mappedport']) || '';
+    const vipProtocol = getString(entry['protocol']) || '';
 
     natRules.push({
       name,
@@ -736,7 +739,9 @@ function parseNatRules(tree, warnings) {
       dst_addresses: [extIp || name],
       translated_src: null,
       translated_dst: mappedIpArr[0] || mappedIp || '',
-      translated_port: portForward ? getString(entry['mappedport']) : null,
+      translated_port: portForward ? mappedPort : null,
+      match_port: portForward ? extPort : null,
+      match_protocol: vipProtocol || null,
       description: getString(entry['comment']) || getString(entry['comments']) || '',
       _rule_index: ruleIndex++,
     });

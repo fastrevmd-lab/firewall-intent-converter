@@ -625,6 +625,72 @@ function parseAccessGroups(lines, warnings) {
 // NAT Parser
 // ---------------------------------------------------------------------------
 
+/**
+ * Parses a Cisco ASA manual/twice-NAT command into a structured NAT rule.
+ * Handles: source (static|dynamic) <real> <mapped> [destination (static|dynamic) <real> <mapped>] [service <real> <mapped>]
+ */
+function parseTwiceNatCommand(rest, srcIf, dstIf, ruleIndex) {
+  const tokens = rest.split(/\s+/);
+  let i = 0;
+  let srcNatType = null, srcReal = null, srcMapped = null;
+  let dstNatType = null, dstReal = null, dstMapped = null;
+  let svcMapped = null;
+
+  // Parse "source (static|dynamic) <real> <mapped>"
+  if (i < tokens.length && tokens[i] === 'source' && i + 3 < tokens.length) {
+    srcNatType = tokens[i + 1];
+    srcReal = tokens[i + 2];
+    srcMapped = tokens[i + 3];
+    i += 4;
+  }
+
+  // Parse optional "destination (static|dynamic) <real> <mapped>"
+  if (i < tokens.length && tokens[i] === 'destination' && i + 3 < tokens.length) {
+    dstNatType = tokens[i + 1];
+    dstReal = tokens[i + 2];
+    dstMapped = tokens[i + 3];
+    i += 4;
+  }
+
+  // Parse optional "service <real-svc> <mapped-svc>"
+  if (i < tokens.length && tokens[i] === 'service' && i + 2 < tokens.length) {
+    svcMapped = tokens[i + 2];
+    i += 3;
+  }
+
+  // Determine type
+  let type = 'source';
+  if (srcNatType && dstNatType) type = 'source-and-destination';
+  else if (!srcNatType && dstNatType) type = 'destination';
+  else if (srcNatType === 'static' && !dstNatType) type = 'static';
+
+  // Build translated_src
+  let translated_src = null;
+  if (srcNatType) {
+    if (srcMapped === 'interface') {
+      translated_src = { type: 'interface', addresses: [] };
+    } else if (srcNatType === 'static') {
+      translated_src = { type: 'static', address: srcMapped, addresses: [srcMapped] };
+    } else {
+      translated_src = { type: 'dynamic-ip-pool', addresses: [srcMapped] };
+    }
+  }
+
+  return {
+    name: `Manual-NAT-${ruleIndex}`,
+    type,
+    src_zones: [srcIf],
+    dst_zones: [dstIf],
+    src_addresses: [srcReal || 'any'],
+    dst_addresses: [dstReal || 'any'],
+    translated_src,
+    translated_dst: dstMapped || null,
+    translated_port: svcMapped || null,
+    description: `Twice-NAT: ${rest}`,
+    _rule_index: ruleIndex,
+  };
+}
+
 function parseNatRules(blocks, lines, warnings) {
   const natRules = [];
   let ruleIndex = 1;
@@ -673,19 +739,8 @@ function parseNatRules(blocks, lines, warnings) {
     const match = trimmed.match(/nat\s+\(([^,]+),([^)]+)\)\s+(.*)/);
     if (match) {
       const [, srcIf, dstIf, rest] = match;
-      natRules.push({
-        name: `Manual-NAT-${ruleIndex}`,
-        type: 'source',
-        src_zones: [srcIf.trim()],
-        dst_zones: [dstIf.trim()],
-        src_addresses: ['any'],
-        dst_addresses: ['any'],
-        translated_src: { type: 'manual', addresses: [] },
-        translated_dst: null,
-        translated_port: null,
-        description: rest.trim(),
-        _rule_index: ruleIndex++,
-      });
+      natRules.push(parseTwiceNatCommand(rest.trim(), srcIf.trim(), dstIf.trim(), ruleIndex));
+      ruleIndex++;
     }
   }
 

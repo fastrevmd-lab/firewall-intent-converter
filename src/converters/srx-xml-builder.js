@@ -308,26 +308,174 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
 // NAT XML Builder (basic Phase 1 structure)
 // ---------------------------------------------------------------------------
 
+function groupNatByZonePair(rules) {
+  const groups = {};
+  for (const rule of rules) {
+    const fromZones = rule.src_zones.length > 0 ? rule.src_zones : ['any'];
+    const toZones = rule.dst_zones.length > 0 ? rule.dst_zones : ['any'];
+    for (const from of fromZones) {
+      for (const to of toZones) {
+        const key = `${from}->${to}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(rule);
+      }
+    }
+  }
+  return groups;
+}
+
 function buildNatXml(natRules, lines, warnings) {
   if (!natRules || natRules.length === 0) return;
 
   lines.push('    <nat>');
 
-  const sourceRules = natRules.filter(r => r.type === 'source');
+  const sourceRules = natRules.filter(r => r.type === 'source' || r.type === 'source-and-destination');
+  const destRules = natRules.filter(r => r.type === 'destination' || r.type === 'source-and-destination');
+  const staticRules = natRules.filter(r => r.type === 'static');
+
+  // --- Source NAT ---
   if (sourceRules.length > 0) {
     lines.push('      <source>');
-    for (const rule of sourceRules) {
+    const groups = groupNatByZonePair(sourceRules);
+    for (const [zonePair, rules] of Object.entries(groups)) {
+      const [fromZone, toZone] = zonePair.split('->');
+      const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
       lines.push('        <rule-set>');
-      lines.push(`          <name>${escapeXml(sanitizeJunosName(rule.name))}</name>`);
-      for (const zone of (rule.src_zones || [])) {
-        lines.push(`          <from><zone>${escapeXml(sanitizeJunosName(zone))}</zone></from>`);
-      }
-      for (const zone of (rule.dst_zones || [])) {
-        lines.push(`          <to><zone>${escapeXml(sanitizeJunosName(zone))}</zone></to>`);
+      lines.push(`          <name>${escapeXml(ruleSetName)}</name>`);
+      lines.push(`          <from><zone>${escapeXml(sanitizeJunosName(fromZone))}</zone></from>`);
+      lines.push(`          <to><zone>${escapeXml(sanitizeJunosName(toZone))}</zone></to>`);
+
+      for (const rule of rules) {
+        const ruleName = sanitizeJunosName(rule.name);
+        lines.push('          <rule>');
+        lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+        lines.push('            <src-nat-rule-match>');
+        for (const addr of (rule.src_addresses || ['0.0.0.0/0'])) {
+          lines.push(`              <source-address>${escapeXml(addr === 'any' ? '0.0.0.0/0' : addr)}</source-address>`);
+        }
+        for (const addr of (rule.dst_addresses || ['0.0.0.0/0'])) {
+          lines.push(`              <destination-address>${escapeXml(addr === 'any' ? '0.0.0.0/0' : addr)}</destination-address>`);
+        }
+        lines.push('            </src-nat-rule-match>');
+        lines.push('            <then>');
+        if (rule.translated_src) {
+          if (rule.translated_src.type === 'interface') {
+            lines.push('              <source-nat><interface/></source-nat>');
+          } else if (rule.translated_src.type === 'dynamic-ip-pool') {
+            const poolName = sanitizeJunosName(`pool-${rule.name}`);
+            lines.push(`              <source-nat><pool><pool-name>${escapeXml(poolName)}</pool-name></pool></source-nat>`);
+          } else if (rule.translated_src.type === 'static') {
+            const poolName = sanitizeJunosName(`${rule.name}-static`);
+            lines.push(`              <source-nat><pool><pool-name>${escapeXml(poolName)}</pool-name></pool></source-nat>`);
+          }
+        }
+        if (rule._uturn) {
+          lines.push('              <persistent-nat><permit>target-host</permit></persistent-nat>');
+        }
+        lines.push('            </then>');
+        lines.push('          </rule>');
       }
       lines.push('        </rule-set>');
     }
+
+    // Source NAT pools
+    for (const rule of sourceRules) {
+      if (rule.translated_src && rule.translated_src.type === 'dynamic-ip-pool') {
+        const poolName = sanitizeJunosName(`pool-${rule.name}`);
+        lines.push('        <pool>');
+        lines.push(`          <name>${escapeXml(poolName)}</name>`);
+        for (const addr of rule.translated_src.addresses) {
+          lines.push(`          <address><name>${escapeXml(addr)}</name></address>`);
+        }
+        lines.push('        </pool>');
+      } else if (rule.translated_src && rule.translated_src.type === 'static' && rule.translated_src.address) {
+        const poolName = sanitizeJunosName(`${rule.name}-static`);
+        lines.push('        <pool>');
+        lines.push(`          <name>${escapeXml(poolName)}</name>`);
+        lines.push(`          <address><name>${escapeXml(rule.translated_src.address)}</name></address>`);
+        lines.push('        </pool>');
+      }
+    }
     lines.push('      </source>');
+  }
+
+  // --- Destination NAT ---
+  if (destRules.length > 0) {
+    lines.push('      <destination>');
+    const groups = groupNatByZonePair(destRules);
+    for (const [zonePair, rules] of Object.entries(groups)) {
+      const [fromZone] = zonePair.split('->');
+      const ruleSetName = sanitizeJunosName(`${fromZone}-dnat`);
+      lines.push('        <rule-set>');
+      lines.push(`          <name>${escapeXml(ruleSetName)}</name>`);
+      lines.push(`          <from><zone>${escapeXml(sanitizeJunosName(fromZone))}</zone></from>`);
+
+      for (const rule of rules) {
+        const ruleName = sanitizeJunosName(rule.name);
+        lines.push('          <rule>');
+        lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+        lines.push('            <dest-nat-rule-match>');
+        for (const addr of (rule.dst_addresses || ['0.0.0.0/0'])) {
+          lines.push(`              <destination-address>${escapeXml(addr === 'any' ? '0.0.0.0/0' : addr)}</destination-address>`);
+        }
+        if (rule.match_port) {
+          lines.push(`              <destination-port>${escapeXml(rule.match_port)}</destination-port>`);
+        }
+        lines.push('            </dest-nat-rule-match>');
+        lines.push('            <then>');
+        const dstAddr = typeof rule.translated_dst === 'string' ? rule.translated_dst : (rule.translated_dst?.address || '');
+        if (dstAddr) {
+          const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
+          lines.push(`              <destination-nat><pool><pool-name>${escapeXml(poolName)}</pool-name></pool></destination-nat>`);
+        }
+        lines.push('            </then>');
+        lines.push('          </rule>');
+      }
+      lines.push('        </rule-set>');
+    }
+
+    // Destination NAT pools
+    for (const rule of destRules) {
+      const dstAddr = typeof rule.translated_dst === 'string' ? rule.translated_dst : (rule.translated_dst?.address || '');
+      if (dstAddr) {
+        const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
+        lines.push('        <pool>');
+        lines.push(`          <name>${escapeXml(poolName)}</name>`);
+        lines.push(`          <address><ip-prefix>${escapeXml(dstAddr)}</ip-prefix></address>`);
+        if (rule.translated_port) {
+          lines.push(`          <address><port>${escapeXml(String(rule.translated_port))}</port></address>`);
+        }
+        lines.push('        </pool>');
+      }
+    }
+    lines.push('      </destination>');
+  }
+
+  // --- Static NAT ---
+  if (staticRules.length > 0) {
+    lines.push('      <static>');
+    lines.push('        <rule-set>');
+    lines.push('          <name>STATIC-NAT</name>');
+    for (const rule of staticRules) {
+      const ruleName = sanitizeJunosName(rule.name);
+      lines.push('          <rule>');
+      lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+      lines.push('            <match>');
+      for (const addr of (rule.dst_addresses || []).filter(a => a !== 'any')) {
+        lines.push(`              <destination-address>${escapeXml(addr)}</destination-address>`);
+      }
+      lines.push('            </match>');
+      lines.push('            <then>');
+      if (rule.translated_src && rule.translated_src.address) {
+        lines.push('              <static-nat>');
+        lines.push(`                <prefix><addr-prefix>${escapeXml(rule.translated_src.address)}</addr-prefix></prefix>`);
+        lines.push('              </static-nat>');
+      }
+      lines.push('            </then>');
+      lines.push('          </rule>');
+    }
+    lines.push('        </rule-set>');
+    lines.push('      </static>');
   }
 
   lines.push('    </nat>');
