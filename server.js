@@ -21,6 +21,7 @@ import { detectVendor } from './src/parsers/parser-utils.js';
 import { convertToSrxSetCommands } from './src/converters/srx-converter.js';
 import { buildSrxXml } from './src/converters/srx-xml-builder.js';
 import { validateSrxOutput } from './src/validators/srx-validator.js';
+import { detectShadowedRules } from './src/analysis/shadow-detector.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -239,6 +240,10 @@ app.post('/api/convert', (req, res) => {
     } else {
       output = convertToSrxSetCommands(intermediateConfig, interfaceMappings);
     }
+
+    // Detect shadowed rules
+    const { shadowedCount } = detectShadowedRules(intermediateConfig.security_policies, output.warnings);
+    if (output.summary) output.summary.shadowed_rules = shadowedCount;
 
     // Run validation on the generated output
     const validation = validateSrxOutput(intermediateConfig, output);

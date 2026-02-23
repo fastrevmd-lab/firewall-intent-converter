@@ -964,6 +964,11 @@ function convertNatRules(natRules, commands, warnings, summary) {
           }
         }
 
+        // U-turn/hairpin NAT: add persistent-nat for return traffic
+        if (rule._uturn) {
+          commands.push(`set ${rulePath} then persistent-nat permit target-host`);
+        }
+
         summary.nat_rules_converted++;
       }
     }
@@ -990,6 +995,16 @@ function convertNatRules(natRules, commands, warnings, summary) {
             commands.push(`set ${rulePath} match destination-address 0.0.0.0/0`);
           } else {
             commands.push(`set ${rulePath} match destination-address ${addr}`);
+          }
+        }
+        // Port-forward matching (FortiGate VIP extport)
+        if (rule.match_port) {
+          commands.push(`set ${rulePath} match destination-port ${rule.match_port}`);
+        }
+        if (rule.match_protocol) {
+          const proto = rule.match_protocol.toLowerCase();
+          if (proto === 'tcp' || proto === 'udp') {
+            commands.push(`set ${rulePath} match protocol ${proto}`);
           }
         }
 

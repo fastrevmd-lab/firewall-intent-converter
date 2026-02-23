@@ -1046,6 +1046,21 @@ function parseNatRules(vsys, warnings) {
       translatedPort = dstTrans['translated-port'] ? String(dstTrans['translated-port']) : null;
     }
 
+    // Detect U-turn/hairpin NAT: source zones == destination zones with combo NAT
+    const isUturn = type === 'source-and-destination' &&
+      srcZones.length > 0 && dstZones.length > 0 &&
+      srcZones.length === dstZones.length &&
+      srcZones.every(z => dstZones.includes(z));
+
+    if (isUturn) {
+      warnings.push(createWarning(
+        'warning',
+        `nat-rule/${name}`,
+        `NAT rule "${name}" is a U-turn/hairpin NAT (same source and destination zones)`,
+        'SRX will need persistent-nat permit on this rule for return traffic'
+      ));
+    }
+
     return {
       name,
       type,
@@ -1058,6 +1073,7 @@ function parseNatRules(vsys, warnings) {
       translated_port: translatedPort,
       description,
       _rule_index: index + 1,
+      _uturn: isUturn || undefined,
     };
   });
 }
