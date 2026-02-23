@@ -24,6 +24,9 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   const lines = [];
   xmlCustomfwicApps.clear();
 
+  // Detect source vendor for 1:1 passthrough (SRX→SRX needs no app mapping)
+  const sourceVendor = config.metadata?.source_vendor || '';
+
   // Compute UTM/IDP/SecIntel assignment maps (mirrors srx-converter logic)
   const { utmPolicyMap, utmProfiles } = computeUtmMap(config.security_policies);
   const { idpPolicyMap } = computeIdpMap(config.security_policies);
@@ -58,7 +61,7 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   buildUtmXml(utmProfiles, lines);
 
   // Policies
-  buildPoliciesXml(config.security_policies, lines, warnings, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups);
+  buildPoliciesXml(config.security_policies, lines, warnings, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor);
 
   // NAT
   buildNatXml(config.nat_rules, lines, warnings);
@@ -245,7 +248,7 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
 // Security Policies XML Builder
 // ---------------------------------------------------------------------------
 
-function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups = []) {
+function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups = [], sourceVendor = '') {
   if (!policies || policies.length === 0) return;
 
   const { utmPolicyMap = {}, idpPolicyMap = {}, secIntelEnabled = false } = profileMaps;
@@ -294,7 +297,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
         lines.push(`            <destination-address>${escapeXml(sanitizeJunosName(addr))}</destination-address>`);
       }
 
-      const apps = resolveApps(policy.applications, policy.services, warnings, policy.name, appGroups);
+      const apps = resolveApps(policy.applications, policy.services, warnings, policy.name, appGroups, sourceVendor);
       for (const app of apps) {
         lines.push(`            <application>${escapeXml(app)}</application>`);
       }
@@ -892,11 +895,17 @@ function buildSecIntelXml(blockLists, lines) {
 /** Tracks unmapped apps for placeholder XML generation */
 const xmlCustomfwicApps = new Map();
 
-function resolveApps(applications, services, warnings, policyName, appGroups = []) {
+function resolveApps(applications, services, warnings, policyName, appGroups = [], sourceVendor = '') {
   const resolved = [];
+  const isSrxSource = sourceVendor === 'srx';
 
   // Helper to map a single app name to Junos (with Customfwic fallback)
   const mapSingleApp = (appName) => {
+    // SRX→SRX: pass through as-is (already a Junos application name)
+    if (isSrxSource) {
+      resolved.push(appName);
+      return;
+    }
     const junos = mapAppToJunos(appName);
     if (junos) {
       resolved.push(junos);

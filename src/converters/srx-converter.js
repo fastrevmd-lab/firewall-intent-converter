@@ -57,6 +57,9 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // Clear Customfwic tracker for fresh conversion
   customfwicApps.clear();
 
+  // Detect source vendor for 1:1 passthrough (SRX→SRX needs no app mapping)
+  const sourceVendor = config.metadata?.source_vendor || '';
+
   // UTM / IDP / SecIntel — must run before security policies to build assignment maps
   const { utmCommands, utmPolicyMap } = convertUtmPolicies(config.security_policies, warnings);
   const { idpCommands, idpPolicyMap } = convertIdpPolicies(config.security_policies, warnings);
@@ -67,7 +70,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   commands.push(...secIntelCommands);
 
   convertSchedules(config.schedules, commands, warnings);
-  convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups);
+  convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor);
   convertNatRules(config.nat_rules, commands, warnings, summary);
   convertStaticRoutes(config.static_routes, commands, warnings, summary);
   convertHaConfig(config.ha_config, commands, warnings, summary);
@@ -704,7 +707,7 @@ function convertSchedules(schedules, commands, warnings) {
 // Security Policy Converter
 // ---------------------------------------------------------------------------
 
-function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = []) {
+function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '') {
   if (!policies || policies.length === 0) return;
 
   const { utmPolicyMap = {}, idpPolicyMap = {}, secIntelEnabled = false } = profileMaps;
@@ -766,7 +769,7 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         }
 
         // Match criteria: applications
-        const apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups);
+        const apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor);
         for (const app of apps) {
           commands.push(`set ${policyPath} match application ${app}`);
         }
@@ -838,17 +841,24 @@ const customfwicApps = new Map();
 /**
  * Resolves application/service fields from any vendor to SRX application names.
  *
- * Applications are mapped via mapAppToJunos() (PAN-OS, FortiGate, Cisco ASA).
+ * For SRX→SRX conversions, applications pass through 1:1 (already Junos names).
+ * For other vendors, applications are mapped via mapAppToJunos().
  * Unmapped applications get a "Customfwic" suffix and a warning is generated
  * telling the user to create a custom application definition on the SRX.
  *
  * SRX only has "application" in policy match — we unify both fields.
  */
-function resolveApplications(applications, services, warnings, policyName, appGroups = []) {
+function resolveApplications(applications, services, warnings, policyName, appGroups = [], sourceVendor = '') {
   const resolved = [];
+  const isSrxSource = sourceVendor === 'srx';
 
   // Helper to map a single app name to Junos (with Customfwic fallback)
   const mapSingleApp = (appName) => {
+    // SRX→SRX: pass through as-is (already a Junos application name)
+    if (isSrxSource) {
+      resolved.push(appName);
+      return;
+    }
     const junosApp = mapAppToJunos(appName);
     if (junosApp) {
       resolved.push(junosApp);
