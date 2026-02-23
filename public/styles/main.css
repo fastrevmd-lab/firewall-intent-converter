@@ -409,6 +409,21 @@ html, body, #root {
   opacity: 0.5;
 }
 
+.policy-table tr.implicit-rule td {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.implicit-chip {
+  background: var(--bg-hover) !important;
+  color: var(--text-muted) !important;
+  border: 1px dashed var(--border-color);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 6px;
+}
+
 /* Cell chips (for multi-value fields) */
 .cell-chip {
   display: inline-block;

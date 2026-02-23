@@ -47,6 +47,7 @@ export function parseCiscoAsaConfig(configText) {
   const accessLists = parseAccessLists(lines, warnings);
   const accessGroups = parseAccessGroups(lines, warnings);
   const natRules = parseNatRules(blocks, lines, warnings);
+  const timeRanges = parseTimeRanges(blocks);
 
   // Build zones from interfaces (ASA uses nameif + security-level as zones)
   const zones = buildZones(interfaces);
@@ -74,6 +75,7 @@ export function parseCiscoAsaConfig(configText) {
     security_policies: securityPolicies,
     nat_rules: natRules,
     applications: [],
+    schedules: timeRanges,
     security_profile_objects: [],
     external_lists: [],
     vpn_tunnels: [],
@@ -212,7 +214,17 @@ function parseObjectNetworks(blocks, warnings) {
       } else if (child.startsWith('fqdn ')) {
         obj.type = 'fqdn';
         const parts = child.slice(5).trim().split(/\s+/);
-        obj.value = parts[parts.length - 1]; // may have v4/v6 prefix
+        obj.value = parts[parts.length - 1]; // domain is always last
+        // Preserve v4/v6 prefix for SRX ipv4-only/ipv6-only
+        if (parts.length > 1 && (parts[0] === 'v4' || parts[0] === 'v6')) {
+          obj.fqdn_ip_version = parts[0];
+        }
+        warnings.push(createWarning(
+          'info',
+          `address/${obj.name}`,
+          `FQDN address "${obj.name}" → SRX dns-name requires SRX 12.1+ and DNS resolution at commit time`,
+          'Verify SRX version supports dns-name, or replace with static IP'
+        ));
       } else if (child.startsWith('description ')) {
         obj.description = child.slice(12).trim();
       } else if (child.startsWith('nat ')) {
@@ -483,6 +495,17 @@ function parseAclEntry(tokens, aclName, warnings) {
     }
   }
 
+  // ICMP type and code (for icmp/icmp6 protocols)
+  if (['icmp', 'icmp6'].includes(entry.protocol.toLowerCase())) {
+    const trailingFlags = ['log', 'inactive', 'time-range'];
+    if (i < tokens.length && !trailingFlags.includes(tokens[i].toLowerCase())) {
+      entry.icmpType = tokens[i++];
+      if (i < tokens.length && !trailingFlags.includes(tokens[i].toLowerCase())) {
+        entry.icmpCode = tokens[i++];
+      }
+    }
+  }
+
   // Trailing flags: log, inactive, time-range
   while (i < tokens.length) {
     const tok = tokens[i].toLowerCase();
@@ -497,7 +520,10 @@ function parseAclEntry(tokens, aclName, warnings) {
       entry.inactive = true;
       i++;
     } else if (tok === 'time-range') {
-      i += 2; // skip time-range name
+      i++;
+      if (i < tokens.length) {
+        entry.timeRange = tokens[i++];
+      }
     } else {
       i++;
     }
@@ -686,13 +712,20 @@ function buildZones(interfaces) {
 }
 
 function buildAddressObjects(objectNetworks) {
-  return objectNetworks.map(obj => ({
-    name: obj.name,
-    type: obj.type === 'host' ? 'host' : obj.type,
-    value: obj.type === 'host' ? `${obj.value}/32` : obj.value,
-    description: obj.description,
-    tags: [],
-  }));
+  return objectNetworks.map(obj => {
+    const result = {
+      name: obj.name,
+      type: obj.type === 'host' ? 'host' : obj.type,
+      value: obj.type === 'host' ? `${obj.value}/32` : obj.value,
+      description: obj.description,
+      tags: [],
+    };
+    // Preserve FQDN IP version for SRX ipv4-only/ipv6-only
+    if (obj.fqdn_ip_version) {
+      result.fqdn_ip_version = obj.fqdn_ip_version;
+    }
+    return result;
+  });
 }
 
 function buildAddressGroups(objectGroupNetworks) {
@@ -727,6 +760,49 @@ function buildServiceGroups(objectGroupServices) {
     description: g.description,
     _protocol: g.protocol,
   }));
+}
+
+function parseTimeRanges(blocks) {
+  const ranges = [];
+  for (const block of blocks) {
+    if (!block.command.startsWith('time-range ')) continue;
+    const name = block.command.slice(11).trim();
+    let type = 'unknown';
+    let start = '', end = '', days = [];
+
+    for (const child of block.children) {
+      const trimmed = child.trim();
+      if (trimmed.startsWith('absolute')) {
+        type = 'onetime';
+        // "absolute start HH:MM DD Month YYYY end HH:MM DD Month YYYY"
+        const match = trimmed.match(/start\s+(.+?)\s+end\s+(.+)/);
+        if (match) { start = match[1].trim(); end = match[2].trim(); }
+      } else if (trimmed.startsWith('periodic')) {
+        type = 'recurring';
+        // "periodic weekdays 08:00 to 17:00" or "periodic Monday Wednesday 08:00 to 17:00"
+        const parts = trimmed.slice(9).trim();
+        const dayNames = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'weekdays', 'weekend', 'daily'];
+        const tokens = parts.split(/\s+/);
+        for (const tok of tokens) {
+          const lower = tok.toLowerCase();
+          if (lower === 'weekdays') {
+            days.push('Mon', 'Tue', 'Wed', 'Thu', 'Fri');
+          } else if (lower === 'weekend') {
+            days.push('Sat', 'Sun');
+          } else if (lower === 'daily') {
+            days.push('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun');
+          } else if (dayNames.includes(lower)) {
+            days.push(lower.charAt(0).toUpperCase() + lower.slice(1, 3));
+          }
+        }
+        // Extract time range: "HH:MM to HH:MM"
+        const timeMatch = parts.match(/(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})/);
+        if (timeMatch) { start = timeMatch[1]; end = timeMatch[2]; }
+      }
+    }
+    ranges.push({ name, type, days, start, end });
+  }
+  return ranges;
 }
 
 function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) {
@@ -777,6 +853,7 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
         description: remarkAccum,
         tags: [],
         disabled: entry.inactive,
+        schedule: entry.timeRange || '',
         _rule_index: ruleIndex++,
         _cisco: {
           aclName: ag.aclName,
@@ -785,6 +862,9 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
           protocol: entry.protocol,
           srcPort: entry.srcPort,
           dstPort: entry.dstPort,
+          icmpType: entry.icmpType || '',
+          icmpCode: entry.icmpCode || '',
+          timeRange: entry.timeRange || '',
           securityLevel: ifaceMap[ag.interface]?.securityLevel,
           logLevel: entry.logLevel,
         },
@@ -824,6 +904,7 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
         description: remarkAccum,
         tags: [],
         disabled: entry.inactive,
+        schedule: entry.timeRange || '',
         _rule_index: ruleIndex++,
         _cisco: {
           aclName,
@@ -832,6 +913,9 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
           protocol: entry.protocol,
           srcPort: entry.srcPort,
           dstPort: entry.dstPort,
+          icmpType: entry.icmpType || '',
+          icmpCode: entry.icmpCode || '',
+          timeRange: entry.timeRange || '',
         },
       };
 
@@ -839,6 +923,94 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
       remarkAccum = '';
     }
   }
+
+  // --- Implicit Rules ---
+
+  // Build set of interfaces with inbound ACLs (ACL overrides security-level behavior)
+  const interfacesWithInboundAcl = new Set(
+    accessGroups.filter(ag => ag.direction === 'in').map(ag => ag.interface)
+  );
+
+  // Security-level implicit allows for interfaces WITHOUT inbound ACLs
+  const activeIfaces = interfaces.filter(i => i.nameif && !i.shutdown);
+  for (const srcIface of activeIfaces) {
+    if (interfacesWithInboundAcl.has(srcIface.nameif)) continue;
+    for (const dstIface of activeIfaces) {
+      if (srcIface.nameif === dstIface.nameif) continue;
+      if (srcIface.securityLevel > dstIface.securityLevel) {
+        policies.push({
+          name: `Implicit: ${srcIface.nameif}(${srcIface.securityLevel}) → ${dstIface.nameif}(${dstIface.securityLevel}) Allow`,
+          src_zones: [srcIface.nameif],
+          dst_zones: [dstIface.nameif],
+          src_addresses: ['any'],
+          dst_addresses: ['any'],
+          negate_source: false,
+          negate_destination: false,
+          applications: [],
+          services: ['any'],
+          action: 'allow',
+          log_start: false,
+          log_end: false,
+          profile_group: '',
+          security_profiles: {},
+          description: `ASA implicit: higher security-level (${srcIface.securityLevel}) to lower (${dstIface.securityLevel})`,
+          tags: ['added_by_fpic'],
+          disabled: false,
+          _rule_index: ruleIndex++,
+          _implicit: true,
+          _cisco: {
+            aclName: '',
+            interface: srcIface.nameif,
+            direction: '',
+            protocol: 'ip',
+            srcPort: '',
+            dstPort: '',
+            icmpType: '',
+            icmpCode: '',
+            timeRange: '',
+            securityLevel: srcIface.securityLevel,
+            logLevel: '',
+          },
+        });
+      }
+    }
+  }
+
+  // Global implicit deny
+  policies.push({
+    name: 'Implicit: Default Deny',
+    src_zones: ['any'],
+    dst_zones: ['any'],
+    src_addresses: ['any'],
+    dst_addresses: ['any'],
+    negate_source: false,
+    negate_destination: false,
+    applications: [],
+    services: ['any'],
+    action: 'deny',
+    log_start: false,
+    log_end: false,
+    profile_group: '',
+    security_profiles: {},
+    description: 'ASA implicit deny at end of all access-lists',
+    tags: ['added_by_fpic'],
+    disabled: false,
+    _rule_index: ruleIndex++,
+    _implicit: true,
+    _cisco: {
+      aclName: '',
+      interface: '',
+      direction: '',
+      protocol: 'ip',
+      srcPort: '',
+      dstPort: '',
+      icmpType: '',
+      icmpCode: '',
+      timeRange: '',
+      securityLevel: 0,
+      logLevel: '',
+    },
+  });
 
   return policies;
 }
@@ -849,6 +1021,9 @@ function buildServiceFromAcl(entry) {
     return [entry.protocol === 'object-group' ? entry.srcAddr : 'any'];
   }
   if (proto === 'icmp' || proto === 'icmp6') {
+    if (entry.icmpType) {
+      return [`icmp/${entry.icmpType}${entry.icmpCode ? '/' + entry.icmpCode : ''}`];
+    }
     return ['icmp'];
   }
 

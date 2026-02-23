@@ -520,12 +520,13 @@ export default function PolicyTable({
           return (
             <tr
               key={`${policy.name}-${policy._rule_index}`}
-              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''}`}
+              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''} ${policy._implicit ? 'implicit-rule' : ''}`}
               onClick={() => onSelectRule(isSelected ? null : policy)}
               style={{ cursor: 'pointer' }}
             >
               <td>{policy._rule_index}</td>
               <td title={policy.name}>
+                {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
                 {renderEditableCell(policy, 'name', policy.name)}
               </td>
               <td>{renderEditableCell(policy, 'src_zones', renderCellValues(policy.src_zones))}</td>
@@ -603,7 +604,7 @@ export default function PolicyTable({
                 return (
                   <tr
                     key={`${policy.name}-${policy._rule_index}`}
-                    className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''}`}
+                    className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule' : ''} ${policy._implicit ? 'implicit-rule' : ''}`}
                     onClick={() => onSelectRule(isSelected ? null : policy)}
                     style={{ cursor: 'pointer' }}
                   >
@@ -612,6 +613,7 @@ export default function PolicyTable({
                     </td>
                     <td>
                       <div>
+                        {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
                         {renderEditableCell(policy, 'name', (
                           <span style={{ fontWeight: 500 }}>{policy.name}</span>
                         ))}
@@ -770,7 +772,7 @@ export default function PolicyTable({
           return (
             <tr
               key={`${policy.name}-${policy._rule_index}`}
-              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule fg-disabled-row' : ''}`}
+              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule fg-disabled-row' : ''} ${policy._implicit ? 'implicit-rule' : ''}`}
               onClick={() => onSelectRule(isSelected ? null : policy)}
               style={{ cursor: 'pointer' }}
             >
@@ -781,6 +783,7 @@ export default function PolicyTable({
                 </div>
               </td>
               <td>
+                {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
                 {renderEditableCell(policy, 'name', (
                   <span className="fg-name">{policy.name}</span>
                 ))}
@@ -906,7 +909,7 @@ export default function PolicyTable({
           return (
             <tr
               key={`${policy.name}-${policy._rule_index}`}
-              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule cisco-inactive-row' : ''}`}
+              className={`${isSelected ? 'selected' : ''} ${policy.disabled ? 'disabled-rule cisco-inactive-row' : ''} ${policy._implicit ? 'implicit-rule' : ''}`}
               onClick={() => onSelectRule(isSelected ? null : policy)}
               style={{ cursor: 'pointer' }}
             >
@@ -919,6 +922,7 @@ export default function PolicyTable({
               <td>{renderCiscoAction(policy)}</td>
               <td>
                 <div className="cisco-name-cell">
+                  {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
                   {renderEditableCell(policy, 'name', (
                     <span className="cisco-rule-name">{policy.name}</span>
                   ))}

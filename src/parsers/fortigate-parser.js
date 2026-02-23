@@ -54,11 +54,71 @@ export function parseFortigateConfig(configText) {
   const schedules = parseSchedules(tree, warnings);
   const profileGroups = parseProfileGroups(tree, warnings);
 
+  // Promote schedules to intermediate format
+  const intermediateSchedules = Object.values(schedules).map(s => ({
+    name: s.name,
+    type: s.type,
+    days: s.day || [],
+    start: s.start || '',
+    end: s.end || '',
+  }));
+
   // Merge zone and interface data — FortiGate can use interfaces directly as zones
   const mergedZones = mergeZonesAndInterfaces(zones, interfaces, securityPolicies);
 
   // Detect FortiOS version from config
   const version = extractVersion(tree);
+
+  // Append FortiGate implicit rules
+  let implicitIndex = securityPolicies.length + 1;
+  const implicitFortigateBase = { policyid: 0, schedule: 'always', nat: false, utm_status: false, inspection_mode: 'flow', profile_type: '', users: [], groups: [], uuid: '' };
+  for (const zone of mergedZones) {
+    const intrazoneAction = zone._intrazone || 'deny';
+    securityPolicies.push({
+      name: `Implicit: Intra-zone ${intrazoneAction === 'allow' ? 'Allow' : 'Deny'} (${zone.name})`,
+      src_zones: [zone.name],
+      dst_zones: [zone.name],
+      src_addresses: ['all'],
+      dst_addresses: ['all'],
+      negate_source: false,
+      negate_destination: false,
+      applications: [],
+      services: ['ALL'],
+      action: intrazoneAction === 'allow' ? 'allow' : 'deny',
+      log_start: false,
+      log_end: false,
+      profile_group: '',
+      security_profiles: {},
+      description: `FortiGate intrazone-traffic default: ${intrazoneAction}`,
+      tags: ['added_by_fpic'],
+      disabled: false,
+      _rule_index: implicitIndex++,
+      _implicit: true,
+      _fortigate: { ...implicitFortigateBase },
+    });
+  }
+  securityPolicies.push({
+    name: 'Implicit: Default Deny',
+    src_zones: ['any'],
+    dst_zones: ['any'],
+    src_addresses: ['all'],
+    dst_addresses: ['all'],
+    negate_source: false,
+    negate_destination: false,
+    applications: [],
+    services: ['ALL'],
+    action: 'deny',
+    log_start: false,
+    log_end: false,
+    profile_group: '',
+    security_profiles: {},
+    description: 'FortiGate default: implicit deny at end of policy list',
+    tags: ['added_by_fpic'],
+    disabled: false,
+    _rule_index: implicitIndex++,
+    _implicit: true,
+    _fortigate: { ...implicitFortigateBase },
+  });
 
   const intermediateConfig = {
     zones: mergedZones,
@@ -69,6 +129,7 @@ export function parseFortigateConfig(configText) {
     security_policies: securityPolicies,
     nat_rules: natRules,
     applications: [],
+    schedules: intermediateSchedules,
     security_profile_objects: buildProfileObjects(securityPolicies, profileGroups),
     external_lists: [],
     vpn_tunnels: [],
@@ -356,6 +417,12 @@ function parseAddressObjects(tree, warnings) {
       case 'fqdn':
         type = 'fqdn';
         value = getString(entry['fqdn']) || '';
+        warnings.push(createWarning(
+          'info',
+          `address:${name}`,
+          `FQDN address "${name}" → SRX dns-name requires SRX 12.1+ and DNS resolution at commit time`,
+          'Verify SRX version supports dns-name, or replace with static IP'
+        ));
         break;
       case 'wildcard':
         type = 'wildcard';
@@ -364,6 +431,12 @@ function parseAddressObjects(tree, warnings) {
       case 'wildcard-fqdn':
         type = 'fqdn';
         value = getString(entry['wildcard-fqdn']) || '';
+        warnings.push(createWarning(
+          'warning',
+          `address:${name}`,
+          `Wildcard FQDN "${name}" (${value}) — SRX dns-name does not support wildcards`,
+          'Replace with specific FQDN or use custom feed / address set'
+        ));
         break;
       case 'geography':
         type = 'fqdn'; // closest match in intermediate schema
@@ -425,16 +498,19 @@ function parseServiceObjects(tree, warnings) {
       services.push({
         name,
         protocol: protocol.toLowerCase(),
-        port_range: getString(entry['icmptype']) || 'any',
+        port_range: '',
         source_port: '',
+        icmp_type: getString(entry['icmptype']) || '',
+        icmp_code: getString(entry['icmpcode']) || '',
         description: getString(entry['comment']) || '',
       });
     } else if (protocol === 'IP') {
       services.push({
         name,
         protocol: 'ip',
-        port_range: getString(entry['protocol-number']) || '0',
+        port_range: '',
         source_port: '',
+        protocol_number: getString(entry['protocol-number']) || '',
         description: getString(entry['comment']) || '',
       });
     } else {
@@ -569,6 +645,7 @@ function parseSecurityPolicies(tree, warnings) {
       description: getString(entry['comments']) || getString(entry['comment']) || '',
       tags: ensureArray(entry['label']),
       disabled,
+      schedule: schedule === 'always' ? '' : schedule,
       _rule_index: ruleIndex++,
       // FortiGate-specific fields for the FortiGate view
       _fortigate: {

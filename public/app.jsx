@@ -284,7 +284,7 @@ export default function App() {
         log_end: true,
         disabled: false,
         description: '',
-        tags: [],
+        tags: ['added_by_fpic'],
         profile_group: '',
         security_profiles: {},
         _review_status: 'unreviewed',
@@ -380,9 +380,13 @@ export default function App() {
 
   const handleModelSelection = useCallback(({ sourceModel: src, targetModel: tgt, srxLicense: lic }) => {
     setSourceModel(src || '');
+    // Clear interface mappings if target model changed
+    if (tgt !== targetModel) {
+      setInterfaceMappings({});
+    }
     setTargetModel(tgt || '');
     setSrxLicense(lic || '');
-  }, []);
+  }, [targetModel]);
 
   const handleModelContinue = useCallback(() => {
     setShowModelSelector(false);

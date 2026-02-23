@@ -62,6 +62,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}) {
   commands.push(...idpCommands);
   commands.push(...secIntelCommands);
 
+  convertSchedules(config.schedules, commands, warnings);
   convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled });
   convertNatRules(config.nat_rules, commands, warnings, summary);
 
@@ -164,9 +165,28 @@ function convertAddressObjects(objects, commands, warnings, summary) {
         // SRX supports range-address
         commands.push(`set security address-book global address ${name} range-address ${obj.value.replace('-', ' to ')}`);
         break;
-      case 'fqdn':
-        commands.push(`set security address-book global address ${name} dns-name ${obj.value}`);
+      case 'fqdn': {
+        // Wildcard FQDNs (e.g., *.example.com) are not supported by SRX dns-name
+        const isWildcard = obj.value && obj.value.startsWith('*.');
+        if (isWildcard) {
+          commands.push(`# WARNING: Wildcard FQDN "${obj.name}" (${obj.value}) — SRX does not support wildcard dns-name`);
+          commands.push(`# Convert to specific FQDN, address feed, or address set`);
+          commands.push(`set security address-book global address ${name} dns-name ${obj.value.slice(2)}`);
+          warnings.push(createWarning('warning', `address/${name}`,
+            `Wildcard FQDN "${obj.name}" (${obj.value}) stripped to "${obj.value.slice(2)}" — SRX dns-name does not support wildcards`,
+            'Replace with specific FQDN or use custom address feed'));
+        } else {
+          let dnsCmd = `set security address-book global address ${name} dns-name ${obj.value}`;
+          // Append ipv4-only / ipv6-only if source specified IP version
+          if (obj.fqdn_ip_version === 'v4') {
+            dnsCmd += ' ipv4-only';
+          } else if (obj.fqdn_ip_version === 'v6') {
+            dnsCmd += ' ipv6-only';
+          }
+          commands.push(dnsCmd);
+        }
         break;
+      }
       case 'wildcard':
         // No SRX equivalent — add as comment
         commands.push(`# UNSUPPORTED: Wildcard address "${obj.name}" (${obj.value}) — convert manually`);
@@ -201,12 +221,18 @@ function convertAddressGroups(groups, commands, warnings, summary) {
   commands.push('# Address Sets (Groups)');
   commands.push('# =============================================');
 
+  const groupNameSet = new Set(groups.map(g => g.name));
+
   for (const group of groups) {
     const groupName = sanitizeJunosName(group.name);
 
     for (const member of group.members) {
       const memberName = sanitizeJunosName(member);
-      commands.push(`set security address-book global address-set ${groupName} address ${memberName}`);
+      if (groupNameSet.has(member)) {
+        commands.push(`set security address-book global address-set ${groupName} address-set ${memberName}`);
+      } else {
+        commands.push(`set security address-book global address-set ${groupName} address ${memberName}`);
+      }
     }
 
     if (group.description) {
@@ -235,19 +261,34 @@ function convertServiceObjects(services, commands, warnings, summary) {
     const protocol = svc.protocol || 'tcp';
     const port = svc.port_range || '';
 
-    if (!port) {
-      commands.push(`# WARNING: Service "${svc.name}" has no port defined — skipping`);
-      warnings.push(createWarning('warning', `service/${name}`,
-        `Service "${svc.name}" has no port range defined`,
-        'Define the port range for this service'));
-      continue;
-    }
+    if (protocol === 'icmp' || protocol === 'icmp6') {
+      // ICMP services use icmp-type/icmp-code instead of destination-port
+      commands.push(`set applications application ${name} protocol ${protocol}`);
+      if (svc.icmp_type) {
+        commands.push(`set applications application ${name} icmp-type ${svc.icmp_type}`);
+      }
+      if (svc.icmp_code) {
+        commands.push(`set applications application ${name} icmp-code ${svc.icmp_code}`);
+      }
+    } else if (protocol === 'ip' && svc.protocol_number) {
+      // IP protocol by number
+      commands.push(`set applications application ${name} protocol ${svc.protocol_number}`);
+    } else {
+      // TCP/UDP/SCTP — require port
+      if (!port) {
+        commands.push(`# WARNING: Service "${svc.name}" has no port defined — skipping`);
+        warnings.push(createWarning('warning', `service/${name}`,
+          `Service "${svc.name}" has no port range defined`,
+          'Define the port range for this service'));
+        continue;
+      }
 
-    commands.push(`set applications application ${name} protocol ${protocol}`);
-    commands.push(`set applications application ${name} destination-port ${port}`);
+      commands.push(`set applications application ${name} protocol ${protocol}`);
+      commands.push(`set applications application ${name} destination-port ${port}`);
 
-    if (svc.source_port) {
-      commands.push(`set applications application ${name} source-port ${svc.source_port}`);
+      if (svc.source_port) {
+        commands.push(`set applications application ${name} source-port ${svc.source_port}`);
+      }
     }
 
     if (svc.description) {
@@ -271,12 +312,18 @@ function convertServiceGroups(groups, commands, warnings, summary) {
   commands.push('# Application Sets (from PAN-OS Service Groups)');
   commands.push('# =============================================');
 
+  const groupNameSet = new Set(groups.map(g => g.name));
+
   for (const group of groups) {
     const groupName = sanitizeJunosName(group.name);
 
     for (const member of group.members) {
       const memberName = sanitizeJunosName(member);
-      commands.push(`set applications application-set ${groupName} application ${memberName}`);
+      if (groupNameSet.has(member)) {
+        commands.push(`set applications application-set ${groupName} application-set ${memberName}`);
+      } else {
+        commands.push(`set applications application-set ${groupName} application ${memberName}`);
+      }
     }
 
     summary.services_converted++;
@@ -511,6 +558,33 @@ function convertSecIntel(externalLists, policies, warnings) {
 }
 
 // ---------------------------------------------------------------------------
+// Schedule Converter → SRX Schedulers
+// ---------------------------------------------------------------------------
+
+function convertSchedules(schedules, commands, warnings) {
+  if (!schedules || schedules.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Schedulers');
+  commands.push('# =============================================');
+
+  for (const sched of schedules) {
+    const name = sanitizeJunosName(sched.name);
+    if (sched.type === 'recurring' && sched.days && sched.days.length > 0) {
+      for (const day of sched.days) {
+        commands.push(`set schedulers scheduler ${name} ${day.toLowerCase()} start-time ${sched.start} stop-time ${sched.end}`);
+      }
+    } else if (sched.type === 'onetime') {
+      commands.push(`set schedulers scheduler ${name} start-date "${sched.start}" stop-date "${sched.end}"`);
+    } else {
+      commands.push(`# WARNING: Schedule "${sched.name}" has unknown type "${sched.type}" — skipping`);
+    }
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
 // Security Policy Converter
 // ---------------------------------------------------------------------------
 
@@ -528,6 +602,10 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 
   for (const policy of policies) {
     const policyName = sanitizeJunosName(policy.name);
+
+    if (policy._implicit) {
+      commands.push(`# --- Implicit Rule: ${policy.name} ---`);
+    }
 
     // Clean up EDL block list addresses from match criteria
     const secIntelAddrs = new Set(policy._secIntelAddresses || []);
@@ -608,6 +686,11 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         if (policy.profile_group && !hasIndividualProfiles) {
           commands.push(`# NOTE: PAN-OS profile group "${policy.profile_group}" — individual profiles not specified, applied default UTM+IDP`);
           commands.push(`set ${policyPath} then permit application-services utm-policy default-utm`);
+        }
+
+        // Schedule reference
+        if (policy.schedule) {
+          commands.push(`set ${policyPath} scheduler-name ${sanitizeJunosName(policy.schedule)}`);
         }
 
         // Disabled rules → deactivate command

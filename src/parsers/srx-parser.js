@@ -49,9 +49,33 @@ export function parseSrxConfig(configText) {
   const securityPolicies = parseSecurityPolicies(tree, warnings);
   const natRules = parseNatRules(tree, warnings);
   const applications = parseApplications(tree, warnings);
+  const schedules = parseSchedulers(setCommands, warnings);
 
   // Extract version info if available
   const version = extractVersion(tree);
+
+  // Append SRX implicit default deny
+  securityPolicies.push({
+    name: 'Implicit: Default Deny',
+    src_zones: ['any'],
+    dst_zones: ['any'],
+    src_addresses: ['any'],
+    dst_addresses: ['any'],
+    negate_source: false,
+    negate_destination: false,
+    applications: ['any'],
+    services: ['any'],
+    action: 'deny',
+    log_start: false,
+    log_end: false,
+    profile_group: '',
+    security_profiles: {},
+    description: 'SRX default: implicit deny for unmatched traffic',
+    tags: ['added_by_fpic'],
+    disabled: false,
+    _rule_index: securityPolicies.length + 1,
+    _implicit: true,
+  });
 
   const intermediateConfig = {
     zones,
@@ -62,6 +86,7 @@ export function parseSrxConfig(configText) {
     security_policies: securityPolicies,
     nat_rules: natRules,
     applications,
+    schedules,
     security_profile_objects: [],
     external_lists: [],
     vpn_tunnels: [],
@@ -631,6 +656,9 @@ function parseSinglePolicy(name, data, srcZones, dstZones, ruleIndex, warnings) 
   const actionMap = { permit: 'allow', deny: 'deny', reject: 'reset-both' };
   const intermediateAction = actionMap[action] || action;
 
+  // Scheduler
+  const schedulerName = extractStringValue(data['scheduler-name']) || '';
+
   return {
     name,
     src_zones: srcZones,
@@ -649,6 +677,7 @@ function parseSinglePolicy(name, data, srcZones, dstZones, ruleIndex, warnings) 
     description,
     tags: [],
     disabled,
+    schedule: schedulerName,
     _rule_index: ruleIndex,
   };
 }
@@ -828,6 +857,74 @@ function parseNatRules(tree, warnings) {
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Scheduler Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses SRX schedulers directly from set commands.
+ *
+ * Junos syntax:
+ *   set schedulers scheduler <name> <day> start-time <HH:MM:SS> stop-time <HH:MM:SS>
+ *   set schedulers scheduler <name> start-date "<datetime>" stop-date "<datetime>"
+ *
+ * Parses from raw commands instead of the config tree because the tree
+ * nests `start-time <val> stop-time <val>` as a deep path, making extraction fragile.
+ */
+function parseSchedulers(setCommands, warnings) {
+  const schedMap = {}; // name → { type, days: Set, start, end }
+
+  const dayNames = new Set([
+    'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday',
+    'daily', 'weekdays', 'weekend',
+  ]);
+
+  for (const cmd of setCommands) {
+    if (!cmd.startsWith('set schedulers scheduler ')) continue;
+    const rest = cmd.substring(24); // after "set schedulers scheduler "
+    const tokens = tokenize(rest);
+    if (tokens.length < 2) continue;
+
+    const name = tokens[0];
+    if (!schedMap[name]) {
+      schedMap[name] = { type: 'unknown', days: new Set(), start: '', end: '' };
+    }
+    const sched = schedMap[name];
+
+    // Check for one-time schedule
+    if (tokens[1] === 'start-date' && tokens.length >= 3) {
+      sched.type = 'onetime';
+      sched.start = tokens[2];
+      continue;
+    }
+    if (tokens[1] === 'stop-date' && tokens.length >= 3) {
+      sched.type = 'onetime';
+      sched.end = tokens[2];
+      continue;
+    }
+
+    // Recurring schedule: <name> <day> start-time <val> stop-time <val>
+    if (dayNames.has(tokens[1].toLowerCase())) {
+      sched.type = 'recurring';
+      sched.days.add(tokens[1].toLowerCase());
+
+      // Extract start-time and stop-time from remaining tokens
+      for (let i = 2; i < tokens.length - 1; i++) {
+        if (tokens[i] === 'start-time') sched.start = tokens[i + 1];
+        if (tokens[i] === 'stop-time') sched.end = tokens[i + 1];
+      }
+    }
+  }
+
+  return Object.entries(schedMap).map(([name, s]) => ({
+    name,
+    type: s.type === 'unknown' ? 'recurring' : s.type,
+    days: [...s.days],
+    start: s.start,
+    end: s.end,
+  }));
+}
 
 /**
  * Extracts a string value from a tree node.
