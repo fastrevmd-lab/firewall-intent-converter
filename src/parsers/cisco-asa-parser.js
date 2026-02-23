@@ -48,6 +48,8 @@ export function parseCiscoAsaConfig(configText) {
   const accessGroups = parseAccessGroups(lines, warnings);
   const natRules = parseNatRules(blocks, lines, warnings);
   const timeRanges = parseTimeRanges(blocks);
+  const staticRoutes = parseCiscoStaticRoutes(lines, warnings);
+  const routingContexts = detectCiscoContexts(lines, warnings);
 
   // Build zones from interfaces (ASA uses nameif + security-level as zones)
   const zones = buildZones(interfaces);
@@ -80,6 +82,9 @@ export function parseCiscoAsaConfig(configText) {
     security_profile_objects: [],
     external_lists: [],
     vpn_tunnels: [],
+    routing_contexts: routingContexts,
+    static_routes: staticRoutes,
+    target_context: null,
     _cisco: {
       interfaces,
       objectGroupProtocols,
@@ -93,6 +98,9 @@ export function parseCiscoAsaConfig(configText) {
       nat_rule_count: natRules.length,
       object_count: addressObjects.length + serviceObjects.length,
       zone_count: zones.length,
+      routing_context_count: routingContexts.length,
+      static_route_count: staticRoutes.length,
+      multi_vsys: routingContexts.length > 1,
     },
   };
 
@@ -1093,6 +1101,94 @@ function buildServiceFromAcl(entry) {
   return [`${proto}/${portName}`];
 }
 
+
+// ---------------------------------------------------------------------------
+// Static Route Parser
+// ---------------------------------------------------------------------------
+
+function parseCiscoStaticRoutes(lines, warnings) {
+  const routes = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('route ')) continue;
+    const tokens = tokenize(trimmed);
+    // route <nameif> <dest> <mask> <gateway> [metric]
+    if (tokens.length >= 5) {
+      const iface = tokens[1];
+      const dest = tokens[2];
+      const mask = tokens[3];
+      const gw = tokens[4];
+      const metric = tokens[5] ? parseInt(tokens[5]) : 1;
+      const cidr = maskToCidr(mask);
+
+      routes.push({
+        name: `${iface}-route-${routes.length + 1}`,
+        destination: `${dest}/${cidr}`,
+        next_hop: gw,
+        next_hop_type: 'ip-address',
+        interface: iface,
+        metric,
+        admin_distance: metric,
+        description: '',
+        vrf: '',
+        routing_context: '',
+      });
+    }
+  }
+  return routes;
+}
+
+// ---------------------------------------------------------------------------
+// Security Context Detection
+// ---------------------------------------------------------------------------
+
+function detectCiscoContexts(lines, warnings) {
+  const contexts = [];
+  let adminContext = '';
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('admin-context ')) {
+      adminContext = trimmed.slice(14).trim();
+    } else if (/^context\s+\S+/.test(trimmed)) {
+      const ctxName = trimmed.slice(8).trim();
+      if (ctxName && ctxName !== adminContext) {
+        contexts.push({
+          name: ctxName,
+          type: 'context',
+          virtual_routers: [],
+          zones: [],
+        });
+      }
+    }
+  }
+
+  if (adminContext) {
+    contexts.unshift({
+      name: adminContext,
+      type: 'context',
+      virtual_routers: [],
+      zones: [],
+    });
+    warnings.push(createWarning(
+      'warning', 'system/context',
+      `Multi-context ASA detected (admin-context: ${adminContext}). Context-specific configs may need separate parsing.`,
+      'Each context is essentially a separate firewall — paste individual context configs for full parsing'
+    ));
+  }
+
+  // If no contexts detected, create a default one
+  if (contexts.length === 0) {
+    contexts.push({
+      name: 'default',
+      type: 'default',
+      virtual_routers: [],
+      zones: [],
+    });
+  }
+
+  return contexts;
+}
 
 // ---------------------------------------------------------------------------
 // Version Extraction

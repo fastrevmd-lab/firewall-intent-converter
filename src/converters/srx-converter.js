@@ -31,7 +31,7 @@ import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning } from
  * @param {Object} [interfaceMappings] - User-defined PAN-OS → SRX interface mappings
  * @returns {{ commands: string[], warnings: Object[], summary: Object }}
  */
-export function convertToSrxSetCommands(config, interfaceMappings = {}) {
+export function convertToSrxSetCommands(config, interfaceMappings = {}, targetContext = null) {
   const commands = [];
   const warnings = [];
   const summary = {
@@ -41,6 +41,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}) {
     services_converted: 0,
     policies_converted: 0,
     nat_rules_converted: 0,
+    static_routes_converted: 0,
     total_warnings: 0,
     unsupported_items: 0,
   };
@@ -68,6 +69,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}) {
   convertSchedules(config.schedules, commands, warnings);
   convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups);
   convertNatRules(config.nat_rules, commands, warnings, summary);
+  convertStaticRoutes(config.static_routes, commands, warnings, summary);
 
   // Generate placeholder definitions for unmapped Customfwic applications
   if (customfwicApps.size > 0) {
@@ -85,6 +87,24 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}) {
   }
 
   summary.total_warnings = warnings.length;
+
+  // Logical-system / tenant wrapping
+  const ctx = targetContext || config.target_context;
+  if (ctx && ctx.type && ctx.type !== 'none' && ctx.name) {
+    const ctxName = sanitizeJunosName(ctx.name);
+    const prefix = ctx.type === 'logical-system'
+      ? `logical-systems ${ctxName}`
+      : `tenants ${ctxName}`;
+
+    for (let i = 0; i < commands.length; i++) {
+      const cmd = commands[i];
+      if (cmd.startsWith('set ')) {
+        commands[i] = `set ${prefix} ${cmd.slice(4)}`;
+      } else if (cmd.startsWith('deactivate ')) {
+        commands[i] = `deactivate ${prefix} ${cmd.slice(11)}`;
+      }
+    }
+  }
 
   return { commands, warnings, summary };
 }
@@ -1045,6 +1065,51 @@ function convertNatRules(natRules, commands, warnings, summary) {
 
       summary.nat_rules_converted++;
     }
+  }
+
+  commands.push('');
+}
+
+function convertStaticRoutes(routes, commands, warnings, summary) {
+  if (!routes || routes.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# Static Routes');
+  commands.push('# =============================================');
+
+  for (const route of routes) {
+    if (!route.destination) continue;
+
+    const dest = route.destination;
+
+    if (route.vrf) {
+      // Routing instance
+      const instName = sanitizeJunosName(route.vrf);
+      if (route.next_hop_type === 'discard') {
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} discard`);
+      } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-table ${route.next_hop}.inet.0`);
+      } else if (route.next_hop) {
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-hop ${route.next_hop}`);
+      }
+      if (route.metric && route.metric !== 10) {
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} metric ${route.metric}`);
+      }
+    } else {
+      // Global routing-options
+      if (route.next_hop_type === 'discard') {
+        commands.push(`set routing-options static route ${dest} discard`);
+      } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
+        commands.push(`set routing-options static route ${dest} next-table ${route.next_hop}.inet.0`);
+      } else if (route.next_hop) {
+        commands.push(`set routing-options static route ${dest} next-hop ${route.next_hop}`);
+      }
+      if (route.metric && route.metric !== 10) {
+        commands.push(`set routing-options static route ${dest} metric ${route.metric}`);
+      }
+    }
+
+    summary.static_routes_converted++;
   }
 
   commands.push('');

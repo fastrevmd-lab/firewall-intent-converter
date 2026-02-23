@@ -258,6 +258,38 @@ export const SAMPLE_CONFIGS = {
         </entry>
       </vsys>
     </entry>
+    <network>
+      <virtual-router>
+        <entry name="default">
+          <interface>
+            <member>ethernet1/1</member>
+            <member>ethernet1/2</member>
+          </interface>
+          <routing-table>
+            <ip>
+              <static-route>
+                <entry name="default-route">
+                  <destination>0.0.0.0/0</destination>
+                  <nexthop>
+                    <ip-address>10.0.1.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/1</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="server-subnet">
+                  <destination>172.16.0.0/16</destination>
+                  <nexthop>
+                    <ip-address>10.0.2.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/2</interface>
+                  <metric>10</metric>
+                </entry>
+              </static-route>
+            </ip>
+          </routing-table>
+        </entry>
+      </virtual-router>
+    </network>
   </devices>
 </config>`,
   },
@@ -591,6 +623,39 @@ export const SAMPLE_CONFIGS = {
         </entry>
       </vsys>
     </entry>
+    <network>
+      <virtual-router>
+        <entry name="vr-branch">
+          <interface>
+            <member>ethernet1/1</member>
+            <member>ethernet1/2</member>
+            <member>ethernet1/3</member>
+          </interface>
+          <routing-table>
+            <ip>
+              <static-route>
+                <entry name="default-route">
+                  <destination>0.0.0.0/0</destination>
+                  <nexthop>
+                    <ip-address>203.0.113.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/1</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="hq-network">
+                  <destination>10.0.0.0/8</destination>
+                  <nexthop>
+                    <ip-address>10.100.0.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/3</interface>
+                  <metric>20</metric>
+                </entry>
+              </static-route>
+            </ip>
+          </routing-table>
+        </entry>
+      </virtual-router>
+    </network>
   </devices>
 </config>`,
   },
@@ -976,6 +1041,65 @@ export const SAMPLE_CONFIGS = {
         </entry>
       </vsys>
     </entry>
+    <network>
+      <virtual-router>
+        <entry name="default">
+          <interface>
+            <member>ethernet1/1</member>
+            <member>ethernet1/2</member>
+            <member>ethernet1/3</member>
+            <member>ethernet1/4</member>
+          </interface>
+          <routing-table>
+            <ip>
+              <static-route>
+                <entry name="default-gw">
+                  <destination>0.0.0.0/0</destination>
+                  <nexthop>
+                    <ip-address>198.51.100.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/1</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="dc-servers">
+                  <destination>10.10.0.0/16</destination>
+                  <nexthop>
+                    <ip-address>10.1.0.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/3</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="blackhole-bogons">
+                  <destination>192.0.2.0/24</destination>
+                  <nexthop>
+                    <discard/>
+                  </nexthop>
+                  <metric>11</metric>
+                </entry>
+              </static-route>
+            </ip>
+          </routing-table>
+        </entry>
+        <entry name="vr-dmz">
+          <interface>
+            <member>ethernet1/4</member>
+          </interface>
+          <routing-table>
+            <ip>
+              <static-route>
+                <entry name="dmz-to-default">
+                  <destination>0.0.0.0/0</destination>
+                  <nexthop>
+                    <next-vr>default</next-vr>
+                  </nexthop>
+                  <metric>10</metric>
+                </entry>
+              </static-route>
+            </ip>
+          </routing-table>
+        </entry>
+      </virtual-router>
+    </network>
   </devices>
 </config>`,
   },
@@ -1169,6 +1293,38 @@ export const SAMPLE_CONFIGS = {
         </entry>
       </vsys>
     </entry>
+    <network>
+      <virtual-router>
+        <entry name="default">
+          <interface>
+            <member>ethernet1/1</member>
+            <member>ethernet1/2</member>
+            <member>ethernet1/5</member>
+          </interface>
+          <routing-table>
+            <ip>
+              <static-route>
+                <entry name="default-route">
+                  <destination>0.0.0.0/0</destination>
+                  <nexthop>
+                    <ip-address>192.168.1.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/1</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="null-route">
+                  <destination>10.255.255.0/24</destination>
+                  <nexthop>
+                    <discard/>
+                  </nexthop>
+                  <metric>11</metric>
+                </entry>
+              </static-route>
+            </ip>
+          </routing-table>
+        </entry>
+      </virtual-router>
+    </network>
   </devices>
 </config>`,
   },
@@ -2188,6 +2344,49 @@ export const SAMPLE_CONFIGS = {
         </entry>
       </vsys>
     </entry>
+    <network>
+      <virtual-router>
+        <entry name="default">
+          <interface>
+            <member>ethernet1/1</member>
+            <member>ethernet1/2</member>
+            <member>ethernet1/3</member>
+            <member>ethernet1/4</member>
+            <member>ethernet1/5</member>
+          </interface>
+          <routing-table>
+            <ip>
+              <static-route>
+                <entry name="default-route">
+                  <destination>0.0.0.0/0</destination>
+                  <nexthop>
+                    <ip-address>203.0.113.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/1</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="corp-network">
+                  <destination>10.0.0.0/8</destination>
+                  <nexthop>
+                    <ip-address>10.1.0.1</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/2</interface>
+                  <metric>10</metric>
+                </entry>
+                <entry name="branch-vpn">
+                  <destination>172.16.0.0/12</destination>
+                  <nexthop>
+                    <ip-address>10.1.0.5</ip-address>
+                  </nexthop>
+                  <interface>ethernet1/3</interface>
+                  <metric>20</metric>
+                </entry>
+              </static-route>
+            </ip>
+          </routing-table>
+        </entry>
+      </virtual-router>
+    </network>
   </devices>
 </config>`,
   },
@@ -2273,7 +2472,15 @@ set schedulers scheduler weekday-business monday start-time 08:00:00 stop-time 1
 set schedulers scheduler weekday-business tuesday start-time 08:00:00 stop-time 18:00:00
 set schedulers scheduler weekday-business wednesday start-time 08:00:00 stop-time 18:00:00
 set schedulers scheduler weekday-business thursday start-time 08:00:00 stop-time 18:00:00
-set schedulers scheduler weekday-business friday start-time 08:00:00 stop-time 18:00:00`,
+set schedulers scheduler weekday-business friday start-time 08:00:00 stop-time 18:00:00
+
+set routing-options static route 0.0.0.0/0 next-hop 203.0.113.1
+set routing-options static route 10.0.0.0/8 next-hop 192.168.1.1
+set routing-options static route 172.16.0.0/12 discard
+
+set routing-instances MGMT-VRF instance-type virtual-router
+set routing-instances MGMT-VRF interface ge-0/0/4.0
+set routing-instances MGMT-VRF routing-options static route 0.0.0.0/0 next-hop 10.99.0.1`,
   },
 
   // =========================================================================
@@ -2330,6 +2537,34 @@ config system zone
     next
     edit "DMZ"
         set interface "dmz"
+    next
+end
+
+config router static
+    edit 1
+        set dst 0.0.0.0 0.0.0.0
+        set gateway 203.0.113.1
+        set device "wan1"
+        set comment "Default route via WAN1"
+    next
+    edit 2
+        set dst 10.0.0.0 255.0.0.0
+        set gateway 10.1.1.1
+        set device "internal1"
+        set distance 10
+        set comment "Corporate network"
+    next
+    edit 3
+        set dst 172.16.10.0 255.255.255.0
+        set gateway 172.16.1.1
+        set device "dmz"
+        set distance 10
+        set comment "DMZ server subnet"
+    next
+    edit 4
+        set dst 192.168.100.0 255.255.255.0
+        set blackhole enable
+        set comment "Null route for bogon"
     next
 end
 
@@ -2655,6 +2890,10 @@ access-list inside_access_in extended deny ip any any log
 !
 access-group outside_access_in in interface outside
 access-group inside_access_in in interface inside
+!
+route outside 0.0.0.0 0.0.0.0 203.0.113.254 1
+route inside 10.0.0.0 255.0.0.0 10.1.1.254 10
+route dmz 172.16.10.0 255.255.255.0 172.16.10.254 1
 !
 object network internal-net
  nat (inside,outside) dynamic interface
