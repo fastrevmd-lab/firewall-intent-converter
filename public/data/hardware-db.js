@@ -675,8 +675,8 @@ export const SRX_MODELS = {
     description: 'Next-gen enterprise edge firewall with MACsec',
     throughput: { l4: '12 Gbps', l7: '7.5 Gbps', threat: '8 Gbps' },
     ports: [
-      // PIC 0: 16x multirate RJ-45 (1/2.5/5/10G)
-      ...genSrxPorts('ge', 0, 0, 0, 15, 'copper', '10G'),
+      // PIC 0: 16x RJ-45 (1G copper)
+      ...genSrxPorts('ge', 0, 0, 0, 15, 'copper', '1G'),
       // PIC 1: 2x SFP28 (25G)
       ...genSrxPorts('et', 0, 1, 0, 1, 'SFP28', '25G'),
       // PIC 2: 4x SFP+ (10G)
