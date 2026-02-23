@@ -53,6 +53,7 @@ export function parseFortigateConfig(configText) {
   const vipObjects = parseVipObjects(tree, warnings);
   const schedules = parseSchedules(tree, warnings);
   const profileGroups = parseProfileGroups(tree, warnings);
+  const staticRoutes = parseStaticRoutes(tree, warnings);
 
   // Promote schedules to intermediate format (normalize day names to short form)
   const dayShortMap = { monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu', friday: 'Fri', saturday: 'Sat', sunday: 'Sun' };
@@ -87,6 +88,24 @@ export function parseFortigateConfig(configText) {
 
   // Merge zone and interface data — FortiGate can use interfaces directly as zones
   const mergedZones = mergeZonesAndInterfaces(zones, interfaces, securityPolicies);
+
+  // Detect VDOM context
+  const routingContexts = detectVdomContext(tree, mergedZones, interfaces);
+
+  // Tag policies with VDOM if interfaces have vdom info
+  const ifVdomMap = {};
+  for (const iface of interfaces) {
+    if (iface.vdom && iface.vdom !== 'root') ifVdomMap[iface.name] = iface.vdom;
+  }
+  if (Object.keys(ifVdomMap).length > 0) {
+    for (const policy of securityPolicies) {
+      const srcIf = (policy.src_zones || [])[0];
+      if (srcIf && ifVdomMap[srcIf]) {
+        if (!policy._fortigate) policy._fortigate = {};
+        policy._fortigate.vdom = ifVdomMap[srcIf];
+      }
+    }
+  }
 
   // Detect FortiOS version from config
   const version = extractVersion(tree);
@@ -156,6 +175,9 @@ export function parseFortigateConfig(configText) {
     security_profile_objects: buildProfileObjects(securityPolicies, profileGroups),
     external_lists: [],
     vpn_tunnels: [],
+    routing_contexts: routingContexts,
+    static_routes: staticRoutes,
+    target_context: null,
     // FortiGate-specific extras (for the FortiGate view)
     _fortigate: {
       vips: vipObjects,
@@ -170,6 +192,9 @@ export function parseFortigateConfig(configText) {
       nat_rule_count: natRules.length,
       object_count: addressObjects.length + serviceObjects.length,
       zone_count: mergedZones.length,
+      routing_context_count: routingContexts.length,
+      static_route_count: staticRoutes.length,
+      multi_vsys: routingContexts.length > 1,
     },
   };
 
@@ -180,6 +205,113 @@ export function parseFortigateConfig(configText) {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// Static Route Parser
+// ---------------------------------------------------------------------------
+
+function parseStaticRoutes(tree, warnings) {
+  const routeSection = tree['router static'];
+  if (!routeSection) return [];
+
+  const routes = [];
+  for (const [id, entry] of Object.entries(routeSection)) {
+    if (typeof entry !== 'object' || entry === null) continue;
+
+    const dstVal = entry['dst'];
+    const gateway = getString(entry['gateway']) || '';
+    const device = getString(entry['device']) || '';
+    const distance = parseInt(getString(entry['distance'])) || 10;
+    const comment = getString(entry['comment']) || getString(entry['comments']) || '';
+    const isBlackhole = getString(entry['blackhole']) === 'enable';
+
+    // FortiGate dst is "ip mask" — stored as array ['ip','mask'] or string "ip mask"
+    let destination = '0.0.0.0/0';
+    if (Array.isArray(dstVal) && dstVal.length >= 2) {
+      destination = `${dstVal[0]}/${maskToCidr(dstVal[1])}`;
+    } else if (typeof dstVal === 'string') {
+      const parts = dstVal.split(/\s+/);
+      if (parts.length === 2) {
+        destination = `${parts[0]}/${maskToCidr(parts[1])}`;
+      } else {
+        destination = dstVal;
+      }
+    }
+
+    routes.push({
+      name: id,
+      destination,
+      next_hop: gateway,
+      next_hop_type: isBlackhole ? 'discard' : (gateway ? 'ip-address' : 'none'),
+      interface: device,
+      metric: distance,
+      admin_distance: distance,
+      description: comment,
+      vrf: '',
+      routing_context: '',
+    });
+  }
+
+  return routes;
+}
+
+// ---------------------------------------------------------------------------
+// VDOM Context Detection
+// ---------------------------------------------------------------------------
+
+function detectVdomContext(tree, zones, interfaces) {
+  const routingContexts = [];
+
+  // Check for explicit VDOM config
+  const vdomSection = tree['vdom'];
+  if (vdomSection && typeof vdomSection === 'object') {
+    for (const [vdomName, vdomData] of Object.entries(vdomSection)) {
+      if (typeof vdomData !== 'object') continue;
+      routingContexts.push({
+        name: vdomName,
+        type: 'vdom',
+        virtual_routers: [],
+        zones: zones.filter(z => {
+          // Match zones to VDOM via interface vdom field
+          const matchIf = interfaces.find(i => i.name === z.name);
+          return matchIf && matchIf.vdom === vdomName;
+        }).map(z => z.name),
+      });
+    }
+  }
+
+  // If no explicit VDOMs detected, create a single default context
+  if (routingContexts.length === 0) {
+    // Check if interfaces have different vdom values
+    const vdoms = new Set();
+    for (const iface of interfaces) {
+      if (iface.vdom) vdoms.add(iface.vdom);
+    }
+
+    if (vdoms.size > 1) {
+      for (const vdomName of vdoms) {
+        routingContexts.push({
+          name: vdomName,
+          type: 'vdom',
+          virtual_routers: [],
+          zones: zones.filter(z => {
+            const matchIf = interfaces.find(i => i.name === z.name);
+            return matchIf && matchIf.vdom === vdomName;
+          }).map(z => z.name),
+        });
+      }
+    } else {
+      routingContexts.push({
+        name: vdoms.size === 1 ? [...vdoms][0] : 'default',
+        type: 'default',
+        virtual_routers: [],
+        zones: zones.map(z => z.name),
+      });
+    }
+  }
+
+  return routingContexts;
+}
 
 // ---------------------------------------------------------------------------
 // Config Tree Builder

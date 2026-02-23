@@ -31,6 +31,7 @@ import InterfaceMapper from './components/InterfaceMapper.jsx';
 import ZoneEditor from './components/ZoneEditor.jsx';
 import ObjectEditor from './components/ObjectEditor.jsx';
 import NATEditor from './components/NATEditor.jsx';
+import RoutingEditor from './components/RoutingEditor.jsx';
 
 export default function App() {
   // --- Config input state ---
@@ -64,6 +65,9 @@ export default function App() {
   const [convertWarnings, setConvertWarnings] = useState([]);
   const [conversionSummary, setConversionSummary] = useState(null);
   const [outputFormat, setOutputFormat] = useState('set');
+
+  // --- Routing context state ---
+  const [targetContext, setTargetContext] = useState({ type: 'none', name: '' });
 
   // --- Sanitization state ---
   const [isSanitized, setIsSanitized] = useState(false);
@@ -221,7 +225,7 @@ export default function App() {
       const response = await fetch('/api/convert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ intermediateConfig, format, interfaceMappings }),
+        body: JSON.stringify({ intermediateConfig, format, interfaceMappings, targetContext: targetContext.type !== 'none' ? targetContext : null }),
       });
 
       const data = await response.json();
@@ -578,9 +582,36 @@ export default function App() {
                   >
                     NAT ({intermediateConfig.nat_rules?.length || 0})
                   </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'routing' ? 'active' : ''}`}
+                    onClick={() => setEditTab('routing')}
+                  >
+                    Routing ({intermediateConfig.static_routes?.length || 0})
+                  </button>
                   <div style={{ flex: 1 }} />
                   {platformView === 'srx' && (
                     <>
+                      <select
+                        className="btn btn-secondary btn-sm"
+                        value={targetContext.type}
+                        onChange={(e) => setTargetContext(prev => ({ ...prev, type: e.target.value, name: e.target.value === 'none' ? '' : prev.name }))}
+                        style={{ margin: '6px 2px', maxWidth: 130 }}
+                        title="Target context for SRX output"
+                      >
+                        <option value="none">Flat Config</option>
+                        <option value="logical-system">Logical System</option>
+                        <option value="tenant">Tenant</option>
+                      </select>
+                      {targetContext.type !== 'none' && (
+                        <input
+                          type="text"
+                          className="btn btn-secondary btn-sm"
+                          placeholder="Name..."
+                          value={targetContext.name}
+                          onChange={(e) => setTargetContext(prev => ({ ...prev, name: e.target.value }))}
+                          style={{ margin: '6px 2px', maxWidth: 100, textAlign: 'left' }}
+                        />
+                      )}
                       <button
                         className="btn btn-secondary btn-sm"
                         onClick={handleReviewClick}
@@ -665,6 +696,16 @@ export default function App() {
                     natRules={intermediateConfig.nat_rules || []}
                     onNATUpdate={handleNATUpdate}
                     viewMode={effectiveViewMode}
+                  />
+                )}
+                {editTab === 'routing' && (
+                  <RoutingEditor
+                    routingContexts={intermediateConfig.routing_contexts || []}
+                    staticRoutes={intermediateConfig.static_routes || []}
+                    onRoutesUpdate={(routes) => {
+                      const updated = { ...intermediateConfig, static_routes: routes };
+                      setIntermediateConfig(updated);
+                    }}
                   />
                 )}
               </div>

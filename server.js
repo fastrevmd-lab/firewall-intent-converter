@@ -229,16 +229,16 @@ app.post('/api/sanitize', (req, res) => {
  */
 app.post('/api/convert', (req, res) => {
   try {
-    const { intermediateConfig, format = 'set', interfaceMappings = {} } = req.body;
+    const { intermediateConfig, format = 'set', interfaceMappings = {}, targetContext = null } = req.body;
     if (!intermediateConfig) {
       return res.status(400).json({ error: 'intermediateConfig is required' });
     }
 
     let output;
     if (format === 'xml') {
-      output = buildSrxXml(intermediateConfig, interfaceMappings);
+      output = buildSrxXml(intermediateConfig, interfaceMappings, targetContext);
     } else {
-      output = convertToSrxSetCommands(intermediateConfig, interfaceMappings);
+      output = convertToSrxSetCommands(intermediateConfig, interfaceMappings, targetContext);
     }
 
     // Detect shadowed rules

@@ -94,108 +94,180 @@ export function parsePanosConfig(configText) {
     throw new Error('No vsys found in configuration. Ensure this is a valid PAN-OS device config or Panorama export.');
   }
 
-  // For Phase 1, parse the first vsys. Phase 2 will add multi-vsys/device-group handling.
-  const vsys = vsysList[0];
+  // Parse all vsys entries — merge objects from each vsys
+  const multiVsys = vsysList.length > 1;
+  const allZones = [];
+  const allAddressObjects = [];
+  const allAddressGroups = [];
+  const allServiceObjects = [];
+  const allServiceGroups = [];
+  const allApplications = [];
+  const allApplicationGroups = [];
+  const allSecurityPolicies = [];
+  const allNatRules = [];
+  const allExternalLists = [];
+  const allSchedules = [];
+  const allSecurityProfileObjects = [];
+  const routingContexts = [];
 
-  // Parse each config section into the intermediate schema
-  const zones = parseZones(vsys, warnings);
-  const addressObjects = parseAddressObjects(vsys, warnings);
-  const addressGroups = parseAddressGroups(vsys, warnings);
-  const serviceObjects = parseServiceObjects(vsys, warnings);
-  const serviceGroups = parseServiceGroups(vsys, warnings);
-  const applications = parseApplications(vsys, warnings);
-  const applicationGroups = parseApplicationGroups(vsys, warnings);
-  const securityPolicies = parseSecurityRules(vsys, warnings);
-  const natRules = parseNatRules(vsys, warnings);
-  const externalLists = parseExternalLists(vsys, warnings);
-  const schedules = parseScheduleObjects(vsys);
+  for (const vsys of vsysList) {
+    const vsysName = vsys['@_name'] || 'vsys1';
 
-  // Resolve profile group references → expand into individual security_profiles
-  const profileGroupDefs = parseProfileGroupDefinitions(vsys);
-  for (const policy of securityPolicies) {
-    if (policy.profile_group && Object.keys(policy.security_profiles).length === 0) {
-      const groupDef = profileGroupDefs[policy.profile_group];
-      if (groupDef) {
-        policy.security_profiles = { ...groupDef };
+    // Parse each config section
+    const zones = parseZones(vsys, warnings);
+    const addressObjects = parseAddressObjects(vsys, warnings);
+    const addressGroups = parseAddressGroups(vsys, warnings);
+    const serviceObjects = parseServiceObjects(vsys, warnings);
+    const serviceGroups = parseServiceGroups(vsys, warnings);
+    const applications = parseApplications(vsys, warnings);
+    const applicationGroups = parseApplicationGroups(vsys, warnings);
+    const securityPolicies = parseSecurityRules(vsys, warnings);
+    const natRules = parseNatRules(vsys, warnings);
+    const externalLists = parseExternalLists(vsys, warnings);
+    const schedules = parseScheduleObjects(vsys);
+
+    // Resolve profile group references
+    const profileGroupDefs = parseProfileGroupDefinitions(vsys);
+    for (const policy of securityPolicies) {
+      if (policy.profile_group && Object.keys(policy.security_profiles).length === 0) {
+        const groupDef = profileGroupDefs[policy.profile_group];
+        if (groupDef) {
+          policy.security_profiles = { ...groupDef };
+        }
       }
     }
-  }
 
-  // Flag rules that reference EDL block lists for SecIntel mapping
-  flagSecIntelRules(securityPolicies, externalLists, warnings);
+    // Flag SecIntel rules
+    flagSecIntelRules(securityPolicies, externalLists, warnings);
 
-  // Build security profile objects from rules
-  const securityProfileObjects = buildSecurityProfileObjects(securityPolicies);
+    // Tag policies with vsys name when multi-vsys
+    if (multiVsys) {
+      for (const policy of securityPolicies) {
+        policy._vsys = vsysName;
+      }
+      for (const rule of natRules) {
+        rule._vsys = vsysName;
+      }
+    }
 
-  // Append PAN-OS implicit rules
-  let implicitIndex = securityPolicies.length + 1;
-  for (const zone of zones) {
+    // Build security profile objects
+    allSecurityProfileObjects.push(...buildSecurityProfileObjects(securityPolicies));
+
+    // Append implicit rules for this vsys
+    let implicitIndex = securityPolicies.length + 1;
+    for (const zone of zones) {
+      securityPolicies.push({
+        name: `Implicit: Intra-zone Allow (${zone.name})`,
+        src_zones: [zone.name],
+        dst_zones: [zone.name],
+        src_addresses: ['any'],
+        dst_addresses: ['any'],
+        negate_source: false,
+        negate_destination: false,
+        applications: ['any'],
+        services: ['any'],
+        action: 'allow',
+        log_start: false,
+        log_end: false,
+        profile_group: '',
+        security_profiles: {},
+        description: 'PAN-OS default: traffic within the same zone is allowed',
+        tags: ['added_by_fpic'],
+        disabled: false,
+        _rule_index: implicitIndex++,
+        _implicit: true,
+        ...(multiVsys ? { _vsys: vsysName } : {}),
+      });
+    }
     securityPolicies.push({
-      name: `Implicit: Intra-zone Allow (${zone.name})`,
-      src_zones: [zone.name],
-      dst_zones: [zone.name],
+      name: 'Implicit: Interzone Default Deny',
+      src_zones: ['any'],
+      dst_zones: ['any'],
       src_addresses: ['any'],
       dst_addresses: ['any'],
       negate_source: false,
       negate_destination: false,
       applications: ['any'],
       services: ['any'],
-      action: 'allow',
+      action: 'deny',
       log_start: false,
       log_end: false,
       profile_group: '',
       security_profiles: {},
-      description: 'PAN-OS default: traffic within the same zone is allowed',
+      description: 'PAN-OS default: traffic between different zones is denied',
       tags: ['added_by_fpic'],
       disabled: false,
       _rule_index: implicitIndex++,
       _implicit: true,
+      ...(multiVsys ? { _vsys: vsysName } : {}),
     });
+
+    // Build routing context for this vsys
+    const virtualRouters = parseVirtualRouters(config, warnings);
+    routingContexts.push({
+      name: vsysName,
+      type: 'vsys',
+      virtual_routers: virtualRouters,
+      zones: zones.map(z => z.name),
+    });
+
+    // Merge into aggregated arrays
+    allZones.push(...zones);
+    allAddressObjects.push(...addressObjects);
+    allAddressGroups.push(...addressGroups);
+    allServiceObjects.push(...serviceObjects);
+    allServiceGroups.push(...serviceGroups);
+    allApplications.push(...applications);
+    allApplicationGroups.push(...applicationGroups);
+    allSecurityPolicies.push(...securityPolicies);
+    allNatRules.push(...natRules);
+    allExternalLists.push(...externalLists);
+    allSchedules.push(...schedules);
   }
-  securityPolicies.push({
-    name: 'Implicit: Interzone Default Deny',
-    src_zones: ['any'],
-    dst_zones: ['any'],
-    src_addresses: ['any'],
-    dst_addresses: ['any'],
-    negate_source: false,
-    negate_destination: false,
-    applications: ['any'],
-    services: ['any'],
-    action: 'deny',
-    log_start: false,
-    log_end: false,
-    profile_group: '',
-    security_profiles: {},
-    description: 'PAN-OS default: traffic between different zones is denied',
-    tags: ['added_by_fpic'],
-    disabled: false,
-    _rule_index: implicitIndex++,
-    _implicit: true,
-  });
+
+  // Flatten static routes from all virtual routers
+  const staticRoutes = [];
+  for (const ctx of routingContexts) {
+    for (const vr of ctx.virtual_routers) {
+      for (const route of vr.static_routes) {
+        staticRoutes.push({ ...route, routing_context: ctx.name });
+      }
+    }
+  }
+
+  // Re-index all policies across vsys for consistent ordering
+  for (let i = 0; i < allSecurityPolicies.length; i++) {
+    allSecurityPolicies[i]._rule_index = i + 1;
+  }
 
   const intermediateConfig = {
-    zones,
-    address_objects: addressObjects,
-    address_groups: addressGroups,
-    service_objects: serviceObjects,
-    service_groups: serviceGroups,
-    security_policies: securityPolicies,
-    nat_rules: natRules,
-    applications,
-    application_groups: applicationGroups,
-    schedules,
-    security_profile_objects: securityProfileObjects,
-    external_lists: externalLists,
-    vpn_tunnels: [], // Phase 2
+    zones: allZones,
+    address_objects: allAddressObjects,
+    address_groups: allAddressGroups,
+    service_objects: allServiceObjects,
+    service_groups: allServiceGroups,
+    security_policies: allSecurityPolicies,
+    nat_rules: allNatRules,
+    applications: allApplications,
+    application_groups: allApplicationGroups,
+    schedules: allSchedules,
+    security_profile_objects: allSecurityProfileObjects,
+    external_lists: allExternalLists,
+    vpn_tunnels: [],
+    routing_contexts: routingContexts,
+    static_routes: staticRoutes,
+    target_context: null,
     metadata: {
       source_vendor: 'panos',
       source_version: panosVersion,
       export_date: new Date().toISOString(),
-      rule_count: securityPolicies.length,
-      nat_rule_count: natRules.length,
-      object_count: addressObjects.length + addressGroups.length + serviceObjects.length + serviceGroups.length,
-      zone_count: zones.length,
+      rule_count: allSecurityPolicies.length,
+      nat_rule_count: allNatRules.length,
+      object_count: allAddressObjects.length + allAddressGroups.length + allServiceObjects.length + allServiceGroups.length,
+      zone_count: allZones.length,
+      routing_context_count: routingContexts.length,
+      static_route_count: staticRoutes.length,
+      multi_vsys: multiVsys,
     },
   };
 
@@ -240,6 +312,80 @@ function findVsysEntries(config) {
   }
 
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// Virtual Router + Static Route Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses PAN-OS virtual routers and their static routes.
+ * VRs live at: config > devices > entry > network > virtual-router > entry
+ */
+function parseVirtualRouters(config, warnings) {
+  const devices = getNestedValue(config, 'devices');
+  if (!devices) return [];
+
+  const deviceEntries = extractEntries(devices);
+  for (const device of deviceEntries) {
+    const vrContainer = getNestedValue(device, 'network.virtual-router');
+    if (!vrContainer) continue;
+
+    const vrEntries = extractEntries(vrContainer);
+    return vrEntries.map(vr => {
+      const name = vr['@_name'] || 'default';
+      const interfaces = extractMembers(vr.interface || vr);
+      const staticRoutes = parseVrStaticRoutes(vr);
+
+      return { name, interfaces, static_routes: staticRoutes };
+    });
+  }
+
+  return [];
+}
+
+function parseVrStaticRoutes(vrEntry) {
+  const routeContainer = getNestedValue(vrEntry, 'routing-table.ip.static-route');
+  if (!routeContainer) return [];
+
+  const entries = extractEntries(routeContainer);
+  return entries.map(entry => {
+    const name = entry['@_name'] || '';
+    const destination = entry.destination || '';
+
+    // Next-hop can be: nexthop > ip-address, nexthop > next-vr, or nexthop > discard
+    const nexthop = entry.nexthop || {};
+    let nextHop = '';
+    let nextHopType = 'ip-address';
+
+    if (typeof nexthop === 'string') {
+      nextHop = nexthop;
+    } else if (nexthop['ip-address']) {
+      nextHop = String(nexthop['ip-address']);
+    } else if (nexthop['next-vr']) {
+      nextHop = String(nexthop['next-vr']);
+      nextHopType = 'next-vr';
+    } else if (nexthop.discard !== undefined || nexthop.discard === '') {
+      nextHopType = 'discard';
+    } else if (nexthop.none !== undefined) {
+      nextHopType = 'none';
+    }
+
+    const iface = entry.interface ? String(entry.interface) : '';
+    const metric = parseInt(entry.metric) || 10;
+
+    return {
+      name,
+      destination,
+      next_hop: nextHop,
+      next_hop_type: nextHopType,
+      interface: iface,
+      metric,
+      admin_distance: null,
+      description: '',
+      vrf: '',
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

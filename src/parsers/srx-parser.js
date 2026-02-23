@@ -50,6 +50,7 @@ export function parseSrxConfig(configText) {
   const natRules = parseNatRules(tree, warnings);
   const applications = parseApplications(tree, warnings);
   const schedules = parseSchedulers(setCommands, warnings);
+  const { staticRoutes, routingContexts } = parseSrxStaticRoutes(tree, warnings);
 
   // Extract version info if available
   const version = extractVersion(tree);
@@ -91,6 +92,9 @@ export function parseSrxConfig(configText) {
     security_profile_objects: [],
     external_lists: [],
     vpn_tunnels: [],
+    routing_contexts: routingContexts,
+    static_routes: staticRoutes,
+    target_context: null,
     metadata: {
       source_vendor: 'srx',
       source_version: version,
@@ -99,6 +103,9 @@ export function parseSrxConfig(configText) {
       nat_rule_count: natRules.length,
       object_count: addressObjects.length + addressGroups.length + serviceObjects.length + serviceGroups.length,
       zone_count: zones.length,
+      routing_context_count: routingContexts.length,
+      static_route_count: staticRoutes.length,
+      multi_vsys: false,
     },
   };
 
@@ -967,6 +974,93 @@ function findKeyValue(data) {
     if (k.includes(':') && k.match(/^[0-9a-fA-F:\/]+$/)) return k;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Static Route Parser
+// ---------------------------------------------------------------------------
+
+function parseSrxStaticRoutes(tree, warnings) {
+  const staticRoutes = [];
+  const routingContexts = [];
+
+  // Global routing-options
+  const globalRoutes = tree?.['routing-options']?.static?.route;
+  if (globalRoutes && typeof globalRoutes === 'object') {
+    for (const [dest, data] of Object.entries(globalRoutes)) {
+      if (dest.startsWith('_')) continue;
+      staticRoutes.push(buildSrxRoute(dest, data, '', ''));
+    }
+  }
+
+  // Build default routing context
+  routingContexts.push({
+    name: 'default',
+    type: 'default',
+    virtual_routers: [],
+    zones: [],
+  });
+
+  // Routing instances (VRFs)
+  const instances = tree?.['routing-instances'];
+  if (instances && typeof instances === 'object') {
+    for (const [instName, instData] of Object.entries(instances)) {
+      if (instName.startsWith('_') || typeof instData !== 'object') continue;
+
+      const instRoutes = instData?.['routing-options']?.static?.route;
+      if (instRoutes && typeof instRoutes === 'object') {
+        for (const [dest, data] of Object.entries(instRoutes)) {
+          if (dest.startsWith('_')) continue;
+          staticRoutes.push(buildSrxRoute(dest, data, instName, instName));
+        }
+      }
+
+      routingContexts.push({
+        name: instName,
+        type: 'default',
+        virtual_routers: [{
+          name: instName,
+          interfaces: [],
+          static_routes: instRoutes ? Object.entries(instRoutes)
+            .filter(([k]) => !k.startsWith('_'))
+            .map(([d, v]) => buildSrxRoute(d, v, instName, instName)) : [],
+        }],
+        zones: [],
+      });
+    }
+  }
+
+  return { staticRoutes, routingContexts };
+}
+
+function buildSrxRoute(dest, data, vrf, routingContext) {
+  let nextHop = '';
+  let nextHopType = 'ip-address';
+
+  if (typeof data === 'string') {
+    nextHop = data;
+  } else if (typeof data === 'object') {
+    if (data['next-hop']) {
+      nextHop = extractStringValue(data['next-hop']);
+    } else if (data.discard !== undefined) {
+      nextHopType = 'discard';
+    } else if (data.reject !== undefined) {
+      nextHopType = 'discard';
+    }
+  }
+
+  return {
+    name: dest,
+    destination: dest,
+    next_hop: nextHop,
+    next_hop_type: nextHopType,
+    interface: '',
+    metric: typeof data === 'object' && data.metric ? parseInt(extractStringValue(data.metric)) || 10 : 10,
+    admin_distance: null,
+    description: '',
+    vrf,
+    routing_context: routingContext,
+  };
 }
 
 /**

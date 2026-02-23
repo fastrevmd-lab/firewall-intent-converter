@@ -19,7 +19,7 @@ import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning } from
  * @param {Object} [interfaceMappings] - User-defined PAN-OS → SRX interface mappings
  * @returns {{ xml: string, warnings: Object[] }}
  */
-export function buildSrxXml(config, interfaceMappings = {}) {
+export function buildSrxXml(config, interfaceMappings = {}, targetContext = null) {
   const warnings = [];
   const lines = [];
   xmlCustomfwicApps.clear();
@@ -30,11 +30,23 @@ export function buildSrxXml(config, interfaceMappings = {}) {
   const blockLists = (config.external_lists || []).filter(e => e.isBlockList);
   const secIntelEnabled = blockLists.length > 0;
 
+  // Determine context wrapping
+  const ctx = targetContext || config.target_context;
+  const useContext = ctx && ctx.type && ctx.type !== 'none' && ctx.name;
+  const indent = useContext ? '    ' : '  ';
+
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push('<configuration>');
 
+  // Open logical-system or tenant wrapper
+  if (useContext) {
+    const ctxTag = ctx.type === 'logical-system' ? 'logical-systems' : 'tenants';
+    lines.push(`  <${ctxTag}>`);
+    lines.push(`    <name>${escapeXml(sanitizeJunosName(ctx.name))}</name>`);
+  }
+
   // Security section
-  lines.push('  <security>');
+  lines.push(`${indent}<security>`);
 
   // Zones
   buildZonesXml(config.zones, lines, interfaceMappings);
@@ -54,7 +66,10 @@ export function buildSrxXml(config, interfaceMappings = {}) {
   // IDP
   buildIdpXml(config.security_policies, lines);
 
-  lines.push('  </security>');
+  lines.push(`${indent}</security>`);
+
+  // Static Routes
+  buildStaticRoutesXml(config.static_routes, lines);
 
   // Applications (includes Customfwic placeholders for unmapped apps)
   buildApplicationsXml(config.service_objects, config.applications, config.service_groups, lines, xmlCustomfwicApps);
@@ -65,6 +80,12 @@ export function buildSrxXml(config, interfaceMappings = {}) {
   // Services (SecIntel)
   if (secIntelEnabled) {
     buildSecIntelXml(blockLists, lines);
+  }
+
+  // Close context wrapper
+  if (useContext) {
+    const ctxTag = ctx.type === 'logical-system' ? 'logical-systems' : 'tenants';
+    lines.push(`  </${ctxTag}>`);
   }
 
   lines.push('</configuration>');
@@ -898,6 +919,71 @@ function resolveApps(applications, services, warnings, policyName, appGroups = [
   }
   if (resolved.length === 0) resolved.push('any');
   return [...new Set(resolved)];
+}
+
+// ---------------------------------------------------------------------------
+// Static Routes XML Builder
+// ---------------------------------------------------------------------------
+
+function buildStaticRoutesXml(routes, lines) {
+  if (!routes || routes.length === 0) return;
+
+  const globalRoutes = routes.filter(r => !r.vrf);
+  const vrfGroups = {};
+  for (const r of routes.filter(r => r.vrf)) {
+    if (!vrfGroups[r.vrf]) vrfGroups[r.vrf] = [];
+    vrfGroups[r.vrf].push(r);
+  }
+
+  // Global routing-options
+  if (globalRoutes.length > 0) {
+    lines.push('  <routing-options>');
+    lines.push('    <static>');
+    for (const route of globalRoutes) {
+      lines.push('      <route>');
+      lines.push(`        <name>${escapeXml(route.destination)}</name>`);
+      if (route.next_hop_type === 'discard') {
+        lines.push('        <discard/>');
+      } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
+        lines.push(`        <next-table>${escapeXml(route.next_hop)}.inet.0</next-table>`);
+      } else if (route.next_hop) {
+        lines.push(`        <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+      }
+      if (route.metric && route.metric !== 10) {
+        lines.push(`        <metric>${route.metric}</metric>`);
+      }
+      lines.push('      </route>');
+    }
+    lines.push('    </static>');
+    lines.push('  </routing-options>');
+  }
+
+  // Routing instances (VRFs)
+  if (Object.keys(vrfGroups).length > 0) {
+    lines.push('  <routing-instances>');
+    for (const [vrfName, vrfRoutes] of Object.entries(vrfGroups)) {
+      const name = sanitizeJunosName(vrfName);
+      lines.push('    <instance>');
+      lines.push(`      <name>${escapeXml(name)}</name>`);
+      lines.push('      <instance-type>virtual-router</instance-type>');
+      lines.push('      <routing-options>');
+      lines.push('        <static>');
+      for (const route of vrfRoutes) {
+        lines.push('          <route>');
+        lines.push(`            <name>${escapeXml(route.destination)}</name>`);
+        if (route.next_hop_type === 'discard') {
+          lines.push('            <discard/>');
+        } else if (route.next_hop) {
+          lines.push(`            <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+        }
+        lines.push('          </route>');
+      }
+      lines.push('        </static>');
+      lines.push('      </routing-options>');
+      lines.push('    </instance>');
+    }
+    lines.push('  </routing-instances>');
+  }
 }
 
 function escapeXml(str) {
