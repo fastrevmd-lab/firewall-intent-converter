@@ -1,70 +1,7 @@
 # Firewall to Intent Converter
 
-A browser-based tool that converts firewall configurations into a vendor-neutral intermediate format for review, editing, and conversion to Juniper SRX. Supports **PAN-OS XML**, **Junos SRX**, **FortiGate / FortiOS**, and **Cisco ASA / FTD** as source formats. Paste or upload a config, review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.
-
-## Features
-
-### Multi-Vendor Source Import
-- **PAN-OS XML parser** — Extracts security policies, NAT rules, zones, address objects, address groups, service objects, service groups, and security profile groups from PAN-OS XML configs
-- **Junos SRX parser** — Parses SRX `set` commands and hierarchical curly-brace format into the same intermediate schema (zones, address-book objects, address sets, security policies, NAT rule-sets, applications)
-- **FortiGate / FortiOS parser** — Parses FortiOS `config`/`edit`/`set`/`next`/`end` block format including firewall policies, address objects, address groups, service objects, service groups, zones, VIPs (destination NAT), IP pools, central SNAT maps, and security profiles (AV, web filter, IPS, application control, SSL inspection, DNS filter, DLP, email filter)
-- **Cisco ASA / FTD parser** — Parses Cisco ASA/FTD configuration including interfaces (nameif, security-level, IP), object network/service definitions, object-group network/service/protocol groups, extended access-lists with remarks, access-group bindings, and object NAT (dynamic/static). Zones are derived from interface nameif + security-level
-- **Auto-detection** — Automatically identifies the source format (PAN-OS XML, Junos SRX, FortiOS, or Cisco ASA) and routes to the correct parser
-- **SRX output** — Generates Juniper SRX `set` commands or hierarchical XML, including zones, address books, application mappings, security policies, NAT rule-sets, and schedulers
-- **Implicit rules** — Automatically generates vendor-specific implicit rules (PAN-OS intra-zone allow + interzone deny, FortiGate intrazone per-zone + default deny, Cisco ASA security-level permits for unbound interfaces + default deny, SRX default deny). Implicit rules are visually distinguished in the UI (dimmed, italic, with "Implicit" chip) and tagged `added_by_fpic`
-- **FQDN support** — Parses FQDN/dns-name address objects from all vendors and converts to SRX `dns-name`. Cisco ASA `fqdn v4`/`v6` maps to SRX `ipv4-only`/`ipv6-only`. FortiGate wildcard-fqdn (`*.example.com`) generates a warning since SRX does not support wildcard dns-name
-- **ICMP details** — Preserves ICMP type/code through the full pipeline (parser → intermediate → converter). Generates SRX `icmp-type`/`icmp-code` instead of `destination-port` for ICMP services
-- **Schedule support** — Parses schedules from all vendors (FortiGate recurring/onetime, PAN-OS schedule objects, Cisco ASA time-ranges, SRX schedulers) and converts to SRX `set schedulers scheduler` commands with `scheduler-name` references on policies
-- **Nested object groups** — Correctly resolves nested address groups and service groups, emitting `address-set` (not `address`) and `application-set` (not `application`) references for group members that are themselves groups
-- **Application mapping** — Automatically maps PAN-OS application names to Junos equivalents (e.g., `web-browsing` → `junos-http`)
-- **Sanitization** — One-click replacement of sensitive data (IPs, hostnames, keys) with placeholders before sharing or sending to an LLM. Originals are restored on export
-
-### Dual Platform View
-- **"from" / "to" toggle** — Switch between source view ("from PAN-OS", "from SRX", "from FortiGate", or "from Cisco ASA") and target view ("to SRX") above the tab bar
-- **SRX-style table** — When source is SRX (or viewing the "to SRX" tab), policies display in a zone-grouped table with SRX terminology (permit/deny/reject, security-zone, address-book)
-- **PAN-OS-style table** — When source is PAN-OS, the "from" tab shows the familiar PAN-OS table layout with allow/deny actions
-- **FortiGate-style table** — When source is FortiGate, the "from" tab shows a FortiOS-style policy table with FortiGate terminology (ACCEPT/DENY, From/To interfaces, Schedule, NAT toggle, security profile icons for AV/WF/IPS/App/SSL)
-- **Cisco ASDM-style table** — When source is Cisco ASA/FTD, the "from" tab shows a Cisco ASDM-style access control table with ACE numbering, Permit/Deny actions, ACL name badges, security level indicators, protocol chips, interface labels, log status, and hit counts
-- **Negate support** — Source/destination address negation flags (PAN-OS `negate-source`/`negate-destination`, SRX `except`) displayed and editable in both views
-- **Profile group expansion** — PAN-OS profile group references are automatically resolved into individual security profiles
-
-### Interactive Editing
-- **Tabbed center panel** — Switch between Security Policies/Rules, Security Zones, Address Book/Objects, and NAT editors
-- **Inline table editing** — Double-click any cell in the policy table to edit directly
-- **Right panel rule details** — Full editable form for the selected rule: action, zones, addresses, applications, services, logging, security profiles, tags, description
-- **Add / delete rules** — Create new rules or remove existing ones from the UI
-
-### Hardware Awareness
-- **Model selector** — Pick source firewall model (PAN-OS, SRX, FortiGate, or Cisco, including EOS/legacy models) and target SRX model from a built-in hardware database with port counts and throughput specs
-- **Auto-detection** — Heuristics detect the likely source model from interface naming in the config (PAN-OS `ethernet`, SRX `ge-`/`xe-`/`et-`, FortiGate `port`/`wan`/`internal`/`dmz`, Cisco `GigabitEthernet`/`Ethernet1/`/`TenGigabitEthernet` formats)
-- **FortiGate models** — Full F-series (40F through 4400F), G-series (70G through 900G), and EOS E-series (30E through 500E) with port counts and throughput specs
-- **Cisco models** — Firepower 1000 series (FPR-1010 through FPR-1150), 2100 series (FPR-2110 through FPR-2140), 3100 series (FPR-3105 through FPR-3140), 4100 series (FPR-4112 through FPR-4145), 4200 series (FPR-4215 through FPR-4245), virtual (ASAv, FTDv), and EOS ASA 5500-X series (ASA-5506-X through ASA-5555-X)
-- **EOS SRX models** — Legacy/End-of-Sale SRX models (SRX100, SRX210, SRX240, SRX550, SRX650, SRX1400, SRX3400, SRX3600, etc.) available as source models for migration projects
-- **Interface mapper** — Per-zone mapping of source interfaces to SRX interfaces with auto-mapping, tunnel, and loopback support
-- **SRX subscriptions** — Select the target SRX subscription level (Base, A1 Advanced Data Protection, A2 Advanced Edge Protection, P1 Premium Data Protection, P2 Premium Edge Protection) to gate feature availability and inform LLM reviews. Includes footnote explaining SDC (Security Director Cloud) and ATP (Advanced Threat Protection) capabilities
-
-### Rule Review Workflow
-- **Review status tracking** — Every rule starts as *Unreviewed* and can progress through *LLM Reviewed* to *Accepted*. Disabled rules show a *Disabled* label. Status labels are color-coded in the policy table
-- **Status filtering** — Filter the policy table by review status (All / Unreviewed / LLM Reviewed / Accepted / Disabled) — available on the "to SRX" tab
-- **Per-rule LLM review** — Click "LLM Review" on any rule to get structured AI suggestions with specific field changes, reasons, and one-click Import buttons
-- **Accept rules** — Mark rules as accepted individually. A progress counter in the navbar tracks how many rules are accepted
-- **Full-ruleset review** — Once all rules are accepted, the "Review" button opens a chat interface for multi-turn LLM conversation about the entire ruleset, with inline suggestion cards you can accept or reject
-
-### LLM Integration
-- **Multiple providers** — Claude (Anthropic), OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
-- **Browser-only API keys** — All credentials stay in `localStorage` and never touch the server
-- **Editable system prompt** — Customize the expert system prompt used for all LLM reviews, with a built-in default covering SRX best practices, zone architecture, logging, UTM, NAT, compliance, and migration guidance
-- **Structured responses** — LLM returns JSON with analysis, per-field suggestions, and a verdict — parsed into interactive cards with Import buttons
-- **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
-- **Subscription-aware prompts** — SRX subscription level is included in LLM prompts so suggestions account for available features
-
-### Push & Integration
-- **Push via MCP** — Connect to an MCP server to push configurations directly to SRX devices (configurable in Settings)
-- **Push to SDC** — Security Director Cloud integration (coming soon)
-- **Push to Mist** — Juniper Mist Cloud integration (coming soon)
-- **Convert confirmation** — Warning dialog when converting with unaccepted policies
-
-## Quick Start
+A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports **PAN-OS XML**, **Junos SRX**, **FortiGate / FortiOS**, and **Cisco ASA / FTD** as source formats. Paste or upload a config, review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.
+# Quick Start
 
 ### Prerequisites
 
@@ -134,6 +71,68 @@ Accept or reject individual suggestions inline, and ask follow-up questions.
 ### 7. Convert
 
 Click **Convert to SRX** to generate the output. Switch between **Set Commands** and **XML** formats in the bottom panel. The **Warnings** tab shows any conversion notes. Use **Push via MCP** to deploy directly to SRX devices.
+
+## Features
+
+### Multi-Vendor Source Import
+- **PAN-OS XML parser** — Extracts security policies, NAT rules, zones, address objects, address groups, service objects, service groups, and security profile groups from PAN-OS XML configs
+- **Junos SRX parser** — Parses SRX `set` commands and hierarchical curly-brace format into the same intermediate schema (zones, address-book objects, address sets, security policies, NAT rule-sets, applications)
+- **FortiGate / FortiOS parser** — Parses FortiOS `config`/`edit`/`set`/`next`/`end` block format including firewall policies, address objects, address groups, service objects, service groups, zones, VIPs (destination NAT), IP pools, central SNAT maps, and security profiles (AV, web filter, IPS, application control, SSL inspection, DNS filter, DLP, email filter)
+- **Cisco ASA / FTD parser** — Parses Cisco ASA/FTD configuration including interfaces (nameif, security-level, IP), object network/service definitions, object-group network/service/protocol groups, extended access-lists with remarks, access-group bindings, and object NAT (dynamic/static). Zones are derived from interface nameif + security-level
+- **Auto-detection** — Automatically identifies the source format (PAN-OS XML, Junos SRX, FortiOS, or Cisco ASA) and routes to the correct parser
+- **SRX output** — Generates Juniper SRX `set` commands or hierarchical XML, including zones, address books, application mappings, security policies, NAT rule-sets, and schedulers
+- **Implicit rules** — Automatically generates vendor-specific implicit rules (PAN-OS intra-zone allow + interzone deny, FortiGate intrazone per-zone + default deny, Cisco ASA security-level permits for unbound interfaces + default deny, SRX default deny). Implicit rules are visually distinguished in the UI (dimmed, italic, with "Implicit" chip) and tagged `added_by_fpic`
+- **FQDN support** — Parses FQDN/dns-name address objects from all vendors and converts to SRX `dns-name`. Cisco ASA `fqdn v4`/`v6` maps to SRX `ipv4-only`/`ipv6-only`. FortiGate wildcard-fqdn (`*.example.com`) generates a warning since SRX does not support wildcard dns-name
+- **ICMP details** — Preserves ICMP type/code through the full pipeline (parser → intermediate → converter). Generates SRX `icmp-type`/`icmp-code` instead of `destination-port` for ICMP services
+- **Schedule support** — Parses schedules from all vendors (FortiGate recurring/onetime, PAN-OS schedule objects, Cisco ASA time-ranges, SRX schedulers) and converts to SRX `set schedulers scheduler` commands with `scheduler-name` references on policies
+- **Nested object groups** — Correctly resolves nested address groups and service groups, emitting `address-set` (not `address`) and `application-set` (not `application`) references for group members that are themselves groups
+- **Application mapping** — Automatically maps PAN-OS application names to Junos equivalents (e.g., `web-browsing` → `junos-http`)
+- **Sanitization** — One-click replacement of sensitive data (IPs, hostnames, keys) with placeholders before sharing or sending to an LLM. Originals are restored on export
+
+### Dual Platform View
+- **"from" / "to" toggle** — Switch between source view ("from PAN-OS", "from SRX", "from FortiGate", or "from Cisco ASA") and target view ("to SRX") above the tab bar
+- **SRX-style table** — When source is SRX (or viewing the "to SRX" tab), policies display in a zone-grouped table with SRX terminology (permit/deny/reject, security-zone, address-book)
+- **PAN-OS-style table** — When source is PAN-OS, the "from" tab shows the familiar PAN-OS table layout with allow/deny actions
+- **FortiGate-style table** — When source is FortiGate, the "from" tab shows a FortiOS-style policy table with FortiGate terminology (ACCEPT/DENY, From/To interfaces, Schedule, NAT toggle, security profile icons for AV/WF/IPS/App/SSL)
+- **Cisco ASDM-style table** — When source is Cisco ASA/FTD, the "from" tab shows a Cisco ASDM-style access control table with ACE numbering, Permit/Deny actions, ACL name badges, security level indicators, protocol chips, interface labels, log status, and hit counts
+- **Negate support** — Source/destination address negation flags (PAN-OS `negate-source`/`negate-destination`, SRX `except`) displayed and editable in both views
+- **Profile group expansion** — PAN-OS profile group references are automatically resolved into individual security profiles
+
+### Interactive Editing
+- **Tabbed center panel** — Switch between Security Policies/Rules, Security Zones, Address Book/Objects, and NAT editors
+- **Inline table editing** — Double-click any cell in the policy table to edit directly
+- **Right panel rule details** — Full editable form for the selected rule: action, zones, addresses, applications, services, logging, security profiles, tags, description
+- **Add / delete rules** — Create new rules or remove existing ones from the UI
+
+### Hardware Awareness
+- **Model selector** — Pick source firewall model (PAN-OS, SRX, FortiGate, or Cisco, including EOS/legacy models) and target SRX model from a built-in hardware database with port counts and throughput specs
+- **Auto-detection** — Heuristics detect the likely source model from interface naming in the config (PAN-OS `ethernet`, SRX `ge-`/`xe-`/`et-`, FortiGate `port`/`wan`/`internal`/`dmz`, Cisco `GigabitEthernet`/`Ethernet1/`/`TenGigabitEthernet` formats)
+- **FortiGate models** — Full F-series (40F through 4400F), G-series (70G through 900G), and EOS E-series (30E through 500E) with port counts and throughput specs
+- **Cisco models** — Firepower 1000 series (FPR-1010 through FPR-1150), 2100 series (FPR-2110 through FPR-2140), 3100 series (FPR-3105 through FPR-3140), 4100 series (FPR-4112 through FPR-4145), 4200 series (FPR-4215 through FPR-4245), virtual (ASAv, FTDv), and EOS ASA 5500-X series (ASA-5506-X through ASA-5555-X)
+- **EOS SRX models** — Legacy/End-of-Sale SRX models (SRX100, SRX210, SRX240, SRX550, SRX650, SRX1400, SRX3400, SRX3600, etc.) available as source models for migration projects
+- **Interface mapper** — Per-zone mapping of source interfaces to SRX interfaces with auto-mapping, tunnel, and loopback support
+- **SRX subscriptions** — Select the target SRX subscription level (Base, A1 Advanced Data Protection, A2 Advanced Edge Protection, P1 Premium Data Protection, P2 Premium Edge Protection) to gate feature availability and inform LLM reviews. Includes footnote explaining SDC (Security Director Cloud) and ATP (Advanced Threat Protection) capabilities
+
+### Rule Review Workflow
+- **Review status tracking** — Every rule starts as *Unreviewed* and can progress through *LLM Reviewed* to *Accepted*. Disabled rules show a *Disabled* label. Status labels are color-coded in the policy table
+- **Status filtering** — Filter the policy table by review status (All / Unreviewed / LLM Reviewed / Accepted / Disabled) — available on the "to SRX" tab
+- **Per-rule LLM review** — Click "LLM Review" on any rule to get structured AI suggestions with specific field changes, reasons, and one-click Import buttons
+- **Accept rules** — Mark rules as accepted individually. A progress counter in the navbar tracks how many rules are accepted
+- **Full-ruleset review** — Once all rules are accepted, the "Review" button opens a chat interface for multi-turn LLM conversation about the entire ruleset, with inline suggestion cards you can accept or reject
+
+### LLM Integration
+- **Multiple providers** — Claude (Anthropic), OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
+- **Browser-only API keys** — All credentials stay in `localStorage` and never touch the server
+- **Editable system prompt** — Customize the expert system prompt used for all LLM reviews, with a built-in default covering SRX best practices, zone architecture, logging, UTM, NAT, compliance, and migration guidance
+- **Structured responses** — LLM returns JSON with analysis, per-field suggestions, and a verdict — parsed into interactive cards with Import buttons
+- **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
+- **Subscription-aware prompts** — SRX subscription level is included in LLM prompts so suggestions account for available features
+
+### Push & Integration
+- **Push via MCP** — Connect to an MCP server to push configurations directly to SRX devices (configurable in Settings)
+- **Push to SDC** — Security Director Cloud integration (coming soon)
+- **Push to Mist** — Juniper Mist Cloud integration (coming soon)
+- **Convert confirmation** — Warning dialog when converting with unaccepted policies
 
 ## Project Structure
 
