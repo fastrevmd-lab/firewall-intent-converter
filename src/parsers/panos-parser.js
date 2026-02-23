@@ -107,6 +107,7 @@ export function parsePanosConfig(configText) {
   const securityPolicies = parseSecurityRules(vsys, warnings);
   const natRules = parseNatRules(vsys, warnings);
   const externalLists = parseExternalLists(vsys, warnings);
+  const schedules = parseScheduleObjects(vsys);
 
   // Resolve profile group references → expand into individual security_profiles
   const profileGroupDefs = parseProfileGroupDefinitions(vsys);
@@ -125,6 +126,53 @@ export function parsePanosConfig(configText) {
   // Build security profile objects from rules
   const securityProfileObjects = buildSecurityProfileObjects(securityPolicies);
 
+  // Append PAN-OS implicit rules
+  let implicitIndex = securityPolicies.length + 1;
+  for (const zone of zones) {
+    securityPolicies.push({
+      name: `Implicit: Intra-zone Allow (${zone.name})`,
+      src_zones: [zone.name],
+      dst_zones: [zone.name],
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+      negate_source: false,
+      negate_destination: false,
+      applications: ['any'],
+      services: ['any'],
+      action: 'allow',
+      log_start: false,
+      log_end: false,
+      profile_group: '',
+      security_profiles: {},
+      description: 'PAN-OS default: traffic within the same zone is allowed',
+      tags: ['added_by_fpic'],
+      disabled: false,
+      _rule_index: implicitIndex++,
+      _implicit: true,
+    });
+  }
+  securityPolicies.push({
+    name: 'Implicit: Interzone Default Deny',
+    src_zones: ['any'],
+    dst_zones: ['any'],
+    src_addresses: ['any'],
+    dst_addresses: ['any'],
+    negate_source: false,
+    negate_destination: false,
+    applications: ['any'],
+    services: ['any'],
+    action: 'deny',
+    log_start: false,
+    log_end: false,
+    profile_group: '',
+    security_profiles: {},
+    description: 'PAN-OS default: traffic between different zones is denied',
+    tags: ['added_by_fpic'],
+    disabled: false,
+    _rule_index: implicitIndex++,
+    _implicit: true,
+  });
+
   const intermediateConfig = {
     zones,
     address_objects: addressObjects,
@@ -134,6 +182,7 @@ export function parsePanosConfig(configText) {
     security_policies: securityPolicies,
     nat_rules: natRules,
     applications,
+    schedules,
     security_profile_objects: securityProfileObjects,
     external_lists: externalLists,
     vpn_tunnels: [], // Phase 2
@@ -344,16 +393,28 @@ function parseServiceObjects(vsys, warnings) {
           `SCTP service "${name}" — SRX SCTP support varies by platform and version`,
           'Verify SRX platform supports SCTP'
         ));
+      } else if (proto.icmp) {
+        protocol = 'icmp';
+      } else if (proto.icmp6) {
+        protocol = 'icmp6';
       }
     }
 
-    return {
+    const result = {
       name,
       protocol,
       port_range: portRange,
       source_port: sourcePort,
       description: entry.description || '',
     };
+
+    // ICMP services don't have ports
+    if (protocol === 'icmp' || protocol === 'icmp6') {
+      result.icmp_type = '';
+      result.icmp_code = '';
+    }
+
+    return result;
   });
 }
 
@@ -585,6 +646,7 @@ function parseSecurityRules(vsys, warnings) {
       description,
       tags,
       disabled,
+      schedule: entry.schedule ? String(entry.schedule) : '',
       _rule_index: index + 1,
     };
   });
@@ -728,6 +790,66 @@ function parseProfileGroupDefinitions(vsys) {
 // ---------------------------------------------------------------------------
 // External Dynamic Lists (EDL) Parser
 // ---------------------------------------------------------------------------
+
+/**
+ * Parses PAN-OS schedule objects.
+ * PAN-OS schedules can be recurring (weekly/daily) or non-recurring (one-time).
+ */
+function parseScheduleObjects(vsys) {
+  const scheduleContainer = vsys.schedule;
+  if (!scheduleContainer) return [];
+
+  const entries = extractEntries(scheduleContainer);
+  return entries.map(entry => {
+    const name = entry['@_name'] || 'unnamed-schedule';
+    const schedType = entry['schedule-type'];
+    if (!schedType) return { name, type: 'unknown', days: [], start: '', end: '' };
+
+    if (schedType.recurring) {
+      const weekly = schedType.recurring.weekly;
+      if (weekly) {
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const days = [];
+        let start = '', end = '';
+        for (const day of dayNames) {
+          if (weekly[day]) {
+            days.push(day.charAt(0).toUpperCase() + day.slice(1, 3));
+            // Time ranges are in "HH:MM-HH:MM" format
+            const timeStr = Array.isArray(weekly[day]) ? weekly[day][0] : String(weekly[day]);
+            if (timeStr && timeStr.includes('-')) {
+              const [s, e] = timeStr.split('-');
+              start = start || s;
+              end = e;
+            }
+          }
+        }
+        return { name, type: 'recurring', days, start, end };
+      }
+      // Daily schedule
+      const daily = schedType.recurring.daily;
+      if (daily) {
+        const timeStr = Array.isArray(daily) ? daily[0] : String(daily);
+        let start = '', end = '';
+        if (timeStr && timeStr.includes('-')) {
+          [start, end] = timeStr.split('-');
+        }
+        return { name, type: 'recurring', days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], start, end };
+      }
+    }
+
+    if (schedType['non-recurring']) {
+      const nr = schedType['non-recurring'];
+      const timeRange = Array.isArray(nr) ? nr[0] : String(nr);
+      let start = '', end = '';
+      if (timeRange && timeRange.includes('/')) {
+        [start, end] = timeRange.split('/');
+      }
+      return { name, type: 'onetime', start, end };
+    }
+
+    return { name, type: 'unknown', days: [], start: '', end: '' };
+  });
+}
 
 /**
  * Parses PAN-OS External Dynamic Lists (EDLs) from the device config.

@@ -57,7 +57,21 @@ export default function InterfaceMapper({
   // Initialize mappings from existing or build fresh
   const [mappings, setMappings] = useState(() => {
     if (existingMappings && Object.keys(existingMappings).length > 0) {
-      return { ...existingMappings };
+      // Filter out stale mappings that reference ports not on the current target model
+      const targetModelData = targetModel ? SRX_MODELS[targetModel] : null;
+      const validPortNames = targetModelData ? new Set(targetModelData.ports.map(p => p.name)) : null;
+      const cleaned = {};
+      for (const [panos, srx] of Object.entries(existingMappings)) {
+        if (isTunnelInterface(panos) || isLoopbackInterface(panos)) {
+          cleaned[panos] = srx; // virtual interfaces are always valid
+        } else if (!validPortNames || validPortNames.has(srx)) {
+          cleaned[panos] = srx;
+        }
+        // else: stale mapping from a different model — drop it
+      }
+      if (Object.keys(cleaned).length > 0) {
+        return cleaned;
+      }
     }
     return buildDefaultMappings(intermediateConfig, targetModel);
   });

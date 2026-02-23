@@ -44,6 +44,7 @@ export default function ModelSelector({
   const [detection, setDetection] = useState(null);
   const [throughputMetric, setThroughputMetric] = useState('l7');
   const [recommendedSrx, setRecommendedSrx] = useState(null); // { model, recommended }
+  const [subscriptionError, setSubscriptionError] = useState('');
 
   const isSrxSource = sourceVendor === 'srx';
   const isFortigateSource = sourceVendor === 'fortigate';
@@ -91,6 +92,11 @@ export default function ModelSelector({
   const metricLabel = METRIC_PREFIX[throughputMetric] || 'L7';
 
   const handleContinue = () => {
+    if (selectedTarget && !selectedLicense) {
+      setSubscriptionError('Please select an SRX subscription before continuing to interface mapping.');
+      return;
+    }
+    setSubscriptionError('');
     onModelSelection({
       sourceModel: selectedSource || null,
       targetModel: selectedTarget || null,
@@ -222,7 +228,7 @@ export default function ModelSelector({
                       name="srxLicense"
                       value={key}
                       checked={selectedLicense === key}
-                      onChange={() => setSelectedLicense(key)}
+                      onChange={() => { setSelectedLicense(key); setSubscriptionError(''); }}
                     />
                     <div className="license-tier-name">{tier.name}</div>
                     <div className="license-tier-desc">{tier.description}</div>
@@ -235,6 +241,19 @@ export default function ModelSelector({
             </div>
           )}
         </div>
+
+        {subscriptionError && (
+          <div style={{
+            padding: '8px 16px',
+            background: 'rgba(248, 113, 113, 0.1)',
+            borderTop: '1px solid rgba(248, 113, 113, 0.3)',
+            color: 'var(--error)',
+            fontSize: 13,
+            fontWeight: 500,
+          }}>
+            {subscriptionError}
+          </div>
+        )}
 
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Skip</button>

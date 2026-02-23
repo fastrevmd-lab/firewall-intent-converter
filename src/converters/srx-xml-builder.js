@@ -53,7 +53,10 @@ export function buildSrxXml(config, interfaceMappings = {}) {
   lines.push('  </security>');
 
   // Applications
-  buildApplicationsXml(config.service_objects, config.applications, lines);
+  buildApplicationsXml(config.service_objects, config.applications, config.service_groups, lines);
+
+  // Schedulers
+  buildSchedulersXml(config.schedules, lines);
 
   // Services (SecIntel)
   if (secIntelEnabled) {
@@ -127,11 +130,18 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
       case 'subnet':
         lines.push(`        <ip-prefix>${escapeXml(obj.value)}</ip-prefix>`);
         break;
-      case 'fqdn':
+      case 'fqdn': {
+        const fqdnValue = (obj.value && obj.value.startsWith('*.')) ? obj.value.slice(2) : obj.value;
         lines.push(`        <dns-name>`);
-        lines.push(`          <name>${escapeXml(obj.value)}</name>`);
+        lines.push(`          <name>${escapeXml(fqdnValue)}</name>`);
+        if (obj.fqdn_ip_version === 'v4') {
+          lines.push(`          <ipv4-only/>`);
+        } else if (obj.fqdn_ip_version === 'v6') {
+          lines.push(`          <ipv6-only/>`);
+        }
         lines.push(`        </dns-name>`);
         break;
+      }
       case 'range':
         lines.push(`        <range-address>`);
         lines.push(`          <name>${escapeXml(name)}</name>`);
@@ -150,14 +160,21 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
   }
 
   // Address sets (groups)
+  const addrGroupNameSet = new Set((addressGroups || []).map(g => g.name));
   for (const group of (addressGroups || [])) {
     const groupName = sanitizeJunosName(group.name);
     lines.push('      <address-set>');
     lines.push(`        <name>${escapeXml(groupName)}</name>`);
     for (const member of group.members) {
-      lines.push('        <address>');
-      lines.push(`          <name>${escapeXml(sanitizeJunosName(member))}</name>`);
-      lines.push('        </address>');
+      if (addrGroupNameSet.has(member)) {
+        lines.push('        <address-set>');
+        lines.push(`          <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push('        </address-set>');
+      } else {
+        lines.push('        <address>');
+        lines.push(`          <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push('        </address>');
+      }
     }
     lines.push('      </address-set>');
   }
@@ -260,6 +277,11 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}) {
 
       lines.push('          </then>');
 
+      // Scheduler
+      if (policy.schedule) {
+        lines.push(`          <scheduler-name>${escapeXml(sanitizeJunosName(policy.schedule))}</scheduler-name>`);
+      }
+
       lines.push('        </policy>');
     }
 
@@ -302,9 +324,10 @@ function buildNatXml(natRules, lines, warnings) {
 // Applications XML Builder
 // ---------------------------------------------------------------------------
 
-function buildApplicationsXml(serviceObjects, applications, lines) {
+function buildApplicationsXml(serviceObjects, applications, serviceGroups, lines) {
   const allApps = [...(serviceObjects || []), ...(applications || [])];
-  if (allApps.length === 0) return;
+  const groups = serviceGroups || [];
+  if (allApps.length === 0 && groups.length === 0) return;
 
   lines.push('  <applications>');
 
@@ -312,19 +335,95 @@ function buildApplicationsXml(serviceObjects, applications, lines) {
     const name = sanitizeJunosName(app.name);
     const protocol = app.protocol || 'tcp';
     const port = app.port_range || app.port || '';
-    if (!port) continue;
 
-    lines.push('    <application>');
-    lines.push(`      <name>${escapeXml(name)}</name>`);
-    lines.push(`      <protocol>${escapeXml(protocol)}</protocol>`);
-    lines.push(`      <destination-port>${escapeXml(port)}</destination-port>`);
-    if (app.description) {
-      lines.push(`      <description>${escapeXml(app.description)}</description>`);
+    if (protocol === 'icmp' || protocol === 'icmp6') {
+      lines.push('    <application>');
+      lines.push(`      <name>${escapeXml(name)}</name>`);
+      lines.push(`      <protocol>${escapeXml(protocol)}</protocol>`);
+      if (app.icmp_type) {
+        lines.push(`      <icmp-type>${escapeXml(app.icmp_type)}</icmp-type>`);
+      }
+      if (app.icmp_code) {
+        lines.push(`      <icmp-code>${escapeXml(app.icmp_code)}</icmp-code>`);
+      }
+      if (app.description) {
+        lines.push(`      <description>${escapeXml(app.description)}</description>`);
+      }
+      lines.push('    </application>');
+    } else if (protocol === 'ip' && app.protocol_number) {
+      lines.push('    <application>');
+      lines.push(`      <name>${escapeXml(name)}</name>`);
+      lines.push(`      <protocol>${escapeXml(app.protocol_number)}</protocol>`);
+      if (app.description) {
+        lines.push(`      <description>${escapeXml(app.description)}</description>`);
+      }
+      lines.push('    </application>');
+    } else {
+      if (!port) continue;
+      lines.push('    <application>');
+      lines.push(`      <name>${escapeXml(name)}</name>`);
+      lines.push(`      <protocol>${escapeXml(protocol)}</protocol>`);
+      lines.push(`      <destination-port>${escapeXml(port)}</destination-port>`);
+      if (app.description) {
+        lines.push(`      <description>${escapeXml(app.description)}</description>`);
+      }
+      lines.push('    </application>');
     }
-    lines.push('    </application>');
+  }
+
+  // Application sets (service groups)
+  const svcGroupNameSet = new Set(groups.map(g => g.name));
+  for (const group of groups) {
+    const groupName = sanitizeJunosName(group.name);
+    lines.push('    <application-set>');
+    lines.push(`      <name>${escapeXml(groupName)}</name>`);
+    for (const member of group.members) {
+      if (svcGroupNameSet.has(member)) {
+        lines.push('      <application-set>');
+        lines.push(`        <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push('      </application-set>');
+      } else {
+        lines.push('      <application>');
+        lines.push(`        <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push('      </application>');
+      }
+    }
+    lines.push('    </application-set>');
   }
 
   lines.push('  </applications>');
+}
+
+// ---------------------------------------------------------------------------
+// Schedulers XML Builder
+// ---------------------------------------------------------------------------
+
+function buildSchedulersXml(schedules, lines) {
+  if (!schedules || schedules.length === 0) return;
+
+  lines.push('  <schedulers>');
+
+  for (const sched of schedules) {
+    const name = sanitizeJunosName(sched.name);
+    lines.push('    <scheduler>');
+    lines.push(`      <name>${escapeXml(name)}</name>`);
+
+    if (sched.type === 'recurring' && sched.days && sched.days.length > 0) {
+      for (const day of sched.days) {
+        lines.push(`      <${day.toLowerCase()}>`)
+        if (sched.start) lines.push(`        <start-time>${escapeXml(sched.start)}</start-time>`);
+        if (sched.end) lines.push(`        <stop-time>${escapeXml(sched.end)}</stop-time>`);
+        lines.push(`      </${day.toLowerCase()}>`);
+      }
+    } else if (sched.type === 'onetime') {
+      if (sched.start) lines.push(`      <start-date>${escapeXml(sched.start)}</start-date>`);
+      if (sched.end) lines.push(`      <stop-date>${escapeXml(sched.end)}</stop-date>`);
+    }
+
+    lines.push('    </scheduler>');
+  }
+
+  lines.push('  </schedulers>');
 }
 
 // ---------------------------------------------------------------------------
