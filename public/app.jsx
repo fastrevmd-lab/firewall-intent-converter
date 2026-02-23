@@ -792,6 +792,7 @@ export default function App() {
                     haConfig={intermediateConfig.ha_config}
                     onHAUpdate={handleHAUpdate}
                     viewMode={effectiveViewMode}
+                    targetModel={targetModel}
                   />
                 )}
                 {editTab === 'screen' && (
