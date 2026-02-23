@@ -132,9 +132,10 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 ### LLM Integration
 - **Multiple providers** — Claude (Anthropic), OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
 - **Browser-only API keys** — All credentials stay in `localStorage` and never touch the server
-- **Editable system prompt** — Customize the expert system prompt used for all LLM reviews, with a built-in default covering SRX best practices, zone architecture, logging, UTM, NAT, compliance, and migration guidance
+- **Editable system prompt** — Customize the expert system prompt used for all LLM reviews, with a built-in default covering multi-vendor migration guidance (PAN-OS, FortiGate, Cisco ASA, SRX), zone architecture, policy design, logging, UTM/IDP/SecIntel, NAT order-of-operations, VPN/IPsec, screens/DDoS, HA/chassis cluster, routing, rule shadowing, and compliance (PCI DSS v4.0, NIST 800-41r1, CIS Juniper OS Benchmark v2.1.0)
 - **Structured responses** — LLM returns JSON with analysis, per-field suggestions, and a verdict — parsed into interactive cards with Import buttons
 - **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
+- **Vendor-aware prompts** — LLM prompts dynamically reference the detected source vendor (PAN-OS, FortiGate, Cisco ASA, or SRX) with vendor-specific migration pitfall guidance
 - **Subscription-aware prompts** — SRX subscription level is included in LLM prompts so suggestions account for available features
 
 ### Conversion Features

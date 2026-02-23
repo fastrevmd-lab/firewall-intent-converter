@@ -93,7 +93,8 @@ export default function InterviewPanel({
         targetModel,
         intermediateConfig?.zones,
         srxLicense,
-        srxContext
+        srxContext,
+        intermediateConfig?.metadata?.source_vendor
       );
       const result = await getLLMSuggestion(prompt.user, prompt.system);
 
