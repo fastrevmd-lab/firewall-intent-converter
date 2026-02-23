@@ -49,6 +49,7 @@ export default function ModelSelector({
   const [throughputMetric, setThroughputMetric] = useState('l7');
   const [recommendedSrx, setRecommendedSrx] = useState(null); // { model, recommended }
   const [subscriptionError, setSubscriptionError] = useState('');
+  const [showDatasheets, setShowDatasheets] = useState(false);
 
   const isSrxSource = sourceVendor === 'srx';
   const isFortigateSource = sourceVendor === 'fortigate';
@@ -117,7 +118,8 @@ export default function ModelSelector({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: 580 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal-content" style={{ width: 580 }}>
         <div className="modal-header">
           <h2>Hardware Model Selection</h2>
           <button className="modal-close" onClick={onClose}>x</button>
@@ -126,6 +128,14 @@ export default function ModelSelector({
         <div className="modal-body">
           <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.4 }}>
             Throughput numbers are best effort based on publicly available data. Do your own research.
+            {' '}
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); setShowDatasheets(!showDatasheets); }}
+              style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer', fontSize: 10 }}
+            >
+              HPE Juniper SRX Spec Sheets
+            </a>
           </p>
           {/* Throughput metric toggle */}
           <div className="throughput-toggle">
@@ -323,6 +333,80 @@ export default function ModelSelector({
           >
             {selectedTarget ? 'Continue to Interface Mapping' : 'Select Target Model'}
           </button>
+        </div>
+      </div>
+
+      {showDatasheets && <DatasheetPanel onClose={() => setShowDatasheets(false)} />}
+      </div>
+    </div>
+  );
+}
+
+const SRX_DATASHEETS = [
+  { tier: 'Branch', models: [
+    { name: 'SRX300 Line (SRX300/SRX320/SRX340/SRX345/SRX380)', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx300-line-firewalls-branch-datasheet.html' },
+  ]},
+  { tier: 'Enterprise', models: [
+    { name: 'SRX1600', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx1600-firewall-datasheet.html' },
+    { name: 'SRX4100/SRX4200', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx4100-srx4200-firewall-datasheet.html' },
+    { name: 'SRX4120', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx4120-firewall-datasheet.html' },
+    { name: 'SRX4300', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx4300-firewall-datasheet.html' },
+  ]},
+  { tier: 'Data Center', models: [
+    { name: 'SRX4600', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx4600-firewall-datasheet.html' },
+    { name: 'SRX4700', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx4700-firewall-datasheet.html' },
+  ]},
+  { tier: 'Chassis-Based', models: [
+    { name: 'SRX5400/SRX5600/SRX5800', url: 'https://www.juniper.net/us/en/products/security/srx-series/srx5400-srx5600-srx5800-firewall-datasheet.html' },
+  ]},
+  { tier: 'Virtual', models: [
+    { name: 'vSRX Virtual Firewall', url: 'https://www.juniper.net/us/en/products/security/srx-series/vsrx-virtual-firewall-datasheet.html' },
+  ]},
+  { tier: 'Comparison', models: [
+    { name: 'SRX Series Comparison', url: 'https://www.juniper.net/us/en/products/security/srx-series/compare.html' },
+  ]},
+];
+
+function DatasheetPanel({ onClose }) {
+  return (
+    <div className="modal-content" style={{ width: 320, flexShrink: 0 }}>
+      <div className="modal-header" style={{ padding: '12px 16px' }}>
+        <h2 style={{ fontSize: 14 }}>HPE Juniper SRX Spec Sheets</h2>
+        <button className="modal-close" onClick={onClose} style={{ fontSize: 14 }}>x</button>
+      </div>
+      <div className="modal-body" style={{ padding: '12px 16px' }}>
+        {SRX_DATASHEETS.map(group => (
+          <div key={group.tier} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
+              {group.tier}
+            </div>
+            {group.models.map(ds => (
+              <a
+                key={ds.name}
+                href={ds.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'block',
+                  padding: '6px 8px',
+                  marginBottom: 2,
+                  borderRadius: 'var(--radius)',
+                  color: 'var(--accent)',
+                  fontSize: 12,
+                  textDecoration: 'none',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                {ds.name}
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>↗</span>
+              </a>
+            ))}
+          </div>
+        ))}
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.4 }}>
+          All links open official juniper.net datasheets in a new window.
         </div>
       </div>
     </div>
