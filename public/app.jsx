@@ -33,6 +33,11 @@ import ObjectEditor from './components/ObjectEditor.jsx';
 import NATEditor from './components/NATEditor.jsx';
 import RoutingEditor from './components/RoutingEditor.jsx';
 import VPNEditor from './components/VPNEditor.jsx';
+import HAEditor from './components/HAEditor.jsx';
+import ScreenEditor from './components/ScreenEditor.jsx';
+import SyslogEditor from './components/SyslogEditor.jsx';
+import DHCPEditor from './components/DHCPEditor.jsx';
+import QoSEditor from './components/QoSEditor.jsx';
 
 export default function App() {
   // --- Config input state ---
@@ -316,6 +321,31 @@ export default function App() {
     setIntermediateConfig(prev => ({ ...prev, vpn_tunnels: vpnTunnels }));
   }, []);
 
+  /** Update HA config */
+  const handleHAUpdate = useCallback((haConfig) => {
+    setIntermediateConfig(prev => ({ ...prev, ha_config: haConfig }));
+  }, []);
+
+  /** Update Screen config */
+  const handleScreenUpdate = useCallback((screenConfig) => {
+    setIntermediateConfig(prev => ({ ...prev, screen_config: screenConfig }));
+  }, []);
+
+  /** Update Syslog config */
+  const handleSyslogUpdate = useCallback((syslogConfig) => {
+    setIntermediateConfig(prev => ({ ...prev, syslog_config: syslogConfig }));
+  }, []);
+
+  /** Update DHCP config */
+  const handleDHCPUpdate = useCallback((dhcpConfig) => {
+    setIntermediateConfig(prev => ({ ...prev, dhcp_config: dhcpConfig }));
+  }, []);
+
+  /** Update QoS config */
+  const handleQoSUpdate = useCallback((qosConfig) => {
+    setIntermediateConfig(prev => ({ ...prev, qos_config: qosConfig }));
+  }, []);
+
   /** Update a config section (for ObjectEditor) */
   const handleConfigUpdate = useCallback((field, items) => {
     setIntermediateConfig(prev => ({ ...prev, [field]: items }));
@@ -561,53 +591,13 @@ export default function App() {
                   >
                     to {targetModel || 'SRX'}
                   </button>
-                </div>
-
-                <div className="center-tab-bar">
-                  <button
-                    className={`center-tab-btn ${editTab === 'rules' ? 'active' : ''}`}
-                    onClick={() => setEditTab('rules')}
-                  >
-                    {effectiveViewMode === 'srx' ? 'Security Policies' : effectiveViewMode === 'fortigate' ? 'Firewall Policies' : effectiveViewMode === 'cisco' ? 'Access Control' : 'Security Rules'} ({intermediateConfig.security_policies?.length || 0})
-                  </button>
-                  <button
-                    className={`center-tab-btn ${editTab === 'zones' ? 'active' : ''}`}
-                    onClick={() => setEditTab('zones')}
-                  >
-                    {effectiveViewMode === 'srx' ? 'Security Zones' : 'Zones'} ({intermediateConfig.zones?.length || 0})
-                  </button>
-                  <button
-                    className={`center-tab-btn ${editTab === 'objects' ? 'active' : ''}`}
-                    onClick={() => setEditTab('objects')}
-                  >
-                    {effectiveViewMode === 'srx' ? 'Address Book' : 'Objects'}
-                  </button>
-                  <button
-                    className={`center-tab-btn ${editTab === 'nat' ? 'active' : ''}`}
-                    onClick={() => setEditTab('nat')}
-                  >
-                    NAT ({intermediateConfig.nat_rules?.length || 0})
-                  </button>
-                  <button
-                    className={`center-tab-btn ${editTab === 'routing' ? 'active' : ''}`}
-                    onClick={() => setEditTab('routing')}
-                  >
-                    Routing ({intermediateConfig.static_routes?.length || 0})
-                  </button>
-                  <button
-                    className={`center-tab-btn ${editTab === 'vpn' ? 'active' : ''}`}
-                    onClick={() => setEditTab('vpn')}
-                  >
-                    VPN ({intermediateConfig.vpn_tunnels?.length || 0})
-                  </button>
-                  <div style={{ flex: 1 }} />
                   {platformView === 'srx' && (
-                    <>
+                    <div className="platform-view-actions">
                       <select
                         className="btn btn-secondary btn-sm"
                         value={targetContext.type}
                         onChange={(e) => setTargetContext(prev => ({ ...prev, type: e.target.value, name: e.target.value === 'none' ? '' : prev.name }))}
-                        style={{ margin: '6px 2px', maxWidth: 130 }}
+                        style={{ maxWidth: 130 }}
                         title="Target context for SRX output"
                       >
                         <option value="none">Flat Config</option>
@@ -621,55 +611,119 @@ export default function App() {
                           placeholder="Name..."
                           value={targetContext.name}
                           onChange={(e) => setTargetContext(prev => ({ ...prev, name: e.target.value }))}
-                          style={{ margin: '6px 2px', maxWidth: 100, textAlign: 'left' }}
+                          style={{ maxWidth: 100, textAlign: 'left' }}
                         />
                       )}
                       <button
                         className="btn btn-secondary btn-sm"
                         onClick={handleReviewClick}
-                        style={{ margin: '6px 2px' }}
                         title={
                           allRulesAccepted
                             ? 'Start full ruleset review with LLM'
                             : `${reviewProgress.accepted}/${reviewProgress.total} rules accepted — click to review anyway`
                         }
                       >
-                        Review
+                        Review All w/LLM
                       </button>
                       <button
                         className="btn btn-primary btn-sm"
                         onClick={() => handleConvertClick('set')}
                         disabled={isLoading}
-                        style={{ margin: '6px 2px' }}
                       >
                         Convert to SRX
                       </button>
                       <button
                         className="btn btn-secondary btn-sm push-btn"
                         onClick={() => setShowSettings('mcp')}
-                        style={{ margin: '6px 2px' }}
                         title="Push config to SRX via MCP"
                       >
-                        Push via MCP
+                        Push MCP
                       </button>
                       <button
                         className="btn btn-secondary btn-sm push-btn"
                         onClick={() => setShowPushToast('SDC')}
-                        style={{ margin: '6px 2px' }}
                         title="Push to Security Director Cloud"
                       >
-                        Push to SDC
+                        Push SDC
                       </button>
                       <button
                         className="btn btn-secondary btn-sm push-btn"
                         onClick={() => setShowPushToast('Mist')}
-                        style={{ margin: '6px 2px 6px 2px' }}
                         title="Push to Juniper Mist"
                       >
-                        Push to Mist
+                        Push Mist
                       </button>
-                    </>
+                    </div>
                   )}
+                </div>
+
+                <div className="center-tab-bar">
+                  <button
+                    className={`center-tab-btn ${editTab === 'rules' ? 'active' : ''}`}
+                    onClick={() => setEditTab('rules')}
+                  >
+                    {effectiveViewMode === 'srx' ? 'Security Policies' : effectiveViewMode === 'fortigate' ? 'Firewall Policies' : effectiveViewMode === 'cisco' ? 'Access Control' : 'Security Rules'} ({intermediateConfig.security_policies?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'objects' ? 'active' : ''}`}
+                    onClick={() => setEditTab('objects')}
+                  >
+                    {effectiveViewMode === 'srx' ? 'Address Book' : 'Objects'}
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'zones' ? 'active' : ''}`}
+                    onClick={() => setEditTab('zones')}
+                  >
+                    {effectiveViewMode === 'srx' ? 'Security Zones' : 'Zones'} ({intermediateConfig.zones?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'screen' ? 'active' : ''}`}
+                    onClick={() => setEditTab('screen')}
+                  >
+                    Screens ({intermediateConfig.screen_config?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'nat' ? 'active' : ''}`}
+                    onClick={() => setEditTab('nat')}
+                  >
+                    NAT ({intermediateConfig.nat_rules?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'vpn' ? 'active' : ''}`}
+                    onClick={() => setEditTab('vpn')}
+                  >
+                    VPN ({intermediateConfig.vpn_tunnels?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'routing' ? 'active' : ''}`}
+                    onClick={() => setEditTab('routing')}
+                  >
+                    Intf/Routing ({intermediateConfig.interfaces?.length || 0}/{intermediateConfig.static_routes?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'dhcp' ? 'active' : ''}`}
+                    onClick={() => setEditTab('dhcp')}
+                  >
+                    DHCP ({intermediateConfig.dhcp_config?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'qos' ? 'active' : ''}`}
+                    onClick={() => setEditTab('qos')}
+                  >
+                    QoS ({intermediateConfig.qos_config?.length || 0})
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'ha' ? 'active' : ''}`}
+                    onClick={() => setEditTab('ha')}
+                  >
+                    HA {intermediateConfig.ha_config?.enabled ? '(On)' : '(Off)'}
+                  </button>
+                  <button
+                    className={`center-tab-btn ${editTab === 'syslog' ? 'active' : ''}`}
+                    onClick={() => setEditTab('syslog')}
+                  >
+                    Syslog ({intermediateConfig.syslog_config?.length || 0})
+                  </button>
                 </div>
               </div>
 
@@ -714,9 +768,13 @@ export default function App() {
                   <RoutingEditor
                     routingContexts={intermediateConfig.routing_contexts || []}
                     staticRoutes={intermediateConfig.static_routes || []}
+                    interfaces={intermediateConfig.interfaces || []}
                     onRoutesUpdate={(routes) => {
                       const updated = { ...intermediateConfig, static_routes: routes };
                       setIntermediateConfig(updated);
+                    }}
+                    onInterfacesUpdate={(interfaces) => {
+                      setIntermediateConfig(prev => ({ ...prev, interfaces }));
                     }}
                   />
                 )}
@@ -724,6 +782,41 @@ export default function App() {
                   <VPNEditor
                     vpnTunnels={intermediateConfig.vpn_tunnels || []}
                     onVPNUpdate={handleVPNUpdate}
+                    viewMode={effectiveViewMode}
+                  />
+                )}
+                {editTab === 'ha' && (
+                  <HAEditor
+                    haConfig={intermediateConfig.ha_config}
+                    onHAUpdate={handleHAUpdate}
+                    viewMode={effectiveViewMode}
+                  />
+                )}
+                {editTab === 'screen' && (
+                  <ScreenEditor
+                    screenConfig={intermediateConfig.screen_config || []}
+                    onScreenUpdate={handleScreenUpdate}
+                    viewMode={effectiveViewMode}
+                  />
+                )}
+                {editTab === 'syslog' && (
+                  <SyslogEditor
+                    syslogConfig={intermediateConfig.syslog_config || []}
+                    onSyslogUpdate={handleSyslogUpdate}
+                    viewMode={effectiveViewMode}
+                  />
+                )}
+                {editTab === 'dhcp' && (
+                  <DHCPEditor
+                    dhcpConfig={intermediateConfig.dhcp_config || []}
+                    onDHCPUpdate={handleDHCPUpdate}
+                    viewMode={effectiveViewMode}
+                  />
+                )}
+                {editTab === 'qos' && (
+                  <QoSEditor
+                    qosConfig={intermediateConfig.qos_config || []}
+                    onQoSUpdate={handleQoSUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}

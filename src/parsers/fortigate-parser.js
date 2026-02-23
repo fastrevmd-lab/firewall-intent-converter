@@ -91,6 +91,35 @@ export function parseFortigateConfig(configText) {
   // Merge zone and interface data — FortiGate can use interfaces directly as zones
   const mergedZones = mergeZonesAndInterfaces(zones, interfaces, securityPolicies);
 
+  // Normalize interfaces to standard schema
+  const ifToZone = {};
+  for (const z of mergedZones) {
+    for (const ifName of (z.interfaces || [])) ifToZone[ifName] = z.name;
+  }
+  const normalizedInterfaces = interfaces.map(iface => {
+    // Convert "10.1.1.1 255.255.255.0" to CIDR "10.1.1.1/24"
+    let ip = '';
+    if (iface.ip) {
+      const parts = iface.ip.trim().split(/\s+/);
+      if (parts.length === 2) {
+        const cidr = maskToCidr(parts[1]);
+        ip = `${parts[0]}/${cidr}`;
+      } else {
+        ip = parts[0]; // Already CIDR or just IP
+      }
+    }
+    return {
+      name: iface.name,
+      ip,
+      zone: ifToZone[iface.name] || iface.zone || '',
+      vlan: '',
+      type: iface.type || 'physical',
+      description: iface.alias || '',
+      status: 'up',
+      speed: '',
+    };
+  });
+
   // Detect VDOM context
   const routingContexts = detectVdomContext(tree, mergedZones, interfaces);
 
@@ -190,6 +219,7 @@ export function parseFortigateConfig(configText) {
     syslog_config: syslogConfig,
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
+    interfaces: normalizedInterfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
     target_context: null,
@@ -207,6 +237,7 @@ export function parseFortigateConfig(configText) {
       nat_rule_count: natRules.length,
       object_count: addressObjects.length + serviceObjects.length,
       zone_count: mergedZones.length,
+      interface_count: normalizedInterfaces.length,
       vpn_tunnel_count: vpnTunnels.length,
       syslog_server_count: syslogConfig.length,
       dhcp_config_count: dhcpConfig.length,
