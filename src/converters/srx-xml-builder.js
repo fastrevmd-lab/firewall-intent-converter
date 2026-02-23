@@ -1168,6 +1168,11 @@ function buildScreenXml(screens, lines) {
 function buildHaXml(haConfig, lines) {
   if (!haConfig || !haConfig.enabled) return;
 
+  if (haConfig.ha_type === 'mnha') {
+    buildMnhaXml(haConfig, lines);
+    return;
+  }
+
   const clusterId = haConfig.group_id || 1;
   const pri = haConfig.priority || 200;
   const secPri = pri > 100 ? 100 : pri - 1;
@@ -1210,7 +1215,73 @@ function buildHaXml(haConfig, lines) {
   }
 
   lines.push(`  <!-- Source HA: ${escapeXml(haConfig.description || haConfig.mode)} -->`);
-  lines.push('  <!-- NOTE: Review chassis cluster config for target hardware -->')
+  lines.push('  <!-- NOTE: Review chassis cluster config for target hardware -->');
+}
+
+function buildMnhaXml(haConfig, lines) {
+  const localId = haConfig.local_id || 1;
+  const peerId = haConfig.peer_id || 2;
+
+  lines.push('  <chassis>');
+  lines.push('    <high-availability>');
+
+  // Local node
+  lines.push('      <local-id>');
+  lines.push(`        <id>${localId}</id>`);
+  if (haConfig.local_ip) {
+    lines.push(`        <local-ip>${escapeXml(haConfig.local_ip)}</local-ip>`);
+  }
+  lines.push('      </local-id>');
+
+  // Peer node
+  lines.push('      <peer-id>');
+  lines.push(`        <id>${peerId}</id>`);
+  if (haConfig.peer_ip) {
+    lines.push(`        <peer-ip>${escapeXml(haConfig.peer_ip)}</peer-ip>`);
+  }
+  if (haConfig.icl_interface) {
+    lines.push(`        <interface>${escapeXml(haConfig.icl_interface)}</interface>`);
+  }
+  if (haConfig.vpn_profile) {
+    lines.push(`        <vpn-profile>${escapeXml(haConfig.vpn_profile)}</vpn-profile>`);
+  }
+  lines.push('        <liveness-detection>');
+  lines.push(`          <minimum-interval>${haConfig.liveness_interval || 400}</minimum-interval>`);
+  lines.push(`          <multiplier>${haConfig.liveness_multiplier || 5}</multiplier>`);
+  lines.push('        </liveness-detection>');
+  lines.push('      </peer-id>');
+
+  // SRG0
+  lines.push('      <services-redundancy-group>');
+  lines.push('        <name>0</name>');
+  lines.push(`        <peer-id>${peerId}</peer-id>`);
+  lines.push('      </services-redundancy-group>');
+
+  // SRG1
+  lines.push('      <services-redundancy-group>');
+  lines.push('        <name>1</name>');
+  lines.push(`        <deployment-type>${escapeXml(haConfig.deployment_type || 'routing')}</deployment-type>`);
+  lines.push(`        <peer-id>${peerId}</peer-id>`);
+  lines.push(`        <activeness-priority>${haConfig.activeness_priority || 200}</activeness-priority>`);
+  if (haConfig.preemption) {
+    lines.push('        <preemption/>');
+  }
+  // Interface monitoring
+  if (haConfig.monitoring) {
+    for (const lg of (haConfig.monitoring.link_groups || [])) {
+      if (lg.enabled && lg.interfaces) {
+        for (const iface of lg.interfaces) {
+          lines.push(`        <interface-monitor><name>${escapeXml(iface)}</name><weight>255</weight></interface-monitor>`);
+        }
+      }
+    }
+  }
+  lines.push('      </services-redundancy-group>');
+
+  lines.push('    </high-availability>');
+  lines.push('  </chassis>');
+  lines.push(`  <!-- MNHA: ${escapeXml(haConfig.description || haConfig.mode || 'active-passive')} -->`);
+  lines.push('  <!-- NOTE: Review MNHA config — verify ICL, VPN profile, and SRG settings -->');
 }
 
 // ---------------------------------------------------------------------------

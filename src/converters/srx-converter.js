@@ -1145,6 +1145,11 @@ function convertStaticRoutes(routes, commands, warnings, summary) {
 function convertHaConfig(haConfig, commands, warnings, summary) {
   if (!haConfig || !haConfig.enabled) return;
 
+  if (haConfig.ha_type === 'mnha') {
+    convertMnhaConfig(haConfig, commands, warnings, summary);
+    return;
+  }
+
   commands.push('# =============================================');
   commands.push('# Chassis Cluster / HA Configuration');
   commands.push('# =============================================');
@@ -1203,6 +1208,77 @@ function convertHaConfig(haConfig, commands, warnings, summary) {
   commands.push('# and redundancy-group assignments match your target SRX hardware topology');
 
   warnings.push(createWarning('ha', 'HA converted to chassis cluster — verify fabric/reth mappings for target hardware', 'info'));
+  summary.ha_converted = 1;
+  commands.push('');
+}
+
+/**
+ * Converts MNHA (Multinode High Availability) configuration to SRX set commands.
+ * Uses `set chassis high-availability` instead of `set chassis cluster`.
+ */
+function convertMnhaConfig(haConfig, commands, warnings, summary) {
+  commands.push('# =============================================');
+  commands.push('# Multinode High Availability (MNHA) Configuration');
+  commands.push('# =============================================');
+  commands.push(`# ${haConfig.description || 'MNHA ' + (haConfig.mode || 'active-passive')}`);
+
+  const localId = haConfig.local_id || 1;
+  const peerId = haConfig.peer_id || 2;
+  const prefix = 'set chassis high-availability';
+
+  // Local node
+  commands.push(`${prefix} local-id ${localId}`);
+  if (haConfig.local_ip) {
+    commands.push(`${prefix} local-id local-ip ${haConfig.local_ip}`);
+  }
+
+  // Peer node
+  if (haConfig.peer_ip) {
+    commands.push(`${prefix} peer-id ${peerId} peer-ip ${haConfig.peer_ip}`);
+  }
+  if (haConfig.icl_interface) {
+    commands.push(`${prefix} peer-id ${peerId} interface ${haConfig.icl_interface}`);
+  }
+  if (haConfig.vpn_profile) {
+    commands.push(`${prefix} peer-id ${peerId} vpn-profile ${haConfig.vpn_profile}`);
+  }
+
+  // Liveness detection
+  const livenessInterval = haConfig.liveness_interval || 400;
+  const livenessMultiplier = haConfig.liveness_multiplier || 5;
+  commands.push(`${prefix} peer-id ${peerId} liveness-detection minimum-interval ${livenessInterval}`);
+  commands.push(`${prefix} peer-id ${peerId} liveness-detection multiplier ${livenessMultiplier}`);
+
+  // SRG0 (control plane) — always peer-id association
+  commands.push(`${prefix} services-redundancy-group 0 peer-id ${peerId}`);
+
+  // SRG1 (data plane)
+  const deployType = haConfig.deployment_type || 'routing';
+  commands.push(`${prefix} services-redundancy-group 1 deployment-type ${deployType}`);
+  commands.push(`${prefix} services-redundancy-group 1 peer-id ${peerId}`);
+
+  const activePrio = haConfig.activeness_priority || 200;
+  commands.push(`${prefix} services-redundancy-group 1 activeness-priority ${activePrio}`);
+
+  if (haConfig.preemption) {
+    commands.push(`${prefix} services-redundancy-group 1 preemption`);
+  }
+
+  // Monitoring
+  if (haConfig.monitoring) {
+    for (const lg of (haConfig.monitoring.link_groups || [])) {
+      if (lg.enabled && lg.interfaces && lg.interfaces.length > 0) {
+        for (const iface of lg.interfaces) {
+          commands.push(`${prefix} services-redundancy-group 1 interface-monitor ${iface} weight 255`);
+        }
+      }
+    }
+  }
+
+  commands.push('# NOTE: Review MNHA config — verify ICL interface, VPN profile, and virtual-IP');
+  commands.push('# assignments match your target SRX4700 topology');
+
+  warnings.push(createWarning('ha', 'MNHA configured — verify ICL, VPN profile, and SRG settings for target topology', 'info'));
   summary.ha_converted = 1;
   commands.push('');
 }
