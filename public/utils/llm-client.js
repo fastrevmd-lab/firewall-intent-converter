@@ -16,56 +16,136 @@
 // Default System Prompt
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_SYSTEM_PROMPT = `You are an expert firewall policy engineer specializing in PAN-OS to Juniper SRX migrations. You provide concise, actionable best-practice suggestions.
+export const DEFAULT_SYSTEM_PROMPT = `You are an expert multi-vendor firewall policy engineer specializing in migrations to Juniper SRX. You support PAN-OS, FortiGate/FortiOS, Cisco ASA/FTD, and Junos SRX as source platforms. You provide concise, actionable best-practice suggestions grounded in specific Junos CLI syntax.
 
-## Juniper SRX Security Best Practices
+## Zone Architecture
+- Strict zone segmentation: trust, untrust, dmz, management, and dedicated partner/vendor zones
+- host-inbound-traffic restricted per zone — only allow required protocols (e.g., ssh/ping on management; nothing unnecessary on untrust)
+- Never bind management interface (fxp0) to a transit zone
+- Every zone should have a screen profile applied for DoS protection
+- Prefer global address-book for simplicity — addresses available across all zones and NAT rules
 
-### Zone Architecture
-- Strict zone segmentation (trust/untrust/dmz/management)
-- Dedicated zones for partner/vendor connectivity
-- host-inbound-traffic restricted per zone
+## Policy Design
+- Default deny-all cleanup rule per zone pair: then { deny; log { session-init; } }
+- Most specific rules first, broadest last — SRX evaluates top-down, first match wins
+- Use unified policies (Junos 18.2+) with application identification for NGFW capability
+- Avoid any/any/any open rules — flag as critical security issues
+- Descriptive names (max 63 chars, alphanumeric + hyphen + underscore, no spaces)
+- Add description on every rule explaining business justification
+- Review disabled/deactivated rules for removal — audit flags and configuration clutter
+- Use address-sets and application-sets to reduce rule count
 
-### Policy Design
-- Default deny-all cleanup rule per zone pair with logging
-- Most specific rules first, broadest last
-- Application-based policies preferred over port-based
-- Avoid any-any-any open rules
-- Descriptive names and descriptions on every rule
-- Review disabled rules for removal
+## Logging
+- log session-close on all permit rules (captures byte/packet counts after session ends)
+- log session-init on all deny/reject rules (captures blocked connection attempts)
+- Avoid enabling both session-init AND session-close on same rule — performance impact
+- Forward to remote syslog over TLS for encryption in transit
+- Use structured syslog (sd-syslog) for SIEM ingestion
+- Always set source-address on syslog forwarding to identify the SRX device
 
-### Logging
-- log session-close on all permit rules
-- log session-init on deny/reject rules
-- Forward to SIEM/syslog
+## Security Profiles
+### IDP
+- Use predefined policy templates as starting point (Recommended, DMZ_Services)
+- Apply IDP on trust→untrust and dmz→untrust zone pairs minimum
+- Install signature database: request security idp security-package install
+- For Junos 18.2+, assign IDP policies per rule via unified policies
 
-### Security Profiles (UTM)
-- IDP on trust→untrust and dmz→untrust
-- Anti-malware on HTTP/SMTP/FTP/IMAP
-- URL filtering on outbound web traffic
-- AppFW for application category restrictions
+### UTM
+- Antivirus on HTTP, SMTP, FTP, IMAP protocols
+- Web filtering (EWF or local) on outbound web traffic
+- Content filtering for file-type blocking
+- Anti-spam on inbound SMTP
+- Bundle profiles into UTM policy, reference with: then permit { application-services { utm-policy <name>; } }
 
-### NAT
-- SRX rule-set based NAT by zone pairs
-- Interface-based source NAT for simple internet access
-- Destination NAT with explicit pools
+### Application Firewall / AppID
+- Prefer AppID over port-only matching
+- SSL proxy may be required to identify encrypted applications
+- For Junos 18.2+, use unified policies instead of legacy AppFW rule-sets
 
-### SRX-Specific
-- Use AppID over port-only matching
-- Screen options per zone for DoS protection
-- Consistent address-book usage (zone-level or global)
-- Junos names: max 63 chars, no spaces
+### SecIntel (requires A1+ subscription)
+- Provides threat intelligence feeds: C&C IPs, infected hosts, GeoIP, malicious URLs
+- Requires ATP Cloud enrollment for full functionality (P1/P2)
 
-### Migration Guidance
-- PAN-OS "application-default" → verify SRX AppID coverage
-- Profile groups → SRX UTM policies (manual config needed)
-- Tags → preserve as description/comments
-- "drop" → "deny" (silent drop), "reset-*" → "reject"
+## NAT
+- SRX NAT order of operations: Static NAT and Destination NAT before security policy; Source NAT after policy
+- Security policies must reference the real (post-NAT) IP for destination NAT, not the translated IP
+- Proxy ARP is mandatory for destination/static NAT when translated IP is not on an SRX interface
+- Static NAT is bidirectional and has highest priority
+- Use rule-set organization by zone pair for clarity
+- Interface-based source NAT (then source-nat interface) for simple internet access
+
+## VPN / IPsec
+- Prefer IKEv2 over IKEv1 — fewer exchanges, better DoS resistance, faster SA setup
+- Enable Perfect Forward Secrecy (PFS) — minimum group14 (DH-2048)
+- Use strong encryption: AES-256-GCM for IKE and IPsec; avoid 3DES, DES, MD5
+- Route-based VPNs (st0 tunnels) preferred over policy-based for flexibility
+- Ensure st0 tunnel unit is in the correct security zone
+- Enable Dead Peer Detection: set security ike gateway <name> dead-peer-detection
+- Proxy IDs / traffic selectors must match on both peers — common migration pitfall
+- Recommended IKE: sha-256+, aes-256-gcm, group20 (group14 minimum)
+- Recommended IPsec: esp, aes-256-gcm, lifetime 3600s
+
+## Screens / DDoS Protection
+- Screens are processed before security policy — minimal performance impact
+- Apply per zone; untrust needs strictest settings
+- Recommended minimums: tcp syn-flood (alarm 1024, attack 200, dest 2048), land, winnuke, syn-frag; udp flood (threshold 1000); icmp ping-death, flood (threshold 1000); ip bad-option, source-route-option, spoofing
+
+## HA / Chassis Cluster
+- Both nodes must have identical hardware, software versions, and license keys
+- Redundancy group 0 for routing engine; group 1+ for interface (reth) redundancy
+- Active/passive for simplicity; active/active only when traffic engineering requires it
+- Control link and fabric link must be on dedicated physical ports
+
+## Routing
+- Static routes: set routing-options static route <dest> next-hop <nh>
+- VRF / routing-instances for network segmentation
+- Logical systems for multi-vsys migration from PAN-OS (multiple routing instances, advanced routing)
+- Tenant systems for VDOM migration from FortiGate (one routing instance per tenant, scales to more tenants)
+
+## Vendor-Specific Migration Pitfalls
+
+### PAN-OS → SRX
+- "application-default" → verify SRX AppID coverage; unmapped apps need custom application definitions
+- Security profile groups → individual SRX UTM/IDP policies (no 1:1 group concept)
+- Tags → preserve as description fields or comments
+- "drop" → "deny" (silent drop), "reset-client/server/both" → "reject"
 - Disabled rules → "deactivate" statement
+- PAN-OS vsys → SRX logical-system (if multi-vsys)
 
-### Compliance
-- PCI-DSS: explicit deny-all, documented justification, quarterly review
-- NIST 800-41: segment by sensitivity, log denied traffic, annual review
-- CIS: disable unused interfaces, restrict management access`;
+### FortiGate → SRX
+- "accept" → "permit", "deny" → "deny"
+- VIP objects (DNAT) → SRX destination NAT rule-sets with proxy-ARP
+- IP pools (SNAT) → SRX source NAT rule-sets with pools
+- UTM profiles (AV, web-filter, IPS, app-control) → SRX UTM policies + IDP policies
+- VDOM → SRX logical-system or tenant-system
+- internet-service-id has no direct SRX equivalent — decompose to IP/port
+- FQDN addresses → SRX dns-name; wildcard-fqdn not supported on SRX
+
+### Cisco ASA/FTD → SRX
+- ACL-based model (interface + direction + ACL) → SRX zone-based model (from-zone/to-zone)
+- Security levels determine implicit trust — SRX has no implicit trust, every zone pair needs explicit policy
+- nameif + security-level → explicit SRX security zones
+- object-group → SRX address-set / application-set
+- Twice-NAT (manual NAT) → SRX static NAT with source + destination translation
+- Auto-NAT (object NAT) → SRX source/destination NAT rule-sets
+- inspect fixups → SRX ALG configurations
+- threat-detection → SRX screen options
+
+### SRX → SRX
+- Validate deprecated syntax (zone-based vs global address-book)
+- Check AppID signature compatibility between Junos versions
+- Verify chassis cluster compatibility if upgrading hardware
+
+## Rule Shadowing
+- A shadowed rule never matches because a broader rule above already handles all matching packets
+- Flag: fully shadowed, partially shadowed, redundant, and contradictory rules
+- Resolution: place most specific rules higher; remove fully shadowed; merge redundant
+- Same zones + overlapping addresses + overlapping services but different action = contradiction
+
+## Compliance
+- PCI DSS v4.0 (mandatory since March 2025): explicit deny-all (1.2.1), all allowed services/ports must have documented business need (1.2.5), review configs at least every 6 months (1.2.7), inbound/outbound CDE traffic limited to necessity (1.3.1/1.3.2)
+- NIST SP 800-41r1: segment by sensitivity, log all denied traffic, annual review, test rules before deployment, document every rule with business justification
+- CIS Juniper OS Benchmark v2.1.0: disable unused services, restrict management access, enforce password complexity, NTP with auth, SNMP v3 only`;
 
 // ---------------------------------------------------------------------------
 // System Prompt Loader
@@ -497,14 +577,26 @@ function loadSettings() {
 // Prompt Builders
 // ---------------------------------------------------------------------------
 
+/** Returns a friendly vendor label from the source_vendor code. */
+function vendorLabel(sourceVendor) {
+  switch (sourceVendor) {
+    case 'panos': return 'PAN-OS';
+    case 'srx': return 'Junos SRX';
+    case 'fortigate': return 'FortiGate';
+    case 'cisco_asa': return 'Cisco ASA/FTD';
+    default: return sourceVendor || 'firewall';
+  }
+}
+
 /**
  * Builds a prompt asking the LLM to review a security rule (legacy free-text).
  */
-export function buildRuleSuggestionPrompt(rule, targetModel, zones) {
+export function buildRuleSuggestionPrompt(rule, targetModel, zones, sourceVendor) {
   const zoneList = (zones || []).map(z => z.name).join(', ');
+  const vendor = vendorLabel(sourceVendor);
   return {
     system: loadSystemPrompt(),
-    user: `Review this firewall security rule for a PAN-OS to SRX (${targetModel || 'SRX'}) migration and suggest improvements:
+    user: `Review this firewall security rule for a ${vendor} to SRX (${targetModel || 'SRX'}) migration and suggest improvements:
 
 Rule: "${rule.name}"
   Action: ${rule.action}
@@ -528,7 +620,7 @@ Provide 2-4 specific, actionable suggestions for this rule. Focus on security be
 /**
  * Builds a structured rule suggestion prompt that instructs the LLM to respond with JSON.
  */
-export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense, srxContext) {
+export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense, srxContext, sourceVendor) {
   const zoneList = (zones || []).map(z => z.name).join(', ');
   const systemPrompt = loadSystemPrompt();
 
@@ -577,9 +669,9 @@ Valid field names and their types:
 For array fields, use JSON arrays like ["value1", "value2"].
 For boolean fields, use true or false (no quotes).` + licenseContext,
 
-    user: `Review this firewall security rule being migrated from PAN-OS to SRX (${targetModel || 'SRX'})${srxLicense ? ` (license: ${srxLicense})` : ''}:
+    user: `Review this firewall security rule being migrated from ${vendorLabel(sourceVendor)} to SRX (${targetModel || 'SRX'})${srxLicense ? ` (license: ${srxLicense})` : ''}:
 
-=== ORIGINAL PAN-OS RULE ===
+=== ORIGINAL ${vendorLabel(sourceVendor).toUpperCase()} RULE ===
 Rule: "${rule.name}"
   Action: ${rule.action}
   From zones: ${(rule.src_zones || []).join(', ') || 'any'}
@@ -601,17 +693,18 @@ ${srxContext ? `
 ` : ''}
 Available zones: ${zoneList}
 
-Review both the original PAN-OS rule and its SRX translation. Identify any issues with the migration mapping, missing security features, or best-practice violations on the SRX side. Respond with ONLY the JSON object.`,
+Review both the original ${vendorLabel(sourceVendor)} rule and its SRX translation. Identify any issues with the migration mapping, missing security features, or best-practice violations on the SRX side. Respond with ONLY the JSON object.`,
   };
 }
 
 /**
  * Builds a prompt for reviewing a NAT rule.
  */
-export function buildNATSuggestionPrompt(rule, targetModel) {
+export function buildNATSuggestionPrompt(rule, targetModel, sourceVendor) {
+  const vendor = vendorLabel(sourceVendor);
   return {
     system: loadSystemPrompt(),
-    user: `Review this NAT rule for a PAN-OS to SRX (${targetModel || 'SRX'}) migration:
+    user: `Review this NAT rule for a ${vendor} to SRX (${targetModel || 'SRX'}) migration:
 
 NAT Rule: "${rule.name}"
   Type: ${rule.type}
@@ -632,16 +725,19 @@ Provide 2-3 specific suggestions for this NAT rule. Focus on SRX NAT rule-set be
  */
 export function buildConfigReviewPrompt(intermediateConfig, targetModel) {
   const stats = intermediateConfig?.metadata || {};
+  const vendor = vendorLabel(stats.source_vendor);
   return {
     system: loadSystemPrompt(),
-    user: `Review this firewall policy migration overview for PAN-OS to SRX (${targetModel || 'SRX'}):
+    user: `Review this firewall policy migration overview for ${vendor} to SRX (${targetModel || 'SRX'}):
 
 Configuration stats:
-  Source: PAN-OS ${stats.source_version || 'unknown'}
+  Source: ${vendor} ${stats.source_version || 'unknown'}
   Zones: ${stats.zone_count || 0}
   Security rules: ${stats.rule_count || 0}
   NAT rules: ${stats.nat_rule_count || 0}
   Objects: ${stats.object_count || 0}
+  VPN tunnels: ${stats.vpn_tunnel_count || 0}
+  Static routes: ${stats.static_route_count || 0}
 
 Zone names: ${(intermediateConfig?.zones || []).map(z => z.name).join(', ')}
 
@@ -706,7 +802,7 @@ You may include multiple JSON blocks in your response, interspersed with explana
 
   return {
     system: systemPrompt,
-    user: `Review this complete firewall ruleset (${policies.length} rules) for a PAN-OS to SRX (${targetModel || 'SRX'}) migration.${srxLicense ? ` Target license: ${srxLicense}.` : ''} Identify issues, suggest improvements, and flag any security concerns.
+    user: `Review this complete firewall ruleset (${policies.length} rules) for a ${vendorLabel(intermediateConfig?.metadata?.source_vendor)} to SRX (${targetModel || 'SRX'}) migration.${srxLicense ? ` Target license: ${srxLicense}.` : ''} Identify issues, suggest improvements, and flag any security concerns.
 
 Ruleset:
 ${ruleSummary}
