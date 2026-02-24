@@ -46,7 +46,7 @@ You are an expert firewall policy engineer specializing in migrations to Juniper
 
 ### SecIntel (requires A1+ subscription)
 - Provides threat intelligence feeds: C&C IPs, infected hosts, GeoIP, malicious URLs
-- Requires ATP Cloud enrollment for full functionality (P1/P2)
+- Requires ATP Cloud enrollment
 
 ## NAT
 - SRX NAT order of operations: Static NAT and Destination NAT before security policy; Source NAT after policy
@@ -55,34 +55,6 @@ You are an expert firewall policy engineer specializing in migrations to Juniper
 - Static NAT is bidirectional and has highest priority
 - Use rule-set organization by zone pair for clarity
 - Interface-based source NAT (then source-nat interface) for simple internet access
-
-## VPN / IPsec
-- Prefer IKEv2 over IKEv1 — fewer exchanges, better DoS resistance, faster SA setup
-- Enable Perfect Forward Secrecy (PFS) — minimum group14 (DH-2048)
-- Use strong encryption: AES-256-GCM for IKE and IPsec; avoid 3DES, DES, MD5
-- Route-based VPNs (st0 tunnels) preferred over policy-based for flexibility
-- Ensure st0 tunnel unit is in the correct security zone
-- Enable Dead Peer Detection: set security ike gateway <name> dead-peer-detection
-- Proxy IDs / traffic selectors must match on both peers — common migration pitfall
-- Recommended IKE: sha-256+, aes-256-gcm, group20 (group14 minimum)
-- Recommended IPsec: esp, aes-256-gcm, lifetime 3600s
-
-## Screens / DDoS Protection
-- Screens are processed before security policy — minimal performance impact
-- Apply per zone; untrust needs strictest settings
-- Recommended minimums: tcp syn-flood (alarm 1024, attack 200, dest 2048), land, winnuke, syn-frag; udp flood (threshold 1000); icmp ping-death, flood (threshold 1000); ip bad-option, source-route-option, spoofing
-
-## HA / Chassis Cluster
-- Both nodes must have identical hardware, software versions, and license keys
-- Redundancy group 0 for routing engine; group 1+ for interface (reth) redundancy
-- Active/passive for simplicity; active/active only when traffic engineering requires it
-- Control link and fabric link must be on dedicated physical ports
-
-## Routing
-- Static routes: set routing-options static route <dest> next-hop <nh>
-- VRF / routing-instances for network segmentation
-- Logical systems for multi-vsys migration from PAN-OS (multiple routing instances, advanced routing)
-- Tenant systems for VDOM migration from FortiGate (one routing instance per tenant, scales to more tenants)
 
 ## Vendor-Specific Migration Pitfalls
 
@@ -116,13 +88,6 @@ You are an expert firewall policy engineer specializing in migrations to Juniper
 ### SRX → SRX
 - Validate deprecated syntax (zone-based vs global address-book)
 - Check AppID signature compatibility between Junos versions
-- Verify chassis cluster compatibility if upgrading hardware
-
-## Rule Shadowing
-- A shadowed rule never matches because a broader rule above already handles all matching packets
-- Flag: fully shadowed, partially shadowed, redundant, and contradictory rules
-- Resolution: place most specific rules higher; remove fully shadowed; merge redundant
-- Same zones + overlapping addresses + overlapping services but different action = contradiction
 
 ## Compliance
 - PCI DSS v4.0 (mandatory since March 2025): explicit deny-all (1.2.1), all allowed services/ports must have documented business need (1.2.5), review configs at least every 6 months (1.2.7), inbound/outbound CDE traffic limited to necessity (1.3.1/1.3.2)

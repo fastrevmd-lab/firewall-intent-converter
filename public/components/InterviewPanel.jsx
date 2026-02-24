@@ -231,11 +231,6 @@ export default function InterviewPanel({
     setItemStates(prev => ({ ...prev, [`suggestion-${index}`]: 'accepted' }));
   };
 
-  /** Reject a suggestion — dismiss without applying */
-  const handleRejectSuggestion = (index) => {
-    setItemStates(prev => ({ ...prev, [`suggestion-${index}`]: 'rejected' }));
-  };
-
   /** Accept a note — save to rule's _llm_notes array */
   const handleAcceptNote = (noteText, index) => {
     if (!selectedRule || !onUpdateRule) return;
@@ -244,11 +239,6 @@ export default function InterviewPanel({
       handleFieldChange('_llm_notes', [...existing, noteText]);
     }
     setItemStates(prev => ({ ...prev, [`note-${index}`]: 'accepted' }));
-  };
-
-  /** Dismiss a note — don't save */
-  const handleDismissNote = (index) => {
-    setItemStates(prev => ({ ...prev, [`note-${index}`]: 'rejected' }));
   };
 
   /** Remove a persisted note from the rule */
@@ -700,75 +690,47 @@ export default function InterviewPanel({
                   </span>
                 )}
 
-                {/* Actionable field change suggestions */}
+                {/* Actionable suggestions — single click to import, or ignore */}
                 {structuredSuggestion.suggestions?.map((s, i) => {
-                  const state = itemStates[`suggestion-${i}`];
+                  const imported = itemStates[`suggestion-${i}`] === 'accepted';
                   return (
-                    <div key={`s-${i}`} className="suggestion-field-change" style={{
-                      opacity: state === 'rejected' ? 0.4 : 1,
-                      borderLeft: state === 'accepted' ? '3px solid var(--accent)' : state === 'rejected' ? '3px solid var(--text-muted)' : '3px solid transparent',
-                      paddingLeft: 8
-                    }}>
-                      <div className="suggestion-field-name">{s.field}</div>
+                    <div key={`s-${i}`} className="suggestion-field-change" style={{ paddingLeft: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div className="suggestion-field-name" style={{ marginBottom: 0 }}>{s.field}</div>
+                        {imported ? (
+                          <span style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 600 }}>Imported</span>
+                        ) : (
+                          <button className="suggestion-import-btn" onClick={() => handleAcceptSuggestion(s, i)}>
+                            Import
+                          </button>
+                        )}
+                      </div>
                       <div className="suggestion-values">
                         <span className="suggestion-current">{formatValue(s.current)}</span>
                         <span className="suggestion-arrow">&rarr;</span>
                         <span className="suggestion-new">{formatValue(s.suggested)}</span>
                       </div>
                       <div className="suggestion-reason">{s.reason}</div>
-                      {state ? (
-                        <span style={{
-                          fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: 3,
-                          background: state === 'accepted' ? 'rgba(0, 91, 90, 0.15)' : 'rgba(128,128,128,0.15)',
-                          color: state === 'accepted' ? 'var(--accent)' : 'var(--text-muted)'
-                        }}>
-                          {state === 'accepted' ? 'Applied' : 'Dismissed'}
-                        </span>
-                      ) : (
-                        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                          <button className="suggestion-import-btn" onClick={() => handleAcceptSuggestion(s, i)}>
-                            Accept
-                          </button>
-                          <button className="suggestion-import-btn" onClick={() => handleRejectSuggestion(i)}
-                            style={{ background: 'rgba(128,128,128,0.15)', color: 'var(--text-secondary)' }}>
-                            Reject
-                          </button>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
 
-                {/* Informational notes */}
+                {/* Informational notes — single click to save, or ignore */}
                 {structuredSuggestion.notes?.map((note, i) => {
-                  const state = itemStates[`note-${i}`];
+                  const saved = itemStates[`note-${i}`] === 'accepted';
                   return (
-                    <div key={`n-${i}`} className="suggestion-field-change" style={{
-                      opacity: state === 'rejected' ? 0.4 : 1,
-                      borderLeft: state === 'accepted' ? '3px solid var(--accent)' : state === 'rejected' ? '3px solid var(--text-muted)' : '3px solid rgba(0, 91, 90, 0.3)',
-                      paddingLeft: 8, marginTop: 6
-                    }}>
-                      <div className="suggestion-field-name" style={{ color: 'var(--text-secondary)' }}>Note</div>
-                      <div className="suggestion-reason">{note}</div>
-                      {state ? (
-                        <span style={{
-                          fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: 3,
-                          background: state === 'accepted' ? 'rgba(0, 91, 90, 0.15)' : 'rgba(128,128,128,0.15)',
-                          color: state === 'accepted' ? 'var(--accent)' : 'var(--text-muted)'
-                        }}>
-                          {state === 'accepted' ? 'Saved' : 'Dismissed'}
-                        </span>
-                      ) : (
-                        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                    <div key={`n-${i}`} className="suggestion-field-change" style={{ paddingLeft: 8, borderLeft: '3px solid rgba(0, 91, 90, 0.3)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div className="suggestion-field-name" style={{ color: 'var(--text-secondary)', marginBottom: 0 }}>Note</div>
+                        {saved ? (
+                          <span style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 600 }}>Saved</span>
+                        ) : (
                           <button className="suggestion-import-btn" onClick={() => handleAcceptNote(note, i)}>
-                            Accept
+                            Save
                           </button>
-                          <button className="suggestion-import-btn" onClick={() => handleDismissNote(i)}
-                            style={{ background: 'rgba(128,128,128,0.15)', color: 'var(--text-secondary)' }}>
-                            Dismiss
-                          </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
+                      <div className="suggestion-reason">{note}</div>
                     </div>
                   );
                 })}
