@@ -161,14 +161,14 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 ### Rule Review Workflow
 - **Review status tracking** — Every rule starts as *Unreviewed* and can progress through *LLM Reviewed* to *Accepted*. Disabled rules show a *Disabled* label. Status labels are color-coded in the policy table
 - **Status filtering** — Filter the policy table by review status (All / Unreviewed / LLM Reviewed / Accepted / Disabled) — available on the "to SRX" tab
-- **Per-rule LLM review** — Click "LLM Review" on any rule to get structured AI suggestions with specific field changes, reasons, and individual Accept/Reject buttons. Informational notes can be accepted (saved to rule and emitted as `# NOTE:` comments in SRX output) or dismissed
+- **Per-rule LLM review** — Click "LLM Review" on any rule to get structured AI suggestions with specific field changes (including security profiles), reasons, and individual Accept/Reject buttons. The LLM sees the full SRX policy path, resolved address/service object definitions, application services, and subscription context. Informational notes can be accepted (saved to rule and emitted as `# NOTE:` comments in SRX output) or dismissed. Type coercion protects against malformed LLM output
 - **Accept rules** — Mark rules as accepted individually. A progress counter in the navbar tracks how many rules are accepted
 - **Full-ruleset review** — Once all rules are accepted, the "Review" button opens a chat interface for multi-turn LLM conversation about the entire ruleset, with inline suggestion cards you can accept or reject
 
 ### LLM Integration
 - **Multiple providers** — Claude (Anthropic), OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
 - **Browser-only API keys** — All credentials stay in `localStorage` and never touch the server
-- **Three editable system prompts** — Separate prompts for per-rule review (multi-vendor migration guidance), full-ruleset review (SRX expert security posture analysis), and greenfield interview (structured config builder). Each has its own sub-tab in Settings with independent Reset to Default
+- **Three editable system prompts** — Separate prompts for per-rule review, full-ruleset review, and greenfield interview. Prompts are stored as plain-text files in `static/prompts/` (editable on disk) with Settings UI overrides and hardcoded fallback defaults. Each has its own sub-tab in Settings with independent Reset to Default
 - **Structured responses** — LLM returns JSON with analysis, per-field suggestions, informational notes, and a verdict — parsed into interactive cards with per-item Accept/Reject buttons
 - **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
 - **Vendor-aware prompts** — LLM prompts dynamically reference the detected source vendor (PAN-OS, FortiGate, Cisco ASA, or SRX) with vendor-specific migration pitfall guidance

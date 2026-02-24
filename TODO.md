@@ -71,6 +71,10 @@
 - [x] **CC BY-NC-ND 4.0 license** — Added license file, README badge, and package.json license field
 - [x] **Zone dropdown selector** — Zone fields in the rule editor right panel now show a dropdown of available zones from the intermediate config instead of free-text input
 - [x] **Per-rule LLM review overhaul** — Replaced Import/Import All buttons with individual Accept/Reject per suggestion. Added `notes` array to LLM response schema for informational observations (migration caveats, best-practice reminders) that don't map to a field change. Accepted notes persist on the rule in a `_llm_notes` field, display in a Notes section in the rule editor with remove capability, and emit as `# NOTE:` comments above the policy in SRX set command output
+- [x] **Rich LLM context** — Per-rule review now sends the full SRX policy path, zone pairs, match criteria (source/dest addresses, applications), action, application services (UTM/IDP mapped from profiles), logging, description with tags, schedule, and disabled status. Referenced address and service objects are resolved from the intermediate config and included with their definitions (IP/subnet, port/protocol). Capped at 50 resolved objects
+- [x] **Security profiles in LLM suggestions** — `security_profiles` added as a valid field for LLM suggestions, allowing the LLM to recommend adding or changing individual security profiles (virus, spyware, url-filtering, etc.)
+- [x] **Type coercion on LLM suggestions** — `coerceSuggestionValue()` normalizes LLM output before applying: strings wrapped to arrays for array fields, string "true"/"false" coerced to booleans, invalid security_profiles values auto-rejected
+- [x] **Editable system prompt files** — Three LLM system prompts extracted to plain-text files in `static/prompts/` (rule-review.txt, full-review.txt, greenfield.txt). Loaded on page init with localStorage > file > hardcoded default priority chain
 
 ---
 
