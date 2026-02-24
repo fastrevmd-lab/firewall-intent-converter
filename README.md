@@ -71,8 +71,9 @@ Configure an LLM provider in **Settings** (gear icon). On the "to SRX" tab, for 
 1. Select the rule in the table
 2. Click **LLM Review** in the right panel
 3. Review the structured suggestions — each shows the field, current value, suggested value, and reasoning
-4. Click **Import** on suggestions you agree with, or **Import All**
-5. Click **Accept Policy** when satisfied
+4. Click **Accept** or **Reject** on each suggestion individually. Accepted changes apply to the rule immediately
+5. For informational notes (no field change), click **Accept** to save the note to the rule or **Dismiss** to discard. Accepted notes appear in a **Notes** section on the rule and are emitted as `# NOTE:` comments in the SRX config output
+6. Click **Accept Policy** when satisfied
 
 ### 6. Full-Ruleset Review (Optional)
 
@@ -160,7 +161,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 ### Rule Review Workflow
 - **Review status tracking** — Every rule starts as *Unreviewed* and can progress through *LLM Reviewed* to *Accepted*. Disabled rules show a *Disabled* label. Status labels are color-coded in the policy table
 - **Status filtering** — Filter the policy table by review status (All / Unreviewed / LLM Reviewed / Accepted / Disabled) — available on the "to SRX" tab
-- **Per-rule LLM review** — Click "LLM Review" on any rule to get structured AI suggestions with specific field changes, reasons, and one-click Import buttons
+- **Per-rule LLM review** — Click "LLM Review" on any rule to get structured AI suggestions with specific field changes, reasons, and individual Accept/Reject buttons. Informational notes can be accepted (saved to rule and emitted as `# NOTE:` comments in SRX output) or dismissed
 - **Accept rules** — Mark rules as accepted individually. A progress counter in the navbar tracks how many rules are accepted
 - **Full-ruleset review** — Once all rules are accepted, the "Review" button opens a chat interface for multi-turn LLM conversation about the entire ruleset, with inline suggestion cards you can accept or reject
 
@@ -168,7 +169,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Multiple providers** — Claude (Anthropic), OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
 - **Browser-only API keys** — All credentials stay in `localStorage` and never touch the server
 - **Three editable system prompts** — Separate prompts for per-rule review (multi-vendor migration guidance), full-ruleset review (SRX expert security posture analysis), and greenfield interview (structured config builder). Each has its own sub-tab in Settings with independent Reset to Default
-- **Structured responses** — LLM returns JSON with analysis, per-field suggestions, and a verdict — parsed into interactive cards with Import buttons
+- **Structured responses** — LLM returns JSON with analysis, per-field suggestions, informational notes, and a verdict — parsed into interactive cards with per-item Accept/Reject buttons
 - **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
 - **Vendor-aware prompts** — LLM prompts dynamically reference the detected source vendor (PAN-OS, FortiGate, Cisco ASA, or SRX) with vendor-specific migration pitfall guidance
 - **Subscription-aware prompts** — SRX subscription level is included in LLM prompts so suggestions account for available features
