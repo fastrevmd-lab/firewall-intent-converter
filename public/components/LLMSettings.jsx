@@ -7,7 +7,11 @@
  * Settings are stored in localStorage only — API keys never leave the browser.
  */
 import React, { useState, useEffect } from 'react';
-import { DEFAULT_SYSTEM_PROMPT } from '../utils/llm-client.js';
+import {
+  DEFAULT_RULE_SYSTEM_PROMPT,
+  DEFAULT_FULL_REVIEW_SYSTEM_PROMPT,
+  DEFAULT_GREENFIELD_SYSTEM_PROMPT,
+} from '../utils/llm-client.js';
 
 const PROVIDERS = [
   { id: 'claude', name: 'Claude (Anthropic)', defaultModel: 'claude-sonnet-4-6', models: [
@@ -36,7 +40,10 @@ export default function LLMSettings({ onClose, initialTab }) {
   const [model, setModel] = useState('claude-sonnet-4-6');
   const [baseUrl, setBaseUrl] = useState('');
   const [temperature, setTemperature] = useState(0.2);
-  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [ruleSystemPrompt, setRuleSystemPrompt] = useState(DEFAULT_RULE_SYSTEM_PROMPT);
+  const [fullReviewSystemPrompt, setFullReviewSystemPrompt] = useState(DEFAULT_FULL_REVIEW_SYSTEM_PROMPT);
+  const [greenfieldSystemPrompt, setGreenfieldSystemPrompt] = useState(DEFAULT_GREENFIELD_SYSTEM_PROMPT);
+  const [promptSubTab, setPromptSubTab] = useState('rule');
 
   // MCP state
   const [mcpUrl, setMcpUrl] = useState('');
@@ -56,7 +63,10 @@ export default function LLMSettings({ onClose, initialTab }) {
         setModel(settings.model || 'claude-sonnet-4-6');
         setBaseUrl(settings.baseUrl || '');
         setTemperature(settings.temperature ?? 0.2);
-        setSystemPrompt(settings.systemPrompt || DEFAULT_SYSTEM_PROMPT);
+        // Load 3 separate prompts (with backwards compat for old single systemPrompt)
+        setRuleSystemPrompt(settings.ruleSystemPrompt || settings.systemPrompt || DEFAULT_RULE_SYSTEM_PROMPT);
+        setFullReviewSystemPrompt(settings.fullReviewSystemPrompt || DEFAULT_FULL_REVIEW_SYSTEM_PROMPT);
+        setGreenfieldSystemPrompt(settings.greenfieldSystemPrompt || DEFAULT_GREENFIELD_SYSTEM_PROMPT);
       }
     } catch {
       // Ignore parse errors
@@ -72,7 +82,10 @@ export default function LLMSettings({ onClose, initialTab }) {
 
   /** Save settings to localStorage */
   const handleSave = () => {
-    const settings = { provider, apiKey, model, baseUrl, temperature, systemPrompt };
+    const settings = {
+      provider, apiKey, model, baseUrl, temperature,
+      ruleSystemPrompt, fullReviewSystemPrompt, greenfieldSystemPrompt,
+    };
     localStorage.setItem('llm-settings', JSON.stringify(settings));
     const mcpSettings = { url: mcpUrl };
     localStorage.setItem('mcp-settings', JSON.stringify(mcpSettings));
@@ -333,33 +346,70 @@ export default function LLMSettings({ onClose, initialTab }) {
           </div>
         </SettingsField>
 
-        {/* System Prompt */}
-        <SettingsField label="Review System Prompt">
-          <textarea
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            style={{
-              ...inputStyle,
-              minHeight: '160px',
-              maxHeight: '300px',
-              resize: 'vertical',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11px',
-              lineHeight: '1.5',
-            }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-              {systemPrompt.length} characters
-            </span>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}
-              style={{ fontSize: '10px', padding: '2px 8px' }}
-            >
-              Reset to Default
-            </button>
+        {/* System Prompts — 3 sub-tabs */}
+        <SettingsField label="System Prompts">
+          <div style={{ display: 'flex', gap: 0, marginBottom: 8, borderBottom: '1px solid var(--border-color)' }}>
+            {[
+              { id: 'rule', label: 'Per-Rule Review' },
+              { id: 'fullReview', label: 'Full Ruleset Review' },
+              { id: 'greenfield', label: 'Greenfield Interview' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setPromptSubTab(tab.id)}
+                style={{
+                  padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 11, fontWeight: 500,
+                  color: promptSubTab === tab.id ? 'var(--accent)' : 'var(--text-muted)',
+                  borderBottom: promptSubTab === tab.id ? '2px solid var(--accent)' : '2px solid transparent',
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
+
+          {promptSubTab === 'rule' && (
+            <>
+              <textarea
+                value={ruleSystemPrompt}
+                onChange={(e) => setRuleSystemPrompt(e.target.value)}
+                style={promptTextareaStyle}
+              />
+              <PromptFooter
+                length={ruleSystemPrompt.length}
+                onReset={() => setRuleSystemPrompt(DEFAULT_RULE_SYSTEM_PROMPT)}
+              />
+            </>
+          )}
+
+          {promptSubTab === 'fullReview' && (
+            <>
+              <textarea
+                value={fullReviewSystemPrompt}
+                onChange={(e) => setFullReviewSystemPrompt(e.target.value)}
+                style={promptTextareaStyle}
+              />
+              <PromptFooter
+                length={fullReviewSystemPrompt.length}
+                onReset={() => setFullReviewSystemPrompt(DEFAULT_FULL_REVIEW_SYSTEM_PROMPT)}
+              />
+            </>
+          )}
+
+          {promptSubTab === 'greenfield' && (
+            <>
+              <textarea
+                value={greenfieldSystemPrompt}
+                onChange={(e) => setGreenfieldSystemPrompt(e.target.value)}
+                style={promptTextareaStyle}
+              />
+              <PromptFooter
+                length={greenfieldSystemPrompt.length}
+                onReset={() => setGreenfieldSystemPrompt(DEFAULT_GREENFIELD_SYSTEM_PROMPT)}
+              />
+            </>
+          )}
         </SettingsField>
         </>
         )}
@@ -406,3 +456,30 @@ const selectStyle = {
   ...inputStyle,
   cursor: 'pointer',
 };
+
+const promptTextareaStyle = {
+  ...inputStyle,
+  minHeight: '160px',
+  maxHeight: '300px',
+  resize: 'vertical',
+  fontFamily: 'var(--font-mono)',
+  fontSize: '11px',
+  lineHeight: '1.5',
+};
+
+function PromptFooter({ length, onReset }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+        {length} characters
+      </span>
+      <button
+        className="btn btn-secondary btn-sm"
+        onClick={onReset}
+        style={{ fontSize: '10px', padding: '2px 8px' }}
+      >
+        Reset to Default
+      </button>
+    </div>
+  );
+}
