@@ -1,27 +1,24 @@
 /**
- * ReviewChatPanel Component
+ * GreenfieldChat Component
  *
- * Full-ruleset LLM chat review panel. Appears in the right panel when all rules
- * are accepted and user clicks "Review". Supports multi-turn conversation with
- * inline suggestion parsing and accept/reject per suggestion.
+ * LLM-guided interview for building an SRX configuration from scratch.
+ * Uses multi-turn chat with the greenfield system prompt. The LLM emits
+ * JSON action blocks that progressively build the intermediateConfig.
+ *
+ * Renders inside the center panel (no outer panel wrapper).
  */
 import React, { useState, useEffect, useRef } from 'react';
 import {
   getLLMChatResponse,
   getLLMStatus,
   loadSystemPrompt,
-  buildFullReviewPrompt,
 } from '../utils/llm-client.js';
 
-export default function ReviewChatPanel({
+export default function GreenfieldChat({
   intermediateConfig,
-  onUpdateRule,
   targetModel,
-  isSanitized,
-  llmWarningDismissed,
-  onLLMWarning,
-  onExitReview,
   srxLicense,
+  onApplyAction,
 }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -37,9 +34,11 @@ export default function ReviewChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Auto-send initial review prompt on mount
+  // Auto-send initial greeting once targetModel is available (after ModelSelector closes)
   useEffect(() => {
     if (hasInitialized.current) return;
+    if (!targetModel) return; // Wait for model selection
+
     hasInitialized.current = true;
 
     if (!llmStatus.configured) {
@@ -47,27 +46,28 @@ export default function ReviewChatPanel({
       return;
     }
 
-    if (!isSanitized && !llmWarningDismissed) {
-      if (onLLMWarning) onLLMWarning();
-      return;
-    }
+    sendInitialGreeting();
+  }, [targetModel]);
 
-    sendInitialReview();
-  }, []);
-
-  /** Send the initial full-ruleset review prompt */
-  const sendInitialReview = async () => {
-    const prompt = buildFullReviewPrompt(intermediateConfig, targetModel, srxLicense);
-    const userMsg = { role: 'user', content: prompt.user };
+  /** Send the initial prompt to kick off the interview */
+  const sendInitialGreeting = async () => {
+    const targetInfo = targetModel ? ` for a ${targetModel}` : '';
+    const licenseInfo = srxLicense ? ` with ${srxLicense} subscription` : '';
+    const userMsg = {
+      role: 'user',
+      content: `I need to build a new Juniper SRX firewall configuration from scratch${targetInfo}${licenseInfo}. Please help me through a guided interview to set up the configuration. Start by asking about my deployment use case.`,
+    };
 
     setMessages([userMsg]);
     setIsLoading(true);
     setError('');
 
     try {
-      const response = await getLLMChatResponse([userMsg], prompt.system);
+      const systemPrompt = loadSystemPrompt('greenfield');
+      const response = await getLLMChatResponse([userMsg], systemPrompt);
       const assistantMsg = { role: 'assistant', content: response };
       setMessages(prev => [...prev, assistantMsg]);
+      processActionBlocks(response);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -88,10 +88,11 @@ export default function ReviewChatPanel({
     setError('');
 
     try {
-      const systemPrompt = loadSystemPrompt('fullReview');
+      const systemPrompt = loadSystemPrompt('greenfield');
       const response = await getLLMChatResponse(updatedMessages, systemPrompt);
       const assistantMsg = { role: 'assistant', content: response };
       setMessages(prev => [...prev, assistantMsg]);
+      processActionBlocks(response);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -107,24 +108,35 @@ export default function ReviewChatPanel({
     }
   };
 
-  /** Parse inline JSON suggestion blocks from a message */
+  /** Extract and auto-apply JSON action blocks from LLM response */
+  const processActionBlocks = (content) => {
+    const regex = /```json\s*\n?([\s\S]*?)\n?\s*```/g;
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+      try {
+        const json = JSON.parse(match[1].trim());
+        if (json.action && json.data) {
+          onApplyAction(json.action, json.data);
+        }
+      } catch { /* ignore unparseable blocks */ }
+    }
+  };
+
+  /** Parse message content for display — highlights action blocks as cards */
   const parseMessageContent = (content) => {
     const parts = [];
-    // Split on ```json ... ``` blocks
     const regex = /```json\s*\n?([\s\S]*?)\n?\s*```/g;
     let lastIndex = 0;
     let match;
 
     while ((match = regex.exec(content)) !== null) {
-      // Text before this block
       if (match.index > lastIndex) {
         parts.push({ type: 'text', content: content.slice(lastIndex, match.index) });
       }
-      // Try to parse the JSON
       try {
         const json = JSON.parse(match[1].trim());
-        if (json.rule_name && json.field) {
-          parts.push({ type: 'suggestion', data: json });
+        if (json.action && json.data) {
+          parts.push({ type: 'action', data: json });
         } else {
           parts.push({ type: 'text', content: match[0] });
         }
@@ -134,7 +146,6 @@ export default function ReviewChatPanel({
       lastIndex = match.index + match[0].length;
     }
 
-    // Remaining text
     if (lastIndex < content.length) {
       parts.push({ type: 'text', content: content.slice(lastIndex) });
     }
@@ -142,64 +153,67 @@ export default function ReviewChatPanel({
     return parts;
   };
 
-  /** Apply a suggestion to a rule */
-  const handleAcceptSuggestion = (suggestion) => {
-    if (!intermediateConfig || !onUpdateRule) return;
-    const policies = intermediateConfig.security_policies || [];
-    const index = policies.findIndex(r => r.name === suggestion.rule_name);
-    if (index < 0) return;
-
-    const rule = { ...policies[index], [suggestion.field]: suggestion.suggested };
-    onUpdateRule(index, rule);
-  };
-
-  /** Format a value for display */
-  const formatValue = (val) => {
-    if (val === true) return 'true';
-    if (val === false) return 'false';
-    if (Array.isArray(val)) return val.join(', ');
-    if (val === null || val === undefined) return '(none)';
-    return String(val);
+  /** Friendly label for action type */
+  const actionLabel = (action) => {
+    const labels = {
+      add_zone: 'Zone',
+      add_address: 'Address',
+      add_address_group: 'Address Group',
+      add_service: 'Service',
+      add_policy: 'Security Policy',
+      add_nat: 'NAT Rule',
+      add_screen: 'Screen Profile',
+      set_syslog: 'Syslog',
+      add_route: 'Static Route',
+    };
+    return labels[action] || action;
   };
 
   return (
-    <div className="panel interview-panel review-chat-panel">
-      <div className="panel-header">
-        <h2>Review with LLM</h2>
-        <button className="btn btn-secondary btn-sm" onClick={onExitReview}>
-          Back to Rules
-        </button>
-      </div>
-
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Messages area */}
-      <div className="chat-messages">
+      <div className="chat-messages" style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
         {messages.map((msg, i) => (
           <div key={i} className={`chat-message ${msg.role}`}>
             {msg.role === 'assistant' ? (
-              // Parse assistant messages for inline suggestions
               parseMessageContent(msg.content).map((part, j) => {
-                if (part.type === 'suggestion') {
+                if (part.type === 'action') {
                   return (
-                    <div key={j} className="chat-suggestion-card">
-                      <div className="suggestion-field-name">
-                        {part.data.rule_name} &mdash; {part.data.field}
+                    <div key={j} style={{
+                      margin: '8px 0',
+                      padding: '8px 12px',
+                      background: 'rgba(34, 197, 94, 0.08)',
+                      border: '1px solid rgba(34, 197, 94, 0.25)',
+                      borderRadius: 'var(--radius)',
+                      fontSize: 12,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{
+                          padding: '2px 6px',
+                          background: 'rgba(34, 197, 94, 0.15)',
+                          borderRadius: 'var(--radius)',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: 'var(--success)',
+                          textTransform: 'uppercase',
+                        }}>
+                          {actionLabel(part.data.action)}
+                        </span>
+                        <span style={{
+                          fontSize: 10,
+                          color: 'var(--success)',
+                          marginLeft: 'auto',
+                          fontWeight: 500,
+                        }}>
+                          Applied
+                        </span>
                       </div>
-                      <div className="suggestion-values">
-                        <span className="suggestion-current">{formatValue(part.data.current)}</span>
-                        <span className="suggestion-arrow">&rarr;</span>
-                        <span className="suggestion-new">{formatValue(part.data.suggested)}</span>
-                      </div>
-                      {part.data.reason && (
-                        <div className="suggestion-reason">{part.data.reason}</div>
+                      <div style={{ fontWeight: 500 }}>{part.data.data?.name || ''}</div>
+                      {part.data.data?.description && (
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+                          {part.data.data.description}
+                        </div>
                       )}
-                      <div className="chat-suggestion-actions">
-                        <button
-                          className="suggestion-import-btn"
-                          onClick={() => handleAcceptSuggestion(part.data)}
-                        >
-                          Accept
-                        </button>
-                      </div>
                     </div>
                   );
                 }
@@ -207,9 +221,8 @@ export default function ReviewChatPanel({
               })
             ) : (
               <span style={{ whiteSpace: 'pre-wrap' }}>
-                {/* Show abbreviated user message for the initial prompt */}
                 {i === 0 && msg.content.length > 200
-                  ? 'Reviewing full ruleset...'
+                  ? 'Starting greenfield SRX configuration interview...'
                   : msg.content}
               </span>
             )}
@@ -219,7 +232,7 @@ export default function ReviewChatPanel({
         {isLoading && (
           <div className="chat-message assistant" style={{ opacity: 0.7 }}>
             <span className="loading-spinner" style={{ width: 14, height: 14 }} />
-            <span style={{ marginLeft: 8 }}>Analyzing...</span>
+            <span style={{ marginLeft: 8 }}>Thinking...</span>
           </div>
         )}
 
@@ -239,7 +252,7 @@ export default function ReviewChatPanel({
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask a follow-up question..."
+          placeholder="Type your answer..."
           rows={1}
           disabled={isLoading}
         />

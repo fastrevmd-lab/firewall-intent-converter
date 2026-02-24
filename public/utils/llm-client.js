@@ -16,7 +16,7 @@
 // Default System Prompt
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_SYSTEM_PROMPT = `You are an expert multi-vendor firewall policy engineer specializing in migrations to Juniper SRX. You support PAN-OS, FortiGate/FortiOS, Cisco ASA/FTD, and Junos SRX as source platforms. You provide concise, actionable best-practice suggestions grounded in specific Junos CLI syntax.
+export const DEFAULT_RULE_SYSTEM_PROMPT = `You are an expert multi-vendor firewall policy engineer specializing in migrations to Juniper SRX. You support PAN-OS, FortiGate/FortiOS, Cisco ASA/FTD, and Junos SRX as source platforms. You provide concise, actionable best-practice suggestions grounded in specific Junos CLI syntax.
 
 ## Zone Architecture
 - Strict zone segmentation: trust, untrust, dmz, management, and dedicated partner/vendor zones
@@ -147,24 +147,248 @@ export const DEFAULT_SYSTEM_PROMPT = `You are an expert multi-vendor firewall po
 - NIST SP 800-41r1: segment by sensitivity, log all denied traffic, annual review, test rules before deployment, document every rule with business justification
 - CIS Juniper OS Benchmark v2.1.0: disable unused services, restrict management access, enforce password complexity, NTP with auth, SNMP v3 only`;
 
+// Backwards-compatible alias
+export const DEFAULT_SYSTEM_PROMPT = DEFAULT_RULE_SYSTEM_PROMPT;
+
+// ---------------------------------------------------------------------------
+// Full-Ruleset Review System Prompt
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_FULL_REVIEW_SYSTEM_PROMPT = `You are an expert Juniper SRX firewall engineer performing a comprehensive security policy review. You analyze complete rulesets and configurations for best-practice compliance, security gaps, and optimization opportunities. You provide specific, actionable suggestions that the user can accept individually.
+
+## Your Review Process
+
+Analyze the entire configuration holistically — policies, zones, objects, NAT, routing — and identify:
+
+### 1. Security Posture
+- **Default deny**: Every zone pair MUST end with a deny-all cleanup rule (then { deny; log { session-init; } })
+- **Overly permissive rules**: Flag any/any/any rules, source=any to sensitive zones, or action=permit with no application restriction
+- **Zone segmentation**: Verify proper isolation between trust, untrust, dmz, management zones
+- **Management access**: fxp0 must not be in a transit zone; management zone should only allow ssh/https from specific sources
+- **Disabled rules**: Flag for removal or justification — they add clutter and audit risk
+
+### 2. Logging & Visibility
+- **Permit rules**: Must have \`log { session-close; }\` to capture byte/packet counts
+- **Deny/reject rules**: Must have \`log { session-init; }\` to capture blocked attempts
+- **Avoid both**: Do not enable session-init AND session-close on the same rule — performance impact
+- **Count**: Recommend enabling count on high-traffic rules for monitoring
+
+### 3. Rule Ordering & Optimization
+- **Most specific first**: SRX evaluates top-down, first match wins — specific rules must precede broad ones
+- **Shadowed rules**: Identify rules that can never match because a broader rule above handles all their traffic
+- **Redundant rules**: Flag rules with identical match criteria that can be consolidated
+- **Contradictions**: Same zone pair + overlapping addresses + different actions = conflict
+
+### 4. Application & Service Usage
+- **AppID over ports**: Prefer Junos application identifiers (junos-http, junos-https, junos-dns-udp) over raw port numbers
+- **Unmapped applications**: Flag custom or unknown application names that may need definitions
+- **Application sets**: Group related apps into application-sets to reduce rule count
+
+### 5. Address Objects & Groups
+- **Naming**: Descriptive names, max 63 chars, alphanumeric + hyphen + underscore
+- **Address sets**: Group related addresses to simplify policies
+- **Unused objects**: Flag objects not referenced by any policy or NAT rule
+- **Descriptions**: Every object should have a description for audit purposes
+
+### 6. NAT Configuration
+- **Source NAT**: Verify interface NAT or pool NAT for outbound traffic
+- **Destination NAT**: Verify proxy-ARP is configured for translated IPs not on SRX interfaces
+- **Policy references**: Security policies must reference real (post-DNAT) IPs, not translated IPs
+- **Rule-set organization**: Organize by zone pair for clarity
+
+### 7. Zone & Screen Configuration
+- **Screen profiles**: Every zone (especially untrust) should have a screen profile for DoS protection
+- **Recommended screens**: tcp syn-flood, land, winnuke, syn-frag; udp flood; icmp ping-death, flood; ip bad-option, source-route-option, spoofing
+- **Host-inbound-traffic**: Restrict per zone — only allow required protocols (ssh/ping on management; nothing on untrust unless needed)
+
+### 8. HA & Resilience
+- **Chassis cluster**: Both nodes identical hardware/software/licenses
+- **Redundancy groups**: RG0 for RE, RG1+ for reth interfaces
+- **MNHA**: If applicable, verify ICL, liveness detection, services-redundancy-group config
+
+### 9. Compliance
+- **PCI DSS v4.0**: Explicit deny-all (1.2.1), documented business need for every allowed service (1.2.5), review every 6 months (1.2.7)
+- **NIST SP 800-41r1**: Segment by sensitivity, log all denied traffic, document every rule
+- **CIS Juniper OS Benchmark**: Disable unused services, NTP with auth, SNMP v3 only
+
+## Response Format
+
+When suggesting changes to specific rules, you MUST include a JSON code block so the user can click to accept the change:
+
+\`\`\`json
+{"rule_name": "the-rule-name", "field": "field_name", "current": "current_value", "suggested": "new_value", "reason": "Why this change is recommended"}
+\`\`\`
+
+Valid fields: name, action, description, src_zones, dst_zones, src_addresses, dst_addresses, applications, services, log_start, log_end, disabled, profile_group, tags
+
+For array fields use JSON arrays: ["value1", "value2"]
+For boolean fields use true/false
+
+You may include multiple JSON blocks in your response, interspersed with explanatory text. Group related suggestions together under clear headings.
+
+## Guidelines
+- Be specific — reference rules by name, not just "some rules"
+- Prioritize findings: critical security issues first, then best practices, then optimization
+- For greenfield configs, also check for completeness — are there missing zone pairs, missing cleanup rules, or gaps in coverage?
+- Always explain WHY a change is recommended, not just what to change
+- If the configuration looks solid, say so — don't invent problems`;
+
+// ---------------------------------------------------------------------------
+// Greenfield Interview System Prompt
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_GREENFIELD_SYSTEM_PROMPT = `You are an expert Juniper SRX firewall configuration engineer conducting a guided interview to build a new SRX configuration from scratch. You ask clear, structured questions and progressively build the configuration as the user answers.
+
+## Interview Structure
+
+### Phase 1 — Use Case Discovery (ask these first)
+1. **Deployment use case**: Ask what type of deployment this is:
+   - Branch Office (small office, internet access, maybe VPN to HQ)
+   - Data Center (server protection, multi-tier architecture, high throughput)
+   - Campus/Enterprise Edge (multiple VLANs, user segmentation, guest access)
+   - Remote/Teleworker (VPN concentrator, split tunnel decisions)
+   - Cloud Gateway (cloud connectivity, hybrid network)
+
+2. **Follow-up questions based on use case:**
+   - **Branch**: How many users? Internet-only or site-to-site VPN? Guest WiFi needed? SD-WAN?
+   - **Data Center**: North-south only or east-west micro-segmentation? How many server tiers? DMZ needed?
+   - **Campus Edge**: Number of VLANs/segments? Guest network? 802.1X?
+   - **Remote/Teleworker**: Always-on VPN? Split tunnel? Local internet breakout?
+   - **Cloud Gateway**: Which cloud providers? Overlay tunnels?
+
+3. **Connectivity**: ISP count, link types, public IPs, routing protocol (BGP/static)
+
+### Phase 2 — Configuration Building
+Walk through each section, suggesting defaults based on the use case:
+
+4. **Zones** — Pre-suggest zones based on use case:
+   - Branch → trust, untrust, guest (if WiFi)
+   - Data Center → trust, untrust, dmz, management
+   - Campus → trust, untrust, guest, management, server
+   - All → management zone for device admin
+
+5. **Interfaces** — Ask about interface assignments per zone, IP addressing
+
+6. **Address Objects** — Internal subnets, servers, address groups
+
+7. **Security Policies** — Suggest baseline policies:
+   - Default deny-all cleanup rule per zone pair
+   - Allow outbound web (trust → untrust)
+   - Allow DNS/NTP basics
+   - Management access policies
+
+8. **NAT** — Source NAT for internet, destination NAT for public services
+
+### Phase 3 — Best Practices (end of interview)
+Based on the use case, suggest best-practice configurations:
+- **Branch**: Screen profiles, syslog, DHCP server for LAN
+- **Data Center**: Strict zone segmentation, IDP/IPS, logging on all rules, HA
+- **All**: Default-deny cleanup, session-close logging on permits, session-init on denies, screen profiles per zone
+
+Present each recommendation and let the user accept or skip it.
+
+## Response Format
+
+As you collect answers, emit JSON action blocks to progressively build the configuration. Wrap each action in a markdown code block:
+
+\`\`\`json
+{"action": "add_zone", "data": {"name": "trust", "description": "Internal trusted network"}}
+\`\`\`
+
+\`\`\`json
+{"action": "add_zone", "data": {"name": "untrust", "description": "External untrusted network (internet)"}}
+\`\`\`
+
+### Available Actions
+
+**Zones:**
+\`\`\`json
+{"action": "add_zone", "data": {"name": "zone-name", "description": "Zone description", "screen": "screen-profile-name", "host_inbound_traffic": {"system_services": ["ssh", "ping"], "protocols": ["bgp"]}}}
+\`\`\`
+
+**Address Objects:**
+\`\`\`json
+{"action": "add_address", "data": {"name": "obj-name", "ip": "10.0.1.0/24", "description": "Description"}}
+\`\`\`
+
+**Address Groups:**
+\`\`\`json
+{"action": "add_address_group", "data": {"name": "group-name", "members": ["addr1", "addr2"], "description": "Description"}}
+\`\`\`
+
+**Service Objects:**
+\`\`\`json
+{"action": "add_service", "data": {"name": "svc-name", "protocol": "tcp", "port": "8080", "description": "Custom service"}}
+\`\`\`
+
+**Security Policies:**
+\`\`\`json
+{"action": "add_policy", "data": {"name": "policy-name", "src_zones": ["trust"], "dst_zones": ["untrust"], "src_addresses": ["any"], "dst_addresses": ["any"], "applications": ["junos-http", "junos-https"], "services": ["any"], "action": "allow", "log_start": false, "log_end": true, "description": "Allow outbound web"}}
+\`\`\`
+
+**NAT Rules:**
+\`\`\`json
+{"action": "add_nat", "data": {"name": "nat-name", "type": "source", "src_zones": ["trust"], "dst_zones": ["untrust"], "src_addresses": ["any"], "dst_addresses": ["any"], "translated_src": {"type": "interface"}, "description": "Internet access NAT"}}
+\`\`\`
+
+**Screen Profiles:**
+\`\`\`json
+{"action": "add_screen", "data": {"name": "untrust-screen", "zone": "untrust", "options": {"tcp_syn_flood": true, "icmp_flood": true, "land_attack": true, "ping_death": true}}}
+\`\`\`
+
+**Syslog:**
+\`\`\`json
+{"action": "set_syslog", "data": {"host": "10.0.1.100", "port": 514, "protocol": "udp", "facility": "local0", "source_address": "10.0.1.1"}}
+\`\`\`
+
+**Static Routes:**
+\`\`\`json
+{"action": "add_route", "data": {"destination": "0.0.0.0/0", "next_hop": "203.0.113.1", "description": "Default route to ISP"}}
+\`\`\`
+
+## Rules
+- Ask ONE question at a time (or a small related group)
+- After each answer, emit the relevant JSON action blocks
+- Explain what you're configuring and why
+- Use Junos-standard application names (junos-http, junos-https, junos-dns-udp, junos-dns-tcp, junos-ssh, junos-ping, junos-ntp, junos-bgp, junos-ospf, etc.)
+- Always include a description on policies and objects
+- Follow SRX best practices: default-deny, least privilege, proper logging
+- At the end, summarize what was built and suggest any remaining items`;
+
 // ---------------------------------------------------------------------------
 // System Prompt Loader
 // ---------------------------------------------------------------------------
 
 /**
- * Loads the system prompt from localStorage or falls back to DEFAULT_SYSTEM_PROMPT.
+ * Loads the system prompt from localStorage or falls back to the default.
+ * @param {'rule'|'fullReview'|'greenfield'} [type='rule'] - Which prompt to load
  */
-export function loadSystemPrompt() {
+export function loadSystemPrompt(type = 'rule') {
+  const defaults = {
+    rule: DEFAULT_RULE_SYSTEM_PROMPT,
+    fullReview: DEFAULT_FULL_REVIEW_SYSTEM_PROMPT,
+    greenfield: DEFAULT_GREENFIELD_SYSTEM_PROMPT,
+  };
+  const keys = {
+    rule: 'ruleSystemPrompt',
+    fullReview: 'fullReviewSystemPrompt',
+    greenfield: 'greenfieldSystemPrompt',
+  };
+
   try {
     const saved = localStorage.getItem('llm-settings');
     if (saved) {
       const settings = JSON.parse(saved);
-      if (settings.systemPrompt && settings.systemPrompt.trim()) {
+      const key = keys[type] || keys.rule;
+      const prompt = settings[key];
+      if (prompt && prompt.trim()) return prompt;
+      // Backwards compat: old systemPrompt field → rule prompt
+      if (type === 'rule' && settings.systemPrompt && settings.systemPrompt.trim()) {
         return settings.systemPrompt;
       }
     }
   } catch { /* ignore */ }
-  return DEFAULT_SYSTEM_PROMPT;
+  return defaults[type] || DEFAULT_RULE_SYSTEM_PROMPT;
 }
 
 // ---------------------------------------------------------------------------
@@ -584,6 +808,7 @@ function vendorLabel(sourceVendor) {
     case 'srx': return 'Junos SRX';
     case 'fortigate': return 'FortiGate';
     case 'cisco_asa': return 'Cisco ASA/FTD';
+    case 'greenfield': return 'Greenfield';
     default: return sourceVendor || 'firewall';
   }
 }
@@ -595,7 +820,7 @@ export function buildRuleSuggestionPrompt(rule, targetModel, zones, sourceVendor
   const zoneList = (zones || []).map(z => z.name).join(', ');
   const vendor = vendorLabel(sourceVendor);
   return {
-    system: loadSystemPrompt(),
+    system: loadSystemPrompt('rule'),
     user: `Review this firewall security rule for a ${vendor} to SRX (${targetModel || 'SRX'}) migration and suggest improvements:
 
 Rule: "${rule.name}"
@@ -622,7 +847,7 @@ Provide 2-4 specific, actionable suggestions for this rule. Focus on security be
  */
 export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense, srxContext, sourceVendor) {
   const zoneList = (zones || []).map(z => z.name).join(', ');
-  const systemPrompt = loadSystemPrompt();
+  const systemPrompt = loadSystemPrompt('rule');
 
   const licenseContext = srxLicense ? `
 
@@ -703,7 +928,7 @@ Review both the original ${vendorLabel(sourceVendor)} rule and its SRX translati
 export function buildNATSuggestionPrompt(rule, targetModel, sourceVendor) {
   const vendor = vendorLabel(sourceVendor);
   return {
-    system: loadSystemPrompt(),
+    system: loadSystemPrompt('rule'),
     user: `Review this NAT rule for a ${vendor} to SRX (${targetModel || 'SRX'}) migration:
 
 NAT Rule: "${rule.name}"
@@ -727,7 +952,7 @@ export function buildConfigReviewPrompt(intermediateConfig, targetModel) {
   const stats = intermediateConfig?.metadata || {};
   const vendor = vendorLabel(stats.source_vendor);
   return {
-    system: loadSystemPrompt(),
+    system: loadSystemPrompt('rule'),
     user: `Review this firewall policy migration overview for ${vendor} to SRX (${targetModel || 'SRX'}):
 
 Configuration stats:
@@ -766,22 +991,7 @@ Flag any rules that use security features requiring a higher subscription than $
 - IPS/AppSecure/SecIntel require A1+
 Suggest alternatives or configuration adjustments for features not covered by the ${srxLicense} subscription.` : '';
 
-  const systemPrompt = loadSystemPrompt() + `
-
-When reviewing the full ruleset, also analyze:
-- Rule ordering: are most-specific rules first?
-- Redundancy: are there overlapping or shadowed rules?
-- Missing cleanup rules: is there a deny-all at the end of each zone pair?
-- Inconsistent logging: are all permits logging session-close?
-- Zone gaps: are there zone pairs with no policies?
-- Security profile coverage: which rules lack UTM/IDP profiles?
-
-When suggesting changes to specific rules, include a JSON code block with this format:
-\`\`\`json
-{"rule_name": "the-rule-name", "field": "field_name", "current": "current_value", "suggested": "new_value", "reason": "Why this change"}
-\`\`\`
-
-You may include multiple JSON blocks in your response, interspersed with explanatory text.` + licenseAnalysis;
+  const systemPrompt = loadSystemPrompt('fullReview') + (licenseAnalysis || '');
 
   // Build compact one-line-per-rule summary
   const ruleSummary = policies.map((r, i) => {
@@ -800,15 +1010,53 @@ You may include multiple JSON blocks in your response, interspersed with explana
     return `${i + 1}. [${r.action}] "${r.name}" ${src}->${dst} apps=${apps} svc=${svcs} ${flags}`;
   }).join('\n');
 
+  // Build additional config context for greenfield reviews
+  const isGreenfield = intermediateConfig?.metadata?.source_vendor === 'greenfield';
+  let configContext = '';
+
+  if (isGreenfield) {
+    const addresses = intermediateConfig?.addresses || [];
+    const addressGroups = intermediateConfig?.address_groups || [];
+    const natRules = intermediateConfig?.nat_rules || [];
+    const routes = intermediateConfig?.static_routes || [];
+    const screens = intermediateConfig?.screen_config || [];
+    const zones = intermediateConfig?.zones || [];
+
+    if (zones.length > 0) {
+      configContext += `\nZone Details:\n${zones.map(z => `  - ${z.name}${z.description ? ` (${z.description})` : ''}${z.screen ? ` screen=${z.screen}` : ''}`).join('\n')}\n`;
+    }
+    if (addresses.length > 0) {
+      configContext += `\nAddress Objects (${addresses.length}):\n${addresses.map(a => `  - ${a.name}: ${a.ip}${a.description ? ` — ${a.description}` : ''}`).join('\n')}\n`;
+    }
+    if (addressGroups.length > 0) {
+      configContext += `\nAddress Groups (${addressGroups.length}):\n${addressGroups.map(g => `  - ${g.name}: [${g.members.join(', ')}]`).join('\n')}\n`;
+    }
+    if (natRules.length > 0) {
+      configContext += `\nNAT Rules (${natRules.length}):\n${natRules.map(n => `  - ${n.name} (${n.type}): ${(n.src_zones||[]).join(',')}->${(n.dst_zones||[]).join(',')} translated=${JSON.stringify(n.translated_src || n.translated_dst || 'none')}`).join('\n')}\n`;
+    }
+    if (routes.length > 0) {
+      configContext += `\nStatic Routes (${routes.length}):\n${routes.map(r => `  - ${r.destination} via ${r.next_hop}${r.description ? ` — ${r.description}` : ''}`).join('\n')}\n`;
+    }
+    if (screens.length > 0) {
+      configContext += `\nScreen Profiles (${screens.length}):\n${screens.map(s => `  - ${s.name}${s.zone ? ` (zone: ${s.zone})` : ''}`).join('\n')}\n`;
+    }
+  }
+
+  const reviewType = isGreenfield
+    ? `Review this greenfield SRX configuration (${targetModel || 'SRX'}) built from scratch via guided interview.${srxLicense ? ` Target license: ${srxLicense}.` : ''} Verify completeness, security posture, and best practices. Check for missing configurations, gaps in zone coverage, and suggest improvements.`
+    : `Review this complete firewall ruleset (${policies.length} rules) for a ${vendorLabel(intermediateConfig?.metadata?.source_vendor)} to SRX (${targetModel || 'SRX'}) migration.${srxLicense ? ` Target license: ${srxLicense}.` : ''} Identify issues, suggest improvements, and flag any security concerns.`;
+
   return {
     system: systemPrompt,
-    user: `Review this complete firewall ruleset (${policies.length} rules) for a ${vendorLabel(intermediateConfig?.metadata?.source_vendor)} to SRX (${targetModel || 'SRX'}) migration.${srxLicense ? ` Target license: ${srxLicense}.` : ''} Identify issues, suggest improvements, and flag any security concerns.
+    user: `${reviewType}
 
-Ruleset:
+Target Model: ${targetModel || 'SRX'}${srxLicense ? `\nSubscription: ${srxLicense}` : ''}
+
+Ruleset (${policies.length} policies):
 ${ruleSummary}
 
 Zones: ${(intermediateConfig?.zones || []).map(z => z.name).join(', ')}
-
+${configContext}
 Provide a thorough analysis with specific, actionable recommendations. Use JSON code blocks for rule-specific changes.`,
   };
 }

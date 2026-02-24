@@ -37,6 +37,7 @@ export default function ModelSelector({
   targetModel,
   srxLicense,
   sourceVendor,
+  greenfieldMode,
   onModelSelection,
   onContinue,
   onClose,
@@ -160,7 +161,8 @@ export default function ModelSelector({
             </div>
           </div>
 
-          {/* Source Model */}
+          {/* Source Model — hidden in greenfield mode */}
+          {!greenfieldMode && (
           <div className="model-section">
             <h3 className="model-section-title">
               Source Firewall ({isSrxSource ? 'Juniper SRX' : isFortigateSource ? 'FortiGate' : isCiscoSource ? 'Cisco ASA/FTD' : 'PAN-OS'})
@@ -196,6 +198,7 @@ export default function ModelSelector({
               <ModelInfoCard model={sourceInfo} vendor={isSrxSource ? 'srx' : isFortigateSource ? 'fortigate' : isCiscoSource ? 'cisco_asa' : 'panos'} metric={throughputMetric} />
             )}
           </div>
+          )}
 
           {/* Target SRX Model */}
           <div className="model-section" style={{ marginTop: 20 }}>

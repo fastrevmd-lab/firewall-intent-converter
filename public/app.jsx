@@ -38,6 +38,7 @@ import ScreenEditor from './components/ScreenEditor.jsx';
 import SyslogEditor from './components/SyslogEditor.jsx';
 import DHCPEditor from './components/DHCPEditor.jsx';
 import QoSEditor from './components/QoSEditor.jsx';
+import GreenfieldChat from './components/GreenfieldChat.jsx';
 
 export default function App() {
   // --- Config input state ---
@@ -54,7 +55,8 @@ export default function App() {
   const [srxLicense, setSrxLicense] = useState('');
   const [portProfile, setPortProfile] = useState(null);
   const [interfaceMappings, setInterfaceMappings] = useState({});
-  const [sourceVendor, setSourceVendor] = useState('panos'); // 'panos' | 'srx' | 'fortigate' | 'cisco_asa'
+  const [sourceVendor, setSourceVendor] = useState('panos'); // 'panos' | 'srx' | 'fortigate' | 'cisco_asa' | 'greenfield'
+  const [greenfieldMode, setGreenfieldMode] = useState(false);
 
   // --- Modal state ---
   const [showModelSelector, setShowModelSelector] = useState(false);
@@ -106,6 +108,12 @@ export default function App() {
 
   // Compute effective viewMode: 'from' tab uses vendor-specific style
   const effectiveViewMode = platformView === 'srx' ? 'srx' : (sourceVendor === 'srx' ? 'srx' : sourceVendor === 'fortigate' ? 'fortigate' : sourceVendor === 'cisco_asa' ? 'cisco' : 'panos');
+
+  // Display stats: use live metadata in greenfield mode, parseStats otherwise
+  const displayStats = useMemo(() => {
+    if (greenfieldMode && intermediateConfig?.metadata) return intermediateConfig.metadata;
+    return parseStats;
+  }, [greenfieldMode, intermediateConfig?.metadata, parseStats]);
 
   // ------------------------------------------------------------------
   // Sanitize handler: strips sensitive data from config text
@@ -353,6 +361,184 @@ export default function App() {
   }, []);
 
   // ------------------------------------------------------------------
+  // Greenfield handlers
+  // ------------------------------------------------------------------
+
+  /** Start greenfield interview — creates empty config skeleton */
+  const handleStartGreenfield = useCallback(() => {
+    const emptyConfig = {
+      metadata: {
+        source_vendor: 'greenfield',
+        source_version: '',
+        zone_count: 0,
+        rule_count: 0,
+        nat_rule_count: 0,
+        object_count: 0,
+        vpn_tunnel_count: 0,
+        static_route_count: 0,
+      },
+      zones: [],
+      security_policies: [],
+      nat_rules: [],
+      addresses: [],
+      address_groups: [],
+      services: [],
+      service_groups: [],
+      applications: [],
+      vpn_tunnels: [],
+      static_routes: [],
+      interfaces: [],
+      routing_contexts: [],
+      ha_config: { enabled: false },
+      screen_config: [],
+      syslog_config: [],
+      dhcp_config: [],
+      qos_config: [],
+    };
+
+    setIntermediateConfig(emptyConfig);
+    setSourceVendor('greenfield');
+    setGreenfieldMode(true);
+    setParseWarnings([]);
+    setParseStats(emptyConfig.metadata);
+    setSrxOutput(null);
+    setConvertWarnings([]);
+    setSelectedRule(null);
+    setEditTab('rules');
+    setReviewMode(false);
+    setLlmWarningDismissed(true); // Greenfield configs have no sensitive data
+    setPlatformView('panos'); // Start on the "from LLM Interview" tab
+    setShowModelSelector(true);
+  }, []);
+
+  /** Apply an action from the greenfield LLM interview */
+  const handleGreenfieldAction = useCallback((action, data) => {
+    setIntermediateConfig(prev => {
+      const updated = { ...prev };
+
+      switch (action) {
+        case 'add_zone':
+          updated.zones = [...(updated.zones || []), {
+            name: data.name,
+            description: data.description || '',
+            interfaces: data.interfaces || [],
+            screen: data.screen || '',
+            host_inbound_traffic: data.host_inbound_traffic || {},
+          }];
+          break;
+
+        case 'add_address':
+          updated.addresses = [...(updated.addresses || []), {
+            name: data.name,
+            ip: data.ip || '',
+            description: data.description || '',
+          }];
+          break;
+
+        case 'add_address_group':
+          updated.address_groups = [...(updated.address_groups || []), {
+            name: data.name,
+            members: data.members || [],
+            description: data.description || '',
+          }];
+          break;
+
+        case 'add_service':
+          updated.services = [...(updated.services || []), {
+            name: data.name,
+            protocol: data.protocol || 'tcp',
+            port: data.port || '',
+            description: data.description || '',
+          }];
+          break;
+
+        case 'add_policy': {
+          const newIndex = (updated.security_policies?.length || 0) + 1;
+          updated.security_policies = [...(updated.security_policies || []), {
+            name: data.name,
+            _rule_index: newIndex,
+            action: data.action || 'deny',
+            src_zones: data.src_zones || [],
+            dst_zones: data.dst_zones || [],
+            src_addresses: data.src_addresses || ['any'],
+            dst_addresses: data.dst_addresses || ['any'],
+            negate_source: false,
+            negate_destination: false,
+            applications: data.applications || [],
+            services: data.services || ['any'],
+            log_start: data.log_start || false,
+            log_end: data.log_end !== false,
+            disabled: false,
+            description: data.description || '',
+            tags: ['greenfield'],
+            profile_group: '',
+            security_profiles: {},
+            _review_status: 'accepted',
+          }];
+          break;
+        }
+
+        case 'add_nat':
+          updated.nat_rules = [...(updated.nat_rules || []), {
+            name: data.name,
+            type: data.type || 'source',
+            src_zones: data.src_zones || [],
+            dst_zones: data.dst_zones || [],
+            src_addresses: data.src_addresses || ['any'],
+            dst_addresses: data.dst_addresses || ['any'],
+            translated_src: data.translated_src || null,
+            translated_dst: data.translated_dst || null,
+            translated_port: data.translated_port || null,
+            description: data.description || '',
+          }];
+          break;
+
+        case 'add_screen':
+          updated.screen_config = [...(updated.screen_config || []), {
+            name: data.name,
+            zone: data.zone || '',
+            ...(data.options || {}),
+          }];
+          break;
+
+        case 'set_syslog':
+          updated.syslog_config = [...(updated.syslog_config || []), {
+            host: data.host,
+            port: data.port || 514,
+            protocol: data.protocol || 'udp',
+            facility: data.facility || 'local0',
+            source_address: data.source_address || '',
+          }];
+          break;
+
+        case 'add_route':
+          updated.static_routes = [...(updated.static_routes || []), {
+            destination: data.destination,
+            next_hop: data.next_hop,
+            description: data.description || '',
+          }];
+          break;
+
+        default:
+          break;
+      }
+
+      // Update metadata counts
+      updated.metadata = {
+        ...updated.metadata,
+        zone_count: updated.zones?.length || 0,
+        rule_count: updated.security_policies?.length || 0,
+        nat_rule_count: updated.nat_rules?.length || 0,
+        object_count: (updated.addresses?.length || 0) + (updated.address_groups?.length || 0) + (updated.services?.length || 0),
+        vpn_tunnel_count: updated.vpn_tunnels?.length || 0,
+        static_route_count: updated.static_routes?.length || 0,
+      };
+
+      return updated;
+    });
+  }, []);
+
+  // ------------------------------------------------------------------
   // Review handlers
   // ------------------------------------------------------------------
 
@@ -432,10 +618,11 @@ export default function App() {
 
   const handleModelContinue = useCallback(() => {
     setShowModelSelector(false);
-    if (targetModel || true) {
+    // Skip InterfaceMapper in greenfield mode (no source interfaces to map)
+    if (!greenfieldMode) {
       setShowInterfaceMapper(true);
     }
-  }, [targetModel]);
+  }, [greenfieldMode]);
 
   const handleMappingComplete = useCallback((mappings) => {
     setInterfaceMappings(mappings);
@@ -457,11 +644,11 @@ export default function App() {
         </div>
 
         {/* Stats badges — shown after parsing */}
-        {parseStats && (
+        {displayStats && (
           <div className="navbar-stats">
-            {sourceModel && (
+            {(sourceModel || greenfieldMode) && (
               <span className="stat-badge model-badge" onClick={() => setShowModelSelector(true)} style={{ cursor: 'pointer' }}>
-                {sourceModel} <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span> {targetModel || '?'}
+                {greenfieldMode ? 'Greenfield' : sourceModel} <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span> {targetModel || '?'}
               </span>
             )}
             {srxLicense && (
@@ -470,16 +657,16 @@ export default function App() {
               </span>
             )}
             <span className="stat-badge">
-              Zones <span className="stat-value">{parseStats.zone_count}</span>
+              Zones <span className="stat-value">{displayStats.zone_count}</span>
             </span>
             <span className="stat-badge">
-              Rules <span className="stat-value">{parseStats.rule_count}</span>
+              Rules <span className="stat-value">{displayStats.rule_count}</span>
             </span>
             <span className="stat-badge">
-              Objects <span className="stat-value">{parseStats.object_count}</span>
+              Objects <span className="stat-value">{displayStats.object_count}</span>
             </span>
             <span className="stat-badge">
-              NAT <span className="stat-value">{parseStats.nat_rule_count}</span>
+              NAT <span className="stat-value">{displayStats.nat_rule_count}</span>
             </span>
             {allWarnings.length > 0 && (
               <span className="stat-badge">
@@ -565,6 +752,8 @@ export default function App() {
           onConfigChange={handleConfigChange}
           onParse={handleParse}
           onSanitize={handleSanitize}
+          onStartGreenfield={handleStartGreenfield}
+          greenfieldMode={greenfieldMode}
           isLoading={isLoading}
           isParsed={!!intermediateConfig}
           isSanitized={isSanitized}
@@ -585,7 +774,10 @@ export default function App() {
                     className={`platform-view-btn ${platformView === 'panos' ? 'active' : ''}`}
                     onClick={() => handlePlatformViewChange('panos')}
                   >
-                    from {sourceModel || (sourceVendor === 'srx' ? 'SRX' : sourceVendor === 'fortigate' ? 'FortiGate' : sourceVendor === 'cisco_asa' ? 'Cisco ASA' : 'PAN-OS')}
+                    {greenfieldMode
+                      ? 'from LLM Interview'
+                      : `from ${sourceModel || (sourceVendor === 'srx' ? 'SRX' : sourceVendor === 'fortigate' ? 'FortiGate' : sourceVendor === 'cisco_asa' ? 'Cisco ASA' : 'PAN-OS')}`
+                    }
                   </button>
                   <button
                     className={`platform-view-btn ${platformView === 'srx' ? 'active' : ''}`}
@@ -659,6 +851,8 @@ export default function App() {
                   )}
                 </div>
 
+                {/* Hide tab bar when greenfield + "from LLM Interview" tab */}
+                {!(greenfieldMode && platformView === 'panos') && (
                 <div className="center-tab-bar">
                   <button
                     className={`center-tab-btn ${editTab === 'rules' ? 'active' : ''}`}
@@ -727,10 +921,28 @@ export default function App() {
                     Syslog ({intermediateConfig.syslog_config?.length || 0})
                   </button>
                 </div>
+                )}
               </div>
 
-              {/* Tab content */}
-              <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {/* Greenfield chat — always mounted in greenfield mode, hidden when on SRX tab */}
+              {greenfieldMode && (
+                <div style={{
+                  display: platformView === 'panos' ? 'flex' : 'none',
+                  flexDirection: 'column', flex: 1, overflow: 'hidden',
+                }}>
+                  <GreenfieldChat
+                    intermediateConfig={intermediateConfig}
+                    targetModel={targetModel}
+                    srxLicense={srxLicense}
+                    onApplyAction={handleGreenfieldAction}
+                  />
+                </div>
+              )}
+
+              {/* Normal tab content — shown when not greenfield, or on SRX tab */}
+              <div style={{
+                flex: 1, overflow: 'hidden', display: (greenfieldMode && platformView === 'panos') ? 'none' : 'flex', flexDirection: 'column',
+              }}>
                 {editTab === 'rules' && (
                   <PolicyTable
                     policies={intermediateConfig.security_policies || []}
@@ -838,7 +1050,7 @@ export default function App() {
                     <line x1="9" y1="21" x2="9" y2="9" />
                   </svg>
                   <h3>No configuration loaded</h3>
-                  <p>Paste a PAN-OS XML, Junos SRX, FortiGate, or Cisco ASA configuration in the left panel and click "Parse" to view security policies here.</p>
+                  <p>Select "Greenfield" to build a new SRX config from scratch, or paste an existing firewall configuration and click "Parse".</p>
                 </div>
               </div>
             </>
@@ -1046,6 +1258,7 @@ export default function App() {
           targetModel={targetModel}
           srxLicense={srxLicense}
           sourceVendor={sourceVendor}
+          greenfieldMode={greenfieldMode}
           onModelSelection={handleModelSelection}
           onContinue={handleModelContinue}
           onClose={() => setShowModelSelector(false)}

@@ -4,7 +4,7 @@
 
 <h1 align="center"><span style="color: #005b5a;">Firewall to Intent Converter</span></h1>
 
-<p align="center">A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports <b>PAN-OS XML</b>, <b>Junos SRX</b>, <b>FortiGate / FortiOS</b>, and <b>Cisco ASA / FTD</b> as source formats. Paste or upload a config, review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.</p>
+<p align="center">A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports <b>PAN-OS XML</b>, <b>Junos SRX</b>, <b>FortiGate / FortiOS</b>, and <b>Cisco ASA / FTD</b> as source formats, plus a <b>Greenfield</b> mode that builds an SRX configuration from scratch via LLM-guided interview. Paste or upload a config (or start a greenfield interview), review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.</p>
 # Quick Start
 
 ### Prerequisites
@@ -34,9 +34,19 @@ NODE_ENV=production node server.js   # Serves static dist/ + API
 
 ## Usage
 
-### 1. Load a Configuration
+### 1a. Load a Configuration (Import Mode)
 
 Select your source vendor from the dropdown (Junos SRX, PAN-OS, FortiGate, or Cisco ASA/FTD), then paste a configuration into the left panel or click one of the built-in sample configs. Then click **Parse**. The tool auto-detects the source format.
+
+### 1b. Greenfield Mode (Build from Scratch)
+
+Select **Greenfield (New Config)** from the vendor dropdown (preselected by default). Click **Start Interview** to begin an LLM-guided conversation that builds your SRX configuration from scratch. The LLM walks you through a structured interview:
+
+1. **Use Case Discovery** — Deployment type (branch office, data center, campus edge, remote/teleworker, cloud gateway), connectivity details, and requirements
+2. **Configuration Building** — Zones, interfaces, address objects, security policies, and NAT rules are built progressively as you answer questions
+3. **Best Practices** — Use-case-aware recommendations for screen profiles, logging, default-deny rules, and more
+
+Toggle between **from LLM Interview** and **to SRX** tabs to see the configuration building in real-time. The chat preserves its state when switching tabs.
 
 ### 2. Select Hardware Models
 
@@ -77,6 +87,15 @@ Accept or reject individual suggestions inline, and ask follow-up questions.
 Click **Convert to SRX** to generate the output. Switch between **Set Commands** and **XML** formats in the bottom panel. The **Warnings** tab shows any conversion notes. Use **Push via MCP** to deploy directly to SRX devices.
 
 ## Features
+
+### Greenfield Configuration Builder
+- **LLM-guided interview** — Build an SRX configuration from scratch through a structured conversation with an AI assistant
+- **Progressive config building** — Zones, addresses, policies, NAT, routes, and screens are added to the intermediate config in real-time as the LLM collects answers
+- **JSON action blocks** — LLM responses include structured action blocks (`add_zone`, `add_policy`, `add_address`, `add_nat`, `add_route`, `add_screen`, etc.) that auto-apply to the configuration
+- **Inline action cards** — Each applied action renders as a visual card in the chat with the action type, name, and description
+- **Use-case-aware** — The interview adapts to your deployment scenario (branch office, data center, campus edge, remote/teleworker) with tailored zone layouts and policy recommendations
+- **Real-time preview** — Toggle to the "to SRX" tab at any time to see all normal editors (Security Policies, Zones, Objects, NAT) populated with the configuration built so far
+- **Seamless review** — After the interview, click **Review** to have the LLM analyze the complete built configuration for best practices and security posture
 
 ### Multi-Vendor Source Import
 - **PAN-OS XML parser** — Extracts security policies, NAT rules, zones, address objects, address groups, service objects, service groups, and security profile groups from PAN-OS XML configs
@@ -133,7 +152,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 ### LLM Integration
 - **Multiple providers** — Claude (Anthropic), OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
 - **Browser-only API keys** — All credentials stay in `localStorage` and never touch the server
-- **Editable system prompt** — Customize the expert system prompt used for all LLM reviews, with a built-in default covering multi-vendor migration guidance (PAN-OS, FortiGate, Cisco ASA, SRX), zone architecture, policy design, logging, UTM/IDP/SecIntel, NAT order-of-operations, VPN/IPsec, screens/DDoS, HA/chassis cluster, routing, rule shadowing, and compliance (PCI DSS v4.0, NIST 800-41r1, CIS Juniper OS Benchmark v2.1.0)
+- **Three editable system prompts** — Separate prompts for per-rule review (multi-vendor migration guidance), full-ruleset review (SRX expert security posture analysis), and greenfield interview (structured config builder). Each has its own sub-tab in Settings with independent Reset to Default
 - **Structured responses** — LLM returns JSON with analysis, per-field suggestions, and a verdict — parsed into interactive cards with Import buttons
 - **Multi-turn chat** — The full-ruleset review panel maintains conversation history so you can ask follow-up questions
 - **Vendor-aware prompts** — LLM prompts dynamically reference the detected source vendor (PAN-OS, FortiGate, Cisco ASA, or SRX) with vendor-specific migration pitfall guidance
@@ -199,20 +218,21 @@ firewall-intent-converter/
 │   ├── styles/
 │   │   └── main.css              # All styles (dark theme, components, layout)
 │   ├── components/
-│   │   ├── ConfigInput.jsx       # Left panel — paste/upload config, parse/sanitize
+│   │   ├── ConfigInput.jsx       # Left panel — paste/upload config, parse/sanitize, greenfield start
 │   │   ├── PolicyTable.jsx       # Center panel — sortable/filterable/editable rule table
 │   │   ├── ZoneEditor.jsx        # Center panel tab — zone editing
 │   │   ├── ObjectEditor.jsx      # Center panel tab — address/service object editing
 │   │   ├── NATEditor.jsx         # Center panel tab — NAT rule editing
 │   │   ├── RoutingEditor.jsx     # Center panel tab — static route + routing context editing
 │   │   ├── VPNEditor.jsx         # Center panel tab — VPN/IPsec tunnel editing
+│   │   ├── GreenfieldChat.jsx    # Center panel — LLM-guided greenfield config builder
 │   │   ├── InterviewPanel.jsx    # Right panel — rule details, LLM review, accept
 │   │   ├── ReviewChatPanel.jsx   # Right panel — full-ruleset LLM chat review
 │   │   ├── SRXOutput.jsx         # Bottom panel — SRX output display
 │   │   ├── WarningsPanel.jsx     # Bottom panel — conversion warnings
 │   │   ├── ModelSelector.jsx     # Modal — source/target hardware model picker
 │   │   ├── InterfaceMapper.jsx   # Modal — per-zone interface mapping
-│   │   ├── LLMSettings.jsx       # Modal — LLM provider config, MCP connection, system prompt
+│   │   ├── LLMSettings.jsx       # Modal — LLM provider config, MCP connection, 3 system prompts
 │   │   └── sample-configs.jsx    # Built-in sample configs (PAN-OS, SRX, FortiGate, Cisco)
 │   ├── utils/
 │   │   ├── llm-client.js         # Browser-side LLM API client (multi-provider)
