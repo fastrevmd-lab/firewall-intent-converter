@@ -21,6 +21,39 @@ import {
   SRX_LICENSE_TIERS,
 } from '../utils/srx-view-transforms.js';
 
+/**
+ * Coerce an LLM suggestion value to the correct type for the given field.
+ * Prevents silent corruption from string-for-array or string-for-boolean mismatches.
+ */
+function coerceSuggestionValue(field, value) {
+  const arrayFields = new Set([
+    'src_zones', 'dst_zones', 'src_addresses', 'dst_addresses',
+    'applications', 'services', 'tags',
+  ]);
+  if (arrayFields.has(field)) {
+    if (Array.isArray(value)) return value;
+    if (value === null || value === undefined || value === '') return [];
+    if (typeof value === 'string') return value.split(',').map(s => s.trim()).filter(Boolean);
+    return [value];
+  }
+
+  const booleanFields = new Set(['log_start', 'log_end', 'disabled']);
+  if (booleanFields.has(field)) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') return value.toLowerCase() === 'true';
+    return Boolean(value);
+  }
+
+  if (field === 'security_profiles') {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    return null; // can't coerce — skip suggestion
+  }
+
+  // String fields: name, action, description, profile_group
+  if (value !== null && value !== undefined && typeof value !== 'string') return String(value);
+  return value;
+}
+
 export default function InterviewPanel({
   selectedRule,
   intermediateConfig,
@@ -67,28 +100,77 @@ export default function InterviewPanel({
     setItemStates({});
 
     try {
-      // Build SRX context so the LLM sees both original PAN-OS and SRX translation
-      const sp = selectedRule.security_profiles || {};
+      // Build rich SRX context for the LLM
+      const r = selectedRule;
+      const srcZones = r.src_zones?.length > 0 ? r.src_zones : ['any'];
+      const dstZones = r.dst_zones?.length > 0 ? r.dst_zones : ['any'];
+      const zonePairs = srcZones.flatMap(sz => dstZones.map(dz => `${sz} -> ${dz}`));
+
+      // Description with tags (mirrors srx-converter.js)
+      let srxDescription = r.description || '';
+      if (r.tags?.length > 0) {
+        const tagNote = `[tags: ${r.tags.join(', ')}]`;
+        srxDescription = srxDescription ? `${srxDescription} ${tagNote}` : tagNote;
+      }
+
+      // Application services from security profiles (mirrors converter UTM/IDP logic)
+      const sp = r.security_profiles || {};
       const srxAppServices = [];
-      if (sp.spyware || sp.vulnerability) srxAppServices.push('IPS/IDP');
-      if (sp['url-filtering'] || sp['file-blocking']) srxAppServices.push('Content Security (UTM)');
-      if (sp.virus || sp['wildfire-analysis']) srxAppServices.push('Anti-malware');
-      if (selectedRule._srx_decrypt) srxAppServices.push('Decrypt/SSL Proxy');
-      if (selectedRule._srx_flow_av) srxAppServices.push('Flow-based AV');
-      if (selectedRule._srx_secintel || (selectedRule._secIntelAddresses || []).length > 0) srxAppServices.push('SecIntel');
-      if (selectedRule._srx_secure_web_proxy) srxAppServices.push('Secure Web Proxy');
-      if (selectedRule._srx_icap_redirect) srxAppServices.push('ICAP Redirect');
+      if (sp.spyware || sp.vulnerability) srxAppServices.push('idp-policy');
+      if (sp.virus || sp['wildfire-analysis']) srxAppServices.push('utm-policy (antivirus)');
+      if (sp['url-filtering']) srxAppServices.push('utm-policy (web-filtering)');
+      if (sp['file-blocking']) srxAppServices.push('utm-policy (content-filter)');
+      if (r._srx_secintel || (r._secIntelAddresses || []).length > 0) srxAppServices.push('security-intelligence-policy');
+      if (r._srx_decrypt) srxAppServices.push('ssl-proxy');
 
       const srxLogging = [];
-      if (selectedRule.log_end) srxLogging.push('session-close');
-      if (selectedRule.log_start) srxLogging.push('session-init');
-      if (selectedRule._srx_log_count) srxLogging.push('count');
+      if (r.log_end) srxLogging.push('session-close');
+      if (r.log_start) srxLogging.push('session-init');
 
       const srxContext = {
-        action: mapActionToSrx(selectedRule.action),
+        policyName: r.name,
+        zonePairs,
+        srcAddresses: r.src_addresses?.length > 0 ? r.src_addresses : ['any'],
+        dstAddresses: r.dst_addresses?.length > 0 ? r.dst_addresses : ['any'],
+        applications: (r.applications || []).concat(r.services || []),
+        action: mapActionToSrx(r.action),
         applicationServices: srxAppServices,
         logging: srxLogging,
+        description: srxDescription,
+        schedule: r.schedule || null,
+        disabled: !!r.disabled,
       };
+
+      // Resolve referenced address and service objects for the LLM
+      const resolvedObjects = { addresses: {}, addressGroups: {}, services: {}, serviceGroups: {} };
+      const addrObjs = intermediateConfig?.address_objects || [];
+      const addrGrps = intermediateConfig?.address_groups || [];
+      const svcObjs = intermediateConfig?.service_objects || [];
+      const svcGrps = intermediateConfig?.service_groups || [];
+
+      const refAddrs = new Set([...(r.src_addresses || []), ...(r.dst_addresses || [])]);
+      refAddrs.delete('any');
+      for (const name of refAddrs) {
+        const obj = addrObjs.find(a => a.name === name);
+        if (obj) { resolvedObjects.addresses[name] = `${obj.type}: ${obj.value}`; continue; }
+        const grp = addrGrps.find(g => g.name === name);
+        if (grp) {
+          resolvedObjects.addressGroups[name] = grp.members || [];
+          for (const m of grp.members || []) {
+            const mObj = addrObjs.find(a => a.name === m);
+            if (mObj) resolvedObjects.addresses[m] = `${mObj.type}: ${mObj.value}`;
+          }
+        }
+      }
+
+      const refSvcs = new Set(r.services || []);
+      refSvcs.delete('any'); refSvcs.delete('application-default');
+      for (const name of refSvcs) {
+        const obj = svcObjs.find(s => s.name === name);
+        if (obj) { resolvedObjects.services[name] = `${obj.protocol}/${obj.port_range || 'any'}`; continue; }
+        const grp = svcGrps.find(g => g.name === name);
+        if (grp) resolvedObjects.serviceGroups[name] = grp.members || [];
+      }
 
       const prompt = buildStructuredRuleSuggestionPrompt(
         selectedRule,
@@ -96,7 +178,8 @@ export default function InterviewPanel({
         intermediateConfig?.zones,
         srxLicense,
         srxContext,
-        intermediateConfig?.metadata?.source_vendor
+        intermediateConfig?.metadata?.source_vendor,
+        resolvedObjects
       );
       const result = await getLLMSuggestion(prompt.user, prompt.system);
 
@@ -135,10 +218,16 @@ export default function InterviewPanel({
     onUpdateRule({ ...selectedRule, [field]: value });
   };
 
-  /** Accept a suggestion — apply the field change */
+  /** Accept a suggestion — apply the field change (with type coercion) */
   const handleAcceptSuggestion = (suggestion, index) => {
     if (!selectedRule || !onUpdateRule) return;
-    handleFieldChange(suggestion.field, suggestion.suggested);
+    const coerced = coerceSuggestionValue(suggestion.field, suggestion.suggested);
+    if (coerced === null) {
+      // Value couldn't be coerced to the correct type — auto-reject
+      setItemStates(prev => ({ ...prev, [`suggestion-${index}`]: 'rejected' }));
+      return;
+    }
+    handleFieldChange(suggestion.field, coerced);
     setItemStates(prev => ({ ...prev, [`suggestion-${index}`]: 'accepted' }));
   };
 
