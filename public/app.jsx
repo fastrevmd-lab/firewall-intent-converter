@@ -560,22 +560,6 @@ export default function App() {
     setSelectedRule(prev => prev ? { ...prev, _review_status: 'accepted' } : prev);
   }, []);
 
-  /** Mark the currently selected rule as LLM reviewed */
-  const handleSetLLMReviewed = useCallback((index) => {
-    setIntermediateConfig(prev => {
-      const policies = [...prev.security_policies];
-      if (policies[index]._review_status !== 'accepted') {
-        policies[index] = { ...policies[index], _review_status: 'llm-reviewed' };
-      }
-      return { ...prev, security_policies: policies };
-    });
-    setSelectedRule(prev => {
-      if (prev && prev._review_status !== 'accepted') {
-        return { ...prev, _review_status: 'llm-reviewed' };
-      }
-      return prev;
-    });
-  }, []);
 
   /** Get current rule index for the selected rule */
   const getCurrentRuleIndex = useCallback(() => {
@@ -1095,16 +1079,9 @@ export default function App() {
             srxLicense={srxLicense}
             viewMode={effectiveViewMode}
             platformView={platformView}
-            isSanitized={isSanitized}
-            llmWarningDismissed={llmWarningDismissed}
-            onLLMWarning={() => setShowLLMWarning(true)}
             onAcceptRule={() => {
               const index = getCurrentRuleIndex();
               if (index >= 0) handleAcceptRule(index);
-            }}
-            onSetLLMReviewed={() => {
-              const index = getCurrentRuleIndex();
-              if (index >= 0) handleSetLLMReviewed(index);
             }}
           />
         )}

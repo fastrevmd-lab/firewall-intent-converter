@@ -18,13 +18,6 @@
 
 export const DEFAULT_RULE_SYSTEM_PROMPT = `You are an expert firewall policy engineer specializing in migrations to Juniper SRX. You support Junos SRX as source platforms. You provide concise, actionable best-practice suggestions grounded in specific Junos CLI syntax.
 
-## Zone Architecture
-- Strict zone segmentation: trust, untrust, dmz, management, and dedicated partner/vendor zones
-- host-inbound-traffic restricted per zone — only allow required protocols (e.g., ssh/ping on management; nothing unnecessary on untrust)
-- Never bind management interface (fxp0) to a transit zone
-- Every zone should have a screen profile applied for DoS protection
-- Prefer global address-book for simplicity — addresses available across all zones and NAT rules
-
 ## Policy Design
 - Default deny-all cleanup rule per zone pair: then { deny; log { session-init; } }
 - Most specific rules first, broadest last — SRX evaluates top-down, first match wins
@@ -361,10 +354,9 @@ As you collect answers, emit JSON action blocks to progressively build the confi
 // ---------------------------------------------------------------------------
 
 /** Cache for prompt files loaded from static/prompts/ */
-const _promptFileCache = { rule: null, fullReview: null, greenfield: null };
+const _promptFileCache = { fullReview: null, greenfield: null };
 
 const PROMPT_FILE_PATHS = {
-  rule: '/prompts/rule-review.txt',
   fullReview: '/prompts/full-review.txt',
   greenfield: '/prompts/greenfield.txt',
 };
@@ -412,10 +404,6 @@ export function loadSystemPrompt(type = 'rule') {
       const key = keys[type] || keys.rule;
       const prompt = settings[key];
       if (prompt && prompt.trim()) return prompt;
-      // Backwards compat: old systemPrompt field → rule prompt
-      if (type === 'rule' && settings.systemPrompt && settings.systemPrompt.trim()) {
-        return settings.systemPrompt;
-      }
     }
   } catch { /* ignore */ }
 
@@ -877,116 +865,6 @@ Rule: "${rule.name}"
 Available zones: ${zoneList}
 
 Provide 2-4 specific, actionable suggestions for this rule. Focus on security best practices and SRX conversion considerations.`,
-  };
-}
-
-/**
- * Builds a structured rule suggestion prompt that instructs the LLM to respond with JSON.
- */
-export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense, srxContext, sourceVendor, resolvedObjects) {
-  const zoneList = (zones || []).map(z => z.name).join(', ');
-  const systemPrompt = loadSystemPrompt('rule');
-
-  const licenseContext = srxLicense ? `
-
-SUBSCRIPTION CONTEXT:
-The target SRX subscription: ${srxLicense}
-- Base (no subscriptions): Stateful FW, SSL B&I, Full Routing, VxLAN included
-- A1 (Advanced Data Protection): Base + SDC, AppSecure, IPS, & SecIntel
-- A2 (Advanced Edge Protection): Base, A1 subs, and URL + Content filtering
-- P1 (Premium Data Protection): Base, A1 subs, and ATP Cloud
-- P2 (Premium Edge Protection): Base, A2 subs, and ATP Cloud
-If this rule uses security features requiring a higher subscription than ${srxLicense}, flag this in your analysis and suggest alternatives available at the ${srxLicense} subscription.` : '';
-
-  // Build security profiles summary
-  const profileEntries = Object.entries(rule.security_profiles || {});
-  const profileSummary = profileEntries.length > 0
-    ? profileEntries.map(([t, n]) => `${t}=${n}`).join(', ')
-    : rule.profile_group || '(none)';
-
-  return {
-    system: systemPrompt + `
-
-IMPORTANT: You MUST respond with ONLY valid JSON in the exact format below. No markdown fences, no extra text.
-
-{
-  "analysis": "Brief 1-2 sentence review of the rule",
-  "suggestions": [
-    {
-      "field": "field_name",
-      "current": "current_value",
-      "suggested": "new_value",
-      "reason": "Why this change is recommended"
-    }
-  ],
-  "notes": [
-    "Informational observation or migration note that does not require a field change"
-  ],
-  "verdict": "needs_changes" or "looks_good"
-}
-
-Use "suggestions" ONLY for actionable field changes the user should apply to the rule.
-Use "notes" for informational observations, migration caveats, best-practice reminders, or anything that does not map to a specific field change. Notes will be saved as comments in the SRX config output.
-
-Valid field names for suggestions and their types:
-- name (string), action (string: allow/deny/drop/reject), description (string)
-- src_zones (array), dst_zones (array), src_addresses (array), dst_addresses (array)
-- applications (array), services (array)
-- log_start (boolean), log_end (boolean), disabled (boolean)
-- profile_group (string), tags (array)
-- security_profiles (object: keys are profile types like "virus", "spyware", "vulnerability", "url-filtering", "file-blocking", "wildfire-analysis"; values are profile name strings or empty string to remove)
-
-For array fields, use JSON arrays like ["value1", "value2"].
-For boolean fields, use true or false (no quotes).
-For security_profiles, use a complete object like {"virus": "strict-av", "spyware": "strict-as"} — include ALL desired profiles, omitted keys are removed.
-Both "suggestions" and "notes" arrays may be empty if nothing applies.` + licenseContext,
-
-    user: `Review this firewall security rule being migrated from ${vendorLabel(sourceVendor)} to SRX (${targetModel || 'SRX'})${srxLicense ? ` (license: ${srxLicense})` : ''}:
-
-=== ORIGINAL ${vendorLabel(sourceVendor).toUpperCase()} RULE ===
-Rule: "${rule.name}"
-  Action: ${rule.action}
-  From zones: ${(rule.src_zones || []).join(', ') || 'any'}
-  To zones: ${(rule.dst_zones || []).join(', ') || 'any'}
-  Source addresses: ${(rule.src_addresses || []).join(', ') || 'any'}${rule.negate_source ? ' [NEGATED — match all EXCEPT these]' : ''}
-  Destination addresses: ${(rule.dst_addresses || []).join(', ') || 'any'}${rule.negate_destination ? ' [NEGATED — match all EXCEPT these]' : ''}
-  Applications: ${(rule.applications || []).join(', ') || 'any'}
-  Services: ${(rule.services || []).join(', ') || 'any'}
-  Logging: start=${rule.log_start}, end=${rule.log_end}
-  Disabled: ${rule.disabled}
-  Description: ${rule.description || '(none)'}
-  Security profiles: ${profileSummary}${rule.profile_group ? ` (from group: ${rule.profile_group})` : ''}
-  Tags: ${(rule.tags || []).join(', ') || '(none)'}
-${srxContext ? `
-=== SRX TRANSLATION (current mapping) ===
-  Policy: security policies from-zone ${srxContext.zonePairs?.[0]?.split(' -> ')[0] || 'any'} to-zone ${srxContext.zonePairs?.[0]?.split(' -> ')[1] || 'any'} policy ${srxContext.policyName}
-  Zone pairs: ${srxContext.zonePairs?.join('; ') || 'any -> any'}
-  Match source-address: ${srxContext.srcAddresses?.join(', ') || 'any'}
-  Match destination-address: ${srxContext.dstAddresses?.join(', ') || 'any'}
-  Match application: ${srxContext.applications?.length > 0 ? srxContext.applications.join(', ') : 'any'}
-  Action: then ${srxContext.action}
-  Application services: ${srxContext.applicationServices?.join(', ') || 'none'}
-  Logging: ${srxContext.logging?.join(', ') || 'none'}
-  Description: ${srxContext.description || '(none)'}
-  Schedule: ${srxContext.schedule || '(none)'}
-  Status: ${srxContext.disabled ? 'deactivated' : 'active'}
-` : ''}${(() => {
-  if (!resolvedObjects) return '';
-  const lines = [];
-  for (const [name, val] of Object.entries(resolvedObjects.addresses || {}))
-    lines.push(`  Address "${name}": ${val}`);
-  for (const [name, members] of Object.entries(resolvedObjects.addressGroups || {}))
-    lines.push(`  Address-group "${name}": [${members.join(', ')}]`);
-  for (const [name, val] of Object.entries(resolvedObjects.services || {}))
-    lines.push(`  Service "${name}": ${val}`);
-  for (const [name, members] of Object.entries(resolvedObjects.serviceGroups || {}))
-    lines.push(`  Service-group "${name}": [${members.join(', ')}]`);
-  if (lines.length > 50) { lines.length = 50; lines.push('  ... (truncated)'); }
-  return lines.length > 0 ? `\n=== REFERENCED OBJECTS ===\n${lines.join('\n')}\n` : '';
-})()}
-Available zones: ${zoneList}
-
-Review both the original ${vendorLabel(sourceVendor)} rule and its SRX translation. Identify any issues with the migration mapping, missing security features, or best-practice violations on the SRX side. Respond with ONLY the JSON object.`,
   };
 }
 
