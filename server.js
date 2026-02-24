@@ -11,6 +11,9 @@
  */
 
 import express from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { parsePanosConfig } from './src/parsers/panos-parser.js';
@@ -33,8 +36,48 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const isDev = process.env.NODE_ENV !== 'production';
 
-// PAN-OS configs can be very large (10k+ rules), so allow generous payloads
-app.use(express.json({ limit: '50mb' }));
+// ---------------------------------------------------------------------------
+// Security Middleware
+// ---------------------------------------------------------------------------
+
+// Security headers (CSP, X-Frame-Options, X-Content-Type-Options, etc.)
+app.use(helmet({
+  contentSecurityPolicy: isDev ? false : {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'", 'https://api.anthropic.com', 'https://api.openai.com',
+                   'http://localhost:*', 'http://127.0.0.1:*'],
+      imgSrc: ["'self'", 'data:'],
+      fontSrc: ["'self'"],
+    },
+  },
+  // Disable CSP in dev (Vite HMR needs inline scripts/eval)
+  crossOriginEmbedderPolicy: false,
+}));
+
+// CORS — restrict to same-origin in production, allow localhost in dev
+app.use(cors({
+  origin: isDev
+    ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+    : (process.env.ALLOWED_ORIGIN || false),
+  methods: ['GET', 'POST'],
+  credentials: false,
+}));
+
+// Rate limiting on API endpoints — 60 requests per minute per IP
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please try again in a minute' },
+});
+app.use('/api/', apiLimiter);
+
+// Payload limit: 10MB (large configs can have 10k+ rules but rarely exceed 10MB)
+app.use(express.json({ limit: '10mb' }));
 
 // ---------------------------------------------------------------------------
 // API Routes

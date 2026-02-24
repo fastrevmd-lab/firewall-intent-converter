@@ -23,7 +23,7 @@
  *   - Route policies (static routes)
  */
 
-import { createWarning, mapAppToJunos, sanitizeJunosName } from './parser-utils.js';
+import { createWarning, mapAppToJunos, sanitizeJunosName, safeJsonParse } from './parser-utils.js';
 
 
 // ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ export function parseSonicWallConfig(configText) {
 function parseJsonFormat(text, warnings) {
   let config;
   try {
-    config = JSON.parse(text);
+    config = safeJsonParse(text);
   } catch (e) {
     warnings.push(createWarning('warning', 'parse', `JSON parse error: ${e.message}`, 'Verify the JSON export is complete and well-formed'));
     return buildEmptyResult(warnings);

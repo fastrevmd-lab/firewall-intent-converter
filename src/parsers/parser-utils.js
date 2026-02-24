@@ -7,6 +7,23 @@
  */
 
 /**
+ * Safely parse JSON text, stripping prototype pollution keys (__proto__,
+ * constructor, prototype) from all objects in the parsed tree.
+ *
+ * @param {string} text - Raw JSON string
+ * @returns {Object} - Parsed and sanitized object
+ * @throws {Error} - If text is not valid JSON
+ */
+export function safeJsonParse(text) {
+  return JSON.parse(text, (key, value) => {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return undefined; // strip dangerous keys
+    }
+    return value;
+  });
+}
+
+/**
  * Ensures the value is always an array.
  * XML parsers often return a single string instead of an array when there is
  * only one <member> element.  This normalizes that behavior.
