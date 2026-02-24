@@ -67,6 +67,11 @@
 - [x] **Vendor-specific platform views** — Check Point SmartConsole-style table (sections, Accept/Drop, Track, Install On), SonicWall zone-pair table (priority, DPI, Allow/Deny), Huawei USG zone-pair table (Permit/Deny, profiles)
 - [x] **Full UI integration** — ModelSelector vendor labels, InterfaceMapper source model lookup, THROUGHPUT_LABELS, LLM vendorLabel, auto-detection routing, ConfigInput dropdown entries with help text
 
+### Post-Rev6 Enhancements
+- [x] **CC BY-NC-ND 4.0 license** — Added license file, README badge, and package.json license field
+- [x] **Zone dropdown selector** — Zone fields in the rule editor right panel now show a dropdown of available zones from the intermediate config instead of free-text input
+- [x] **Per-rule LLM review overhaul** — Replaced Import/Import All buttons with individual Accept/Reject per suggestion. Added `notes` array to LLM response schema for informational observations (migration caveats, best-practice reminders) that don't map to a field change. Accepted notes persist on the rule in a `_llm_notes` field, display in a Notes section in the rule editor with remove capability, and emit as `# NOTE:` comments above the policy in SRX set command output
+
 ---
 
 ## Planned Revisions
