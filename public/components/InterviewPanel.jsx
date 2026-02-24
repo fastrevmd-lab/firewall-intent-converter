@@ -1,17 +1,11 @@
 /**
  * InterviewPanel Component
  *
- * Right panel showing editable rule details + AI-powered suggestions.
+ * Right panel showing editable rule details.
  * When a rule is selected, all fields are editable inline.
- * "LLM Review" calls the configured LLM for structured best-practice advice.
  * "Accept Rule" marks the rule as accepted in the review workflow.
  */
 import React, { useState } from 'react';
-import {
-  getLLMSuggestion,
-  getLLMStatus,
-  buildStructuredRuleSuggestionPrompt,
-} from '../utils/llm-client.js';
 import {
   mapActionToSrx,
   mapActionToPanos,
@@ -21,231 +15,28 @@ import {
   SRX_LICENSE_TIERS,
 } from '../utils/srx-view-transforms.js';
 
-/**
- * Coerce an LLM suggestion value to the correct type for the given field.
- * Prevents silent corruption from string-for-array or string-for-boolean mismatches.
- */
-function coerceSuggestionValue(field, value) {
-  const arrayFields = new Set([
-    'src_zones', 'dst_zones', 'src_addresses', 'dst_addresses',
-    'applications', 'services', 'tags',
-  ]);
-  if (arrayFields.has(field)) {
-    if (Array.isArray(value)) return value;
-    if (value === null || value === undefined || value === '') return [];
-    if (typeof value === 'string') return value.split(',').map(s => s.trim()).filter(Boolean);
-    return [value];
-  }
-
-  const booleanFields = new Set(['log_start', 'log_end', 'disabled']);
-  if (booleanFields.has(field)) {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'string') return value.toLowerCase() === 'true';
-    return Boolean(value);
-  }
-
-  if (field === 'security_profiles') {
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-    return null; // can't coerce — skip suggestion
-  }
-
-  // String fields: name, action, description, profile_group
-  if (value !== null && value !== undefined && typeof value !== 'string') return String(value);
-  return value;
-}
-
 export default function InterviewPanel({
   selectedRule,
   intermediateConfig,
   warnings,
   onUpdateRule,
   targetModel,
-  isSanitized,
-  llmWarningDismissed,
-  onLLMWarning,
   onAcceptRule,
-  onSetLLMReviewed,
   viewMode,
   platformView,
   srxLicense,
 }) {
   const isSrx = viewMode === 'srx';
   const isToSrxTab = platformView === 'srx'; // true only on the "to SRX" tab
-  const [structuredSuggestion, setStructuredSuggestion] = useState(null);
-  const [rawSuggestion, setRawSuggestion] = useState('');
-  const [isLoadingSuggestion, setIsLoadingSuggestion] = useState(false);
-  const [suggestionError, setSuggestionError] = useState('');
-  const [itemStates, setItemStates] = useState({}); // { 'suggestion-0': 'accepted'|'rejected', 'note-0': 'accepted'|'rejected' }
 
   const ruleWarnings = selectedRule
     ? (warnings || []).filter(w => w.element?.includes(selectedRule.name))
     : [];
 
-  const llmStatus = getLLMStatus();
-
-  /** Request structured LLM review for the selected rule */
-  const handleLLMReview = async () => {
-    if (!selectedRule) return;
-
-    // Warn user if config hasn't been sanitized (skip if already dismissed)
-    if (!isSanitized && !llmWarningDismissed && onLLMWarning) {
-      onLLMWarning();
-      return;
-    }
-
-    setIsLoadingSuggestion(true);
-    setSuggestionError('');
-    setStructuredSuggestion(null);
-    setRawSuggestion('');
-    setItemStates({});
-
-    try {
-      // Build rich SRX context for the LLM
-      const r = selectedRule;
-      const srcZones = r.src_zones?.length > 0 ? r.src_zones : ['any'];
-      const dstZones = r.dst_zones?.length > 0 ? r.dst_zones : ['any'];
-      const zonePairs = srcZones.flatMap(sz => dstZones.map(dz => `${sz} -> ${dz}`));
-
-      // Description with tags (mirrors srx-converter.js)
-      let srxDescription = r.description || '';
-      if (r.tags?.length > 0) {
-        const tagNote = `[tags: ${r.tags.join(', ')}]`;
-        srxDescription = srxDescription ? `${srxDescription} ${tagNote}` : tagNote;
-      }
-
-      // Application services from security profiles (mirrors converter UTM/IDP logic)
-      const sp = r.security_profiles || {};
-      const srxAppServices = [];
-      if (sp.spyware || sp.vulnerability) srxAppServices.push('idp-policy');
-      if (sp.virus || sp['wildfire-analysis']) srxAppServices.push('utm-policy (antivirus)');
-      if (sp['url-filtering']) srxAppServices.push('utm-policy (web-filtering)');
-      if (sp['file-blocking']) srxAppServices.push('utm-policy (content-filter)');
-      if (r._srx_secintel || (r._secIntelAddresses || []).length > 0) srxAppServices.push('security-intelligence-policy');
-      if (r._srx_decrypt) srxAppServices.push('ssl-proxy');
-
-      const srxLogging = [];
-      if (r.log_end) srxLogging.push('session-close');
-      if (r.log_start) srxLogging.push('session-init');
-
-      const srxContext = {
-        policyName: r.name,
-        zonePairs,
-        srcAddresses: r.src_addresses?.length > 0 ? r.src_addresses : ['any'],
-        dstAddresses: r.dst_addresses?.length > 0 ? r.dst_addresses : ['any'],
-        applications: (r.applications || []).concat(r.services || []),
-        action: mapActionToSrx(r.action),
-        applicationServices: srxAppServices,
-        logging: srxLogging,
-        description: srxDescription,
-        schedule: r.schedule || null,
-        disabled: !!r.disabled,
-      };
-
-      // Resolve referenced address and service objects for the LLM
-      const resolvedObjects = { addresses: {}, addressGroups: {}, services: {}, serviceGroups: {} };
-      const addrObjs = intermediateConfig?.address_objects || [];
-      const addrGrps = intermediateConfig?.address_groups || [];
-      const svcObjs = intermediateConfig?.service_objects || [];
-      const svcGrps = intermediateConfig?.service_groups || [];
-
-      const refAddrs = new Set([...(r.src_addresses || []), ...(r.dst_addresses || [])]);
-      refAddrs.delete('any');
-      for (const name of refAddrs) {
-        const obj = addrObjs.find(a => a.name === name);
-        if (obj) { resolvedObjects.addresses[name] = `${obj.type}: ${obj.value}`; continue; }
-        const grp = addrGrps.find(g => g.name === name);
-        if (grp) {
-          resolvedObjects.addressGroups[name] = grp.members || [];
-          for (const m of grp.members || []) {
-            const mObj = addrObjs.find(a => a.name === m);
-            if (mObj) resolvedObjects.addresses[m] = `${mObj.type}: ${mObj.value}`;
-          }
-        }
-      }
-
-      const refSvcs = new Set(r.services || []);
-      refSvcs.delete('any'); refSvcs.delete('application-default');
-      for (const name of refSvcs) {
-        const obj = svcObjs.find(s => s.name === name);
-        if (obj) { resolvedObjects.services[name] = `${obj.protocol}/${obj.port_range || 'any'}`; continue; }
-        const grp = svcGrps.find(g => g.name === name);
-        if (grp) resolvedObjects.serviceGroups[name] = grp.members || [];
-      }
-
-      const prompt = buildStructuredRuleSuggestionPrompt(
-        selectedRule,
-        targetModel,
-        intermediateConfig?.zones,
-        srxLicense,
-        srxContext,
-        intermediateConfig?.metadata?.source_vendor,
-        resolvedObjects
-      );
-      const result = await getLLMSuggestion(prompt.user, prompt.system);
-
-      // Try to parse structured JSON response
-      try {
-        // Strip markdown fences if present
-        let jsonStr = result.trim();
-        if (jsonStr.startsWith('```')) {
-          jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-        }
-        const parsed = JSON.parse(jsonStr);
-        if (parsed.analysis && (parsed.suggestions || parsed.notes)) {
-          setStructuredSuggestion(parsed);
-        } else {
-          setRawSuggestion(result);
-        }
-      } catch {
-        // JSON parse failed — show raw text
-        setRawSuggestion(result);
-      }
-
-      // Mark as LLM reviewed
-      if (onSetLLMReviewed) {
-        onSetLLMReviewed();
-      }
-    } catch (err) {
-      setSuggestionError(err.message);
-    } finally {
-      setIsLoadingSuggestion(false);
-    }
-  };
-
   /** Update a field on the selected rule */
   const handleFieldChange = (field, value) => {
     if (!selectedRule || !onUpdateRule) return;
     onUpdateRule({ ...selectedRule, [field]: value });
-  };
-
-  /** Accept a suggestion — apply the field change (with type coercion) */
-  const handleAcceptSuggestion = (suggestion, index) => {
-    if (!selectedRule || !onUpdateRule) return;
-    const coerced = coerceSuggestionValue(suggestion.field, suggestion.suggested);
-    if (coerced === null) {
-      // Value couldn't be coerced to the correct type — auto-reject
-      setItemStates(prev => ({ ...prev, [`suggestion-${index}`]: 'rejected' }));
-      return;
-    }
-    handleFieldChange(suggestion.field, coerced);
-    setItemStates(prev => ({ ...prev, [`suggestion-${index}`]: 'accepted' }));
-  };
-
-  /** Accept a note — save to rule's _llm_notes array */
-  const handleAcceptNote = (noteText, index) => {
-    if (!selectedRule || !onUpdateRule) return;
-    const existing = selectedRule._llm_notes || [];
-    if (!existing.includes(noteText)) {
-      handleFieldChange('_llm_notes', [...existing, noteText]);
-    }
-    setItemStates(prev => ({ ...prev, [`note-${index}`]: 'accepted' }));
-  };
-
-  /** Remove a persisted note from the rule */
-  const handleRemoveNote = (noteIndex) => {
-    if (!selectedRule || !onUpdateRule) return;
-    const updated = (selectedRule._llm_notes || []).filter((_, i) => i !== noteIndex);
-    handleFieldChange('_llm_notes', updated);
   };
 
   /** Handle toggling boolean fields */
@@ -280,7 +71,7 @@ export default function InterviewPanel({
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
                 <path d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
               </svg>
-              <p>Click a {isSrx ? 'policy' : 'rule'} in the table to see its full details, edit fields, and get AI suggestions.</p>
+              <p>Click a {isSrx ? 'policy' : 'rule'} in the table to see its full details and edit fields.</p>
             </div>
           ) : (
             <div className="empty-state">
@@ -290,7 +81,7 @@ export default function InterviewPanel({
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
               <h3>Interview Engine</h3>
-              <p>After parsing, this panel will show rule details, inline editing, and AI-powered best-practice suggestions.</p>
+              <p>After parsing, this panel will show rule details and inline editing.</p>
             </div>
           )}
         </div>
@@ -312,31 +103,12 @@ export default function InterviewPanel({
         {isToSrxTab && (
           <div className="rule-review-actions">
             <button
-              className="btn btn-secondary btn-sm"
-              onClick={handleLLMReview}
-              disabled={isLoadingSuggestion || !llmStatus.configured}
-            >
-              {isLoadingSuggestion ? (
-                <>
-                  <span className="loading-spinner" style={{ width: 12, height: 12 }} />
-                  Analyzing...
-                </>
-              ) : (
-                'LLM Review'
-              )}
-            </button>
-            <button
               className={`btn btn-sm ${isAccepted ? 'btn-accepted' : 'btn-accept'}`}
               onClick={() => onAcceptRule && onAcceptRule()}
               disabled={isAccepted}
             >
               {isAccepted ? 'Accepted' : 'Accept Policy'}
             </button>
-            {!llmStatus.configured && (
-              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                Configure LLM in Settings
-              </span>
-            )}
           </div>
         )}
 
@@ -406,29 +178,6 @@ export default function InterviewPanel({
             availableZones={zoneNames}
           />
         </div>
-
-        {/* Persistent LLM Notes */}
-        {(selectedRule._llm_notes || []).length > 0 && (
-          <div className="detail-section">
-            <h3>Notes</h3>
-            {selectedRule._llm_notes.map((note, i) => (
-              <div key={i} className="llm-note-item" style={{
-                display: 'flex', alignItems: 'flex-start', gap: 6,
-                padding: '6px 8px', marginBottom: 4,
-                background: 'rgba(0, 91, 90, 0.08)', borderRadius: 4,
-                fontSize: '12px', lineHeight: '1.4', color: 'var(--text-secondary)'
-              }}>
-                <span style={{ flex: 1 }}>{note}</span>
-                <button
-                  className="chip-remove"
-                  onClick={() => handleRemoveNote(i)}
-                  title="Remove note"
-                  style={{ flexShrink: 0 }}
-                >x</button>
-              </div>
-            ))}
-          </div>
-        )}
 
         {/* Addresses */}
         <div className="detail-section">
@@ -663,88 +412,6 @@ export default function InterviewPanel({
           </div>
         )}
 
-        {/* AI Review Section — "to SRX" tab only */}
-        {isToSrxTab && (
-          <div className="detail-section">
-            <h3>AI Review</h3>
-
-            {llmStatus.configured && !isSanitized && (
-              <p style={{ fontSize: '11px', color: 'var(--warning)', marginBottom: 8 }}>
-                Configuration not sanitized — you will be warned before sending data to an LLM.
-              </p>
-            )}
-
-            {suggestionError && (
-              <div className="suggestion-error">
-                {suggestionError}
-              </div>
-            )}
-
-            {/* Structured suggestion display */}
-            {structuredSuggestion && (
-              <div className="suggestion-card" style={{ padding: '10px 12px' }}>
-                <div className="suggestion-analysis">{structuredSuggestion.analysis}</div>
-                {structuredSuggestion.verdict && (
-                  <span className={`suggestion-verdict ${structuredSuggestion.verdict}`}>
-                    {structuredSuggestion.verdict === 'looks_good' ? 'Looks Good' : 'Needs Changes'}
-                  </span>
-                )}
-
-                {/* Actionable suggestions — single click to import, or ignore */}
-                {structuredSuggestion.suggestions?.map((s, i) => {
-                  const imported = itemStates[`suggestion-${i}`] === 'accepted';
-                  return (
-                    <div key={`s-${i}`} className="suggestion-field-change" style={{ paddingLeft: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div className="suggestion-field-name" style={{ marginBottom: 0 }}>{s.field}</div>
-                        {imported ? (
-                          <span style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 600 }}>Imported</span>
-                        ) : (
-                          <button className="suggestion-import-btn" onClick={() => handleAcceptSuggestion(s, i)}>
-                            Import
-                          </button>
-                        )}
-                      </div>
-                      <div className="suggestion-values">
-                        <span className="suggestion-current">{formatValue(s.current)}</span>
-                        <span className="suggestion-arrow">&rarr;</span>
-                        <span className="suggestion-new">{formatValue(s.suggested)}</span>
-                      </div>
-                      <div className="suggestion-reason">{s.reason}</div>
-                    </div>
-                  );
-                })}
-
-                {/* Informational notes — single click to save, or ignore */}
-                {structuredSuggestion.notes?.map((note, i) => {
-                  const saved = itemStates[`note-${i}`] === 'accepted';
-                  return (
-                    <div key={`n-${i}`} className="suggestion-field-change" style={{ paddingLeft: 8, borderLeft: '3px solid rgba(0, 91, 90, 0.3)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div className="suggestion-field-name" style={{ color: 'var(--text-secondary)', marginBottom: 0 }}>Note</div>
-                        {saved ? (
-                          <span style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 600 }}>Saved</span>
-                        ) : (
-                          <button className="suggestion-import-btn" onClick={() => handleAcceptNote(note, i)}>
-                            Save
-                          </button>
-                        )}
-                      </div>
-                      <div className="suggestion-reason">{note}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Raw text fallback */}
-            {rawSuggestion && !structuredSuggestion && (
-              <div className="suggestion-card">
-                <div className="suggestion-content">{rawSuggestion}</div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

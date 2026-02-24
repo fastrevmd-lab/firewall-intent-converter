@@ -1527,32 +1527,6 @@ html, body, #root {
   min-height: 26px;
 }
 
-/* --- LLM Suggestion Card --- */
-.suggestion-card {
-  background: var(--accent-glow);
-  border: 1px solid rgba(77, 208, 200, 0.25);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  margin-top: 4px;
-}
-
-.suggestion-content {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-}
-
-.suggestion-error {
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.25);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  font-size: 12px;
-  color: var(--error);
-  margin-top: 4px;
-}
-
 /* --- Throughput Metric Toggle (ModelSelector) --- */
 .throughput-toggle {
   display: flex;
@@ -1799,105 +1773,9 @@ html, body, #root {
   color: var(--text-muted);
 }
 
-.status-label.status-llm-reviewed {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--warning);
-}
-
 .status-label.status-accepted {
   background: rgba(52, 211, 153, 0.15);
   color: var(--success);
-}
-
-/* --- Structured Suggestion Cards --- */
-.suggestion-analysis {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-}
-
-.suggestion-verdict {
-  display: inline-block;
-  padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  border-radius: 3px;
-  margin-bottom: 10px;
-}
-
-.suggestion-verdict.looks_good {
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--success);
-}
-
-.suggestion-verdict.needs_changes {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--warning);
-}
-
-.suggestion-field-change {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  margin-bottom: 6px;
-}
-
-.suggestion-field-name {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--accent-text);
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.suggestion-values {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  margin-bottom: 4px;
-}
-
-.suggestion-current {
-  color: var(--error);
-  text-decoration: line-through;
-  font-family: var(--font-mono);
-}
-
-.suggestion-arrow {
-  color: var(--text-muted);
-}
-
-.suggestion-new {
-  color: var(--success);
-  font-family: var(--font-mono);
-}
-
-.suggestion-reason {
-  font-size: 11px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-.suggestion-import-btn {
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 10px;
-  background: var(--accent-glow);
-  border: 1px solid rgba(77, 208, 200, 0.3);
-  border-radius: 3px;
-  color: var(--accent-text);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.suggestion-import-btn:hover {
-  background: var(--accent);
-  color: var(--bg-primary);
 }
 
 /* --- Accept Button --- */
