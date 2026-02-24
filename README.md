@@ -219,6 +219,12 @@ firewall-intent-converter/
 ├── package.json
 ├── TODO.md                       # Roadmap & TODO (Rev1–Rev8+)
 ├── index.html                    # Entry HTML
+├── static/                       # Static assets served as-is (Vite publicDir)
+│   ├── logo.png                  # Application logo
+│   └── prompts/                  # Editable LLM system prompts (plain text)
+│       ├── rule-review.txt       # Per-rule review prompt — SRX best practices, vendor migration pitfalls
+│       ├── full-review.txt       # Full-ruleset review prompt — holistic security posture analysis
+│       └── greenfield.txt        # Greenfield interview prompt — guided SRX config builder
 ├── src/                          # Server-side modules
 │   ├── parsers/
 │   │   ├── panos-parser.js       # PAN-OS XML → intermediate JSON
@@ -290,6 +296,18 @@ All LLM configuration is stored in `localStorage` under the key `llm-settings`. 
 | Ollama | No | `localhost:11434` |
 | LM Studio | No | `localhost:1234` |
 | Custom | Optional | User-specified |
+
+### LLM System Prompts
+
+Three editable plain-text prompt files control how the LLM behaves during reviews and greenfield interviews. Edit these files directly on disk — changes take effect on page reload:
+
+| File | Purpose |
+|------|---------|
+| `static/prompts/rule-review.txt` | **Per-rule review** — SRX best practices, zone architecture, logging, security profiles, NAT, VPN, vendor-specific migration pitfalls, compliance (PCI DSS, NIST, CIS) |
+| `static/prompts/full-review.txt` | **Full-ruleset review** — holistic security posture analysis, rule ordering, shadowed/redundant rules, address/NAT/zone/HA review, JSON suggestion format |
+| `static/prompts/greenfield.txt` | **Greenfield interview** — guided SRX config builder with use-case discovery, progressive config building via JSON action blocks, best-practice recommendations |
+
+**Priority order:** User edits in the Settings UI (localStorage) take precedence over the on-disk files, which take precedence over the hardcoded defaults in `llm-client.js`. To revert to the on-disk version, click "Reset to Default" in the Settings prompt editor.
 
 ### MCP Settings
 

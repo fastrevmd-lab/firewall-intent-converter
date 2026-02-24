@@ -356,11 +356,40 @@ As you collect answers, emit JSON action blocks to progressively build the confi
 - At the end, summarize what was built and suggest any remaining items`;
 
 // ---------------------------------------------------------------------------
-// System Prompt Loader
+// System Prompt Loader — loads from static/prompts/*.txt files on disk,
+// with localStorage overrides and hardcoded defaults as fallback.
 // ---------------------------------------------------------------------------
 
+/** Cache for prompt files loaded from static/prompts/ */
+const _promptFileCache = { rule: null, fullReview: null, greenfield: null };
+
+const PROMPT_FILE_PATHS = {
+  rule: '/prompts/rule-review.txt',
+  fullReview: '/prompts/full-review.txt',
+  greenfield: '/prompts/greenfield.txt',
+};
+
+/** Pre-load prompt files from disk into cache (fire-and-forget on module init) */
+async function _loadPromptFiles() {
+  for (const [type, path] of Object.entries(PROMPT_FILE_PATHS)) {
+    try {
+      const res = await fetch(path);
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.trim()) _promptFileCache[type] = text.trim();
+      }
+    } catch { /* ignore — will fall back to hardcoded defaults */ }
+  }
+}
+// Start loading immediately when the module is imported
+_loadPromptFiles();
+
 /**
- * Loads the system prompt from localStorage or falls back to the default.
+ * Loads the system prompt. Priority order:
+ * 1. User-edited prompt in localStorage (Settings UI)
+ * 2. Prompt file from static/prompts/*.txt (editable on disk)
+ * 3. Hardcoded default constant
+ *
  * @param {'rule'|'fullReview'|'greenfield'} [type='rule'] - Which prompt to load
  */
 export function loadSystemPrompt(type = 'rule') {
@@ -375,6 +404,7 @@ export function loadSystemPrompt(type = 'rule') {
     greenfield: 'greenfieldSystemPrompt',
   };
 
+  // 1. Check localStorage (user edits in Settings UI)
   try {
     const saved = localStorage.getItem('llm-settings');
     if (saved) {
@@ -388,6 +418,11 @@ export function loadSystemPrompt(type = 'rule') {
       }
     }
   } catch { /* ignore */ }
+
+  // 2. Check file cache (loaded from static/prompts/*.txt)
+  if (_promptFileCache[type]) return _promptFileCache[type];
+
+  // 3. Hardcoded defaults
   return defaults[type] || DEFAULT_RULE_SYSTEM_PROMPT;
 }
 
@@ -848,7 +883,7 @@ Provide 2-4 specific, actionable suggestions for this rule. Focus on security be
 /**
  * Builds a structured rule suggestion prompt that instructs the LLM to respond with JSON.
  */
-export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense, srxContext, sourceVendor) {
+export function buildStructuredRuleSuggestionPrompt(rule, targetModel, zones, srxLicense, srxContext, sourceVendor, resolvedObjects) {
   const zoneList = (zones || []).map(z => z.name).join(', ');
   const systemPrompt = loadSystemPrompt('rule');
 
@@ -899,9 +934,11 @@ Valid field names for suggestions and their types:
 - applications (array), services (array)
 - log_start (boolean), log_end (boolean), disabled (boolean)
 - profile_group (string), tags (array)
+- security_profiles (object: keys are profile types like "virus", "spyware", "vulnerability", "url-filtering", "file-blocking", "wildfire-analysis"; values are profile name strings or empty string to remove)
 
 For array fields, use JSON arrays like ["value1", "value2"].
 For boolean fields, use true or false (no quotes).
+For security_profiles, use a complete object like {"virus": "strict-av", "spyware": "strict-as"} — include ALL desired profiles, omitted keys are removed.
 Both "suggestions" and "notes" arrays may be empty if nothing applies.` + licenseContext,
 
     user: `Review this firewall security rule being migrated from ${vendorLabel(sourceVendor)} to SRX (${targetModel || 'SRX'})${srxLicense ? ` (license: ${srxLicense})` : ''}:
@@ -921,11 +958,32 @@ Rule: "${rule.name}"
   Security profiles: ${profileSummary}${rule.profile_group ? ` (from group: ${rule.profile_group})` : ''}
   Tags: ${(rule.tags || []).join(', ') || '(none)'}
 ${srxContext ? `
-=== SRX TRANSLATION (current user edits) ===
-  Action: ${srxContext.action}
-  Application Services: ${srxContext.applicationServices?.join(', ') || 'none'}
+=== SRX TRANSLATION (current mapping) ===
+  Policy: security policies from-zone ${srxContext.zonePairs?.[0]?.split(' -> ')[0] || 'any'} to-zone ${srxContext.zonePairs?.[0]?.split(' -> ')[1] || 'any'} policy ${srxContext.policyName}
+  Zone pairs: ${srxContext.zonePairs?.join('; ') || 'any -> any'}
+  Match source-address: ${srxContext.srcAddresses?.join(', ') || 'any'}
+  Match destination-address: ${srxContext.dstAddresses?.join(', ') || 'any'}
+  Match application: ${srxContext.applications?.length > 0 ? srxContext.applications.join(', ') : 'any'}
+  Action: then ${srxContext.action}
+  Application services: ${srxContext.applicationServices?.join(', ') || 'none'}
   Logging: ${srxContext.logging?.join(', ') || 'none'}
-` : ''}
+  Description: ${srxContext.description || '(none)'}
+  Schedule: ${srxContext.schedule || '(none)'}
+  Status: ${srxContext.disabled ? 'deactivated' : 'active'}
+` : ''}${(() => {
+  if (!resolvedObjects) return '';
+  const lines = [];
+  for (const [name, val] of Object.entries(resolvedObjects.addresses || {}))
+    lines.push(`  Address "${name}": ${val}`);
+  for (const [name, members] of Object.entries(resolvedObjects.addressGroups || {}))
+    lines.push(`  Address-group "${name}": [${members.join(', ')}]`);
+  for (const [name, val] of Object.entries(resolvedObjects.services || {}))
+    lines.push(`  Service "${name}": ${val}`);
+  for (const [name, members] of Object.entries(resolvedObjects.serviceGroups || {}))
+    lines.push(`  Service-group "${name}": [${members.join(', ')}]`);
+  if (lines.length > 50) { lines.length = 50; lines.push('  ... (truncated)'); }
+  return lines.length > 0 ? `\n=== REFERENCED OBJECTS ===\n${lines.join('\n')}\n` : '';
+})()}
 Available zones: ${zoneList}
 
 Review both the original ${vendorLabel(sourceVendor)} rule and its SRX translation. Identify any issues with the migration mapping, missing security features, or best-practice violations on the SRX side. Respond with ONLY the JSON object.`,
