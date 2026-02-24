@@ -2,6 +2,7 @@
   "name": "firewall-policy-converter",
   "version": "1.0.0",
   "description": "Professional firewall configuration conversion tool — PAN-OS to Juniper SRX",
+  "license": "CC-BY-NC-ND-4.0",
   "type": "module",
   "scripts": {
     "dev": "node server.js",
