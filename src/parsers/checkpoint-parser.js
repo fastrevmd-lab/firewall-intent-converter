@@ -22,7 +22,7 @@
  *   3. JSON + Gaia clish text separated by "--- GAIA CLISH ---"
  */
 
-import { createWarning, sanitizeJunosName } from './parser-utils.js';
+import { createWarning, sanitizeJunosName, safeJsonParse } from './parser-utils.js';
 
 // ---------------------------------------------------------------------------
 // Main Parser Entry Point
@@ -43,7 +43,7 @@ export function parseCheckPointConfig(configText) {
   // 2. Parse JSON
   let configJson;
   try {
-    configJson = JSON.parse(jsonText);
+    configJson = safeJsonParse(jsonText);
   } catch (e) {
     throw new Error(`Invalid Check Point configuration: not valid JSON — ${e.message}`);
   }

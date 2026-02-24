@@ -32,9 +32,30 @@ export default function ConfigInput({
 
   const isGreenfield = selectedVendor === 'greenfield';
 
+  const [uploadError, setUploadError] = useState('');
+
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setUploadError('');
+
+    // Validate file size (10 MB max — matches server payload limit)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is 10 MB.`);
+      e.target.value = '';
+      return;
+    }
+
+    // Validate file type — allow config-related extensions and plain text MIME
+    const allowedExtensions = ['.xml', '.txt', '.conf', '.cfg', '.log', '.json'];
+    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+    const allowedMimes = ['text/', 'application/xml', 'application/json', 'application/octet-stream', ''];
+    if (!allowedExtensions.includes(ext) && !allowedMimes.some(m => (file.type || '').startsWith(m))) {
+      setUploadError(`Unsupported file type "${ext}". Use .xml, .txt, .conf, .cfg, or .json files.`);
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -147,10 +168,15 @@ export default function ConfigInput({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".xml,.txt,.conf"
+                accept=".xml,.txt,.conf,.cfg,.json"
                 onChange={handleFileUpload}
               />
             </div>
+            {uploadError && (
+              <div className="upload-error" style={{ color: 'var(--error, #e74c3c)', fontSize: 11, padding: '4px 8px', background: 'rgba(231,76,60,0.08)', borderRadius: 4 }}>
+                {uploadError}
+              </div>
+            )}
 
             {/* Sample config selector — filtered by selected vendor */}
             <div className="sample-selector">

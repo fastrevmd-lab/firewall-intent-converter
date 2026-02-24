@@ -41,6 +41,8 @@ const xmlParserOptions = {
   allowBooleanAttributes: true,
   parseTagValue: true,
   trimValues: true,
+  // Security: disable entity processing to prevent XXE and entity expansion DoS
+  processEntities: false,
   // Force 'entry' and 'member' to always be arrays even when there's only one child.
   // These are the only PAN-OS elements that appear as repeated siblings.
   // Container nodes like <zone>, <address>, <rulebase> are singletons and must NOT
