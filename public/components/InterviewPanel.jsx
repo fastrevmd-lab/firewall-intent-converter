@@ -166,6 +166,7 @@ export default function InterviewPanel({
   };
 
   const isAccepted = selectedRule?._review_status === 'accepted';
+  const zoneNames = (intermediateConfig?.zones || []).map(z => z.name);
 
   // --- No rule selected ---
   if (!selectedRule) {
@@ -293,15 +294,17 @@ export default function InterviewPanel({
         {/* Zones */}
         <div className="detail-section">
           <h3>Zones</h3>
-          <EditableChipsField
+          <ZoneChipsField
             label={isSrx ? 'From Zone' : 'Source'}
             values={selectedRule.src_zones}
             onChange={(v) => handleFieldChange('src_zones', v)}
+            availableZones={zoneNames}
           />
-          <EditableChipsField
+          <ZoneChipsField
             label={isSrx ? 'To Zone' : 'Destination'}
             values={selectedRule.dst_zones}
             onChange={(v) => handleFieldChange('dst_zones', v)}
+            availableZones={zoneNames}
           />
         </div>
 
@@ -710,6 +713,72 @@ function EditableChipsField({ label, values, onChange }) {
           placeholder="Add..."
           style={{ minWidth: 60, flex: 1 }}
         />
+      </div>
+    </div>
+  );
+}
+
+/** Zone chips field with dropdown selector for available zones */
+function ZoneChipsField({ label, values, onChange, availableZones }) {
+  const [inputValue, setInputValue] = useState('');
+  const selected = values || [];
+  const unselected = (availableZones || []).filter(z => !selected.includes(z));
+
+  const handleAdd = (zone) => {
+    if (!zone || selected.includes(zone)) return;
+    onChange([...selected, zone]);
+  };
+
+  const handleRemove = (val) => {
+    onChange(selected.filter(v => v !== val));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const trimmed = inputValue.trim();
+      if (trimmed) {
+        handleAdd(trimmed);
+        setInputValue('');
+      }
+    }
+  };
+
+  return (
+    <div className="detail-field" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+      <span className="field-label">{label}</span>
+      <div className="field-chips-container">
+        {selected.length === 0 && (
+          <span className="cell-chip" style={{ opacity: 0.5 }}>any</span>
+        )}
+        {selected.map((v, i) => (
+          <span key={i} className="chip">
+            {v}
+            <button className="chip-remove" onClick={() => handleRemove(v)}>x</button>
+          </span>
+        ))}
+        {unselected.length > 0 ? (
+          <select
+            className="field-select"
+            value=""
+            onChange={(e) => { if (e.target.value) handleAdd(e.target.value); }}
+            style={{ minWidth: 80, flex: 1 }}
+          >
+            <option value="">Add zone...</option>
+            {unselected.map(z => (
+              <option key={z} value={z}>{z}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            className="chip-input"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Add..."
+            style={{ minWidth: 60, flex: 1 }}
+          />
+        )}
       </div>
     </div>
   );
