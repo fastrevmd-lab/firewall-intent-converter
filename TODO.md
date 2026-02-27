@@ -101,10 +101,10 @@
 - [x] **Site Name / Site Group** — Optional text fields in Model Selection for site identification. Values are emitted as header comments at the top of SRX set-command and XML output (e.g. `# Site: branch-office-seattle`). Prep for future SDC/Mist integration with site/group concepts
 - [x] **Per-vendor conversion system prompts** — 7 vendor-specific translate prompt files with full feature equivalency matrices, migration pitfalls, action mapping, and security profile mapping. Auto-selected at translation time based on detected source vendor
 - [x] **PAN-OS parser: SSL B&I and PBF rules** — PAN-OS parser now extracts SSL Decryption (`<rulebase><decryption>`) and Policy-Based Forwarding (`<rulebase><pbf>`) rules. Displayed in dedicated from-PA tabs
-- [ ] Multi-firewall collapse into logical-systems/tenants
-- [ ] Import multiple configs and merge into a single SRX with logical-system separation
-- [ ] Logical-system-aware address books, policies, and NAT
-- [ ] Cross-logical-system traffic handling (lt- tunnel interfaces)
+- [x] **Multi-firewall collapse into logical-systems/tenants** — Multi-LS Merge mode with mode toggle in navbar. Import N configs (one per slot), each assigned to a logical-system. Auto-detect multi-vsys (PAN-OS), multi-VDOM (FortiGate), and multi-LS/tenant (SRX) configs with auto-split prompt. Cross-LS traffic detection from shared zone names generates lt- tunnel interface pairs. Merged output wraps each config in `set logical-systems ...` / `<logical-systems>` with cross-LS lt- commands
+- [x] **Import multiple configs and merge** — Slot-based UI in ConfigInput with tab bar for each logical-system. Center panel config selector switches between slots. Each slot independently parsed with its own vendor/model/interface mappings
+- [x] **Logical-system-aware address books, policies, and NAT** — SRX parser detects `logical-systems` and `tenants` sub-trees, parses each context independently using existing parse functions, tags policies and NAT rules with `_logical_system` field
+- [x] **Cross-logical-system traffic handling** — Auto-detection of shared zone names across logical-systems. Generates `lt-0/0/0` tunnel interface pairs with `encapsulation ethernet`, `peer-unit`, `family inet`, and zone bindings. Displayed as cross-LS link badges in merge config selector
 
 ### Rev8 — UX & Workflow Enhancements
 - [ ] **"I am new here" guided walkthrough** — Dismissible tooltip bubbles that walk first-time users through the import → review → convert workflow

@@ -40,6 +40,25 @@ export function parseSrxConfig(configText) {
   // Parse set commands into a tree structure
   const tree = buildConfigTree(setCommands);
 
+  // Detect logical-systems and tenants
+  const lsNode = tree['logical-systems'] || {};
+  const tenantNode = tree['tenants'] || {};
+  const lsNames = Object.keys(lsNode).filter(k => !k.startsWith('_'));
+  const tenantNames = Object.keys(tenantNode).filter(k => !k.startsWith('_'));
+  const hasContexts = lsNames.length > 0 || tenantNames.length > 0;
+
+  if (hasContexts) {
+    return parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, tenantNames, warnings);
+  }
+
+  // Single flat config (existing path)
+  return parseFlatSrx(tree, setCommands, warnings);
+}
+
+/**
+ * Parses a flat (no logical-systems/tenants) SRX config.
+ */
+function parseFlatSrx(tree, setCommands, warnings) {
   // Extract each config section
   const zones = parseZones(tree, warnings);
   const addressObjects = parseAddressObjects(tree, warnings);
@@ -78,6 +97,7 @@ export function parseSrxConfig(configText) {
     disabled: false,
     _rule_index: securityPolicies.length + 1,
     _implicit: true,
+    source_users: [],
   });
 
   // Parse VPN/IPsec tunnel configuration
@@ -146,6 +166,246 @@ export function parseSrxConfig(configText) {
     intermediateConfig,
     warnings,
     parseStats: intermediateConfig.metadata,
+  };
+}
+
+/**
+ * Parses an SRX config containing logical-systems and/or tenants.
+ * Each context is parsed independently and merged into flat arrays
+ * with _logical_system tags (same pattern as PAN-OS multi-vsys).
+ */
+function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, tenantNames, warnings) {
+  const allZones = [];
+  const allAddressObjects = [];
+  const allAddressGroups = [];
+  const allServiceObjects = [];
+  const allServiceGroups = [];
+  const allPolicies = [];
+  const allNatRules = [];
+  const allApplications = [];
+  const allSchedules = [];
+  const allStaticRoutes = [];
+  const allVpnTunnels = [];
+  const allScreenConfig = [];
+  const allSyslogConfig = [];
+  const allDhcpConfig = [];
+  const allQosConfig = [];
+  const allInterfaces = [];
+  const allBridgeDomains = [];
+  const allL2Interfaces = [];
+  const routingContexts = [];
+  let haConfig = { enabled: false };
+  let ruleIndex = 0;
+
+  const version = extractVersion(tree);
+
+  // Also parse global/chassis-level config that exists outside any LS
+  const globalHa = parseSrxHaConfig(tree, warnings);
+  if (globalHa && globalHa.enabled) haConfig = globalHa;
+  const globalSyslog = parseSrxSyslogConfig(tree, warnings);
+  if (globalSyslog.length) allSyslogConfig.push(...globalSyslog);
+
+  // Parse each logical-system
+  for (const lsName of lsNames) {
+    const subTree = lsNode[lsName];
+    const ctxLabel = `logical-system ${lsName}`;
+
+    // Filter set commands for this LS to handle scheduler parsing
+    const lsPrefix = `set logical-systems ${lsName} `;
+    const lsSetCmds = setCommands
+      .filter(cmd => cmd.startsWith(lsPrefix))
+      .map(cmd => 'set ' + cmd.substring(lsPrefix.length));
+
+    const parsed = parseContextSubTree(subTree, lsSetCmds, ctxLabel, lsName, warnings);
+    // Tag all items
+    parsed.policies.forEach(p => { p._logical_system = lsName; p._rule_index = ++ruleIndex; });
+    parsed.natRules.forEach(r => { r._logical_system = lsName; });
+
+    allZones.push(...parsed.zones);
+    allAddressObjects.push(...parsed.addressObjects);
+    allAddressGroups.push(...parsed.addressGroups);
+    allServiceObjects.push(...parsed.serviceObjects);
+    allServiceGroups.push(...parsed.serviceGroups);
+    allPolicies.push(...parsed.policies);
+    allNatRules.push(...parsed.natRules);
+    allApplications.push(...parsed.applications);
+    allSchedules.push(...parsed.schedules);
+    allStaticRoutes.push(...parsed.staticRoutes);
+    allVpnTunnels.push(...parsed.vpnTunnels);
+    allScreenConfig.push(...parsed.screenConfig);
+    allSyslogConfig.push(...parsed.syslogConfig);
+    allDhcpConfig.push(...parsed.dhcpConfig);
+    allQosConfig.push(...parsed.qosConfig);
+    allInterfaces.push(...parsed.interfaces);
+    allBridgeDomains.push(...parsed.bridgeDomains);
+    allL2Interfaces.push(...parsed.l2Interfaces);
+
+    routingContexts.push({
+      name: lsName,
+      type: 'logical-system',
+      virtual_routers: [],
+      zones: parsed.zones.map(z => z.name),
+    });
+  }
+
+  // Parse each tenant
+  for (const tName of tenantNames) {
+    const subTree = tenantNode[tName];
+    const ctxLabel = `tenant ${tName}`;
+
+    const tPrefix = `set tenants ${tName} `;
+    const tSetCmds = setCommands
+      .filter(cmd => cmd.startsWith(tPrefix))
+      .map(cmd => 'set ' + cmd.substring(tPrefix.length));
+
+    const parsed = parseContextSubTree(subTree, tSetCmds, ctxLabel, tName, warnings);
+    parsed.policies.forEach(p => { p._logical_system = tName; p._rule_index = ++ruleIndex; });
+    parsed.natRules.forEach(r => { r._logical_system = tName; });
+
+    allZones.push(...parsed.zones);
+    allAddressObjects.push(...parsed.addressObjects);
+    allAddressGroups.push(...parsed.addressGroups);
+    allServiceObjects.push(...parsed.serviceObjects);
+    allServiceGroups.push(...parsed.serviceGroups);
+    allPolicies.push(...parsed.policies);
+    allNatRules.push(...parsed.natRules);
+    allApplications.push(...parsed.applications);
+    allSchedules.push(...parsed.schedules);
+    allStaticRoutes.push(...parsed.staticRoutes);
+    allVpnTunnels.push(...parsed.vpnTunnels);
+    allScreenConfig.push(...parsed.screenConfig);
+    allSyslogConfig.push(...parsed.syslogConfig);
+    allDhcpConfig.push(...parsed.dhcpConfig);
+    allQosConfig.push(...parsed.qosConfig);
+    allInterfaces.push(...parsed.interfaces);
+    allBridgeDomains.push(...parsed.bridgeDomains);
+    allL2Interfaces.push(...parsed.l2Interfaces);
+
+    routingContexts.push({
+      name: tName,
+      type: 'tenant',
+      virtual_routers: [],
+      zones: parsed.zones.map(z => z.name),
+    });
+  }
+
+  // Add implicit default deny per context
+  for (const ctx of routingContexts) {
+    allPolicies.push({
+      name: `Implicit: Default Deny (${ctx.name})`,
+      src_zones: ['any'],
+      dst_zones: ['any'],
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+      negate_source: false,
+      negate_destination: false,
+      applications: ['any'],
+      services: ['any'],
+      action: 'deny',
+      log_start: false,
+      log_end: false,
+      profile_group: '',
+      security_profiles: {},
+      description: `SRX default: implicit deny for ${ctx.name}`,
+      tags: ['added_by_fpic'],
+      disabled: false,
+      _rule_index: ++ruleIndex,
+      _implicit: true,
+      _logical_system: ctx.name,
+      source_users: [],
+    });
+  }
+
+  const totalContexts = lsNames.length + tenantNames.length;
+  warnings.push(createWarning(
+    'info',
+    `SRX config contains ${totalContexts} context(s): ${[...lsNames.map(n => `LS:${n}`), ...tenantNames.map(n => `tenant:${n}`)].join(', ')}`,
+    'logical-systems',
+    'multi_context_detected'
+  ));
+
+  const intermediateConfig = {
+    zones: allZones,
+    address_objects: allAddressObjects,
+    address_groups: allAddressGroups,
+    service_objects: allServiceObjects,
+    service_groups: allServiceGroups,
+    security_policies: allPolicies,
+    nat_rules: allNatRules,
+    applications: allApplications,
+    application_groups: [],
+    schedules: allSchedules,
+    security_profile_objects: [],
+    external_lists: [],
+    vpn_tunnels: allVpnTunnels,
+    ha_config: haConfig,
+    screen_config: allScreenConfig,
+    syslog_config: allSyslogConfig,
+    dhcp_config: allDhcpConfig,
+    qos_config: allQosConfig,
+    interfaces: allInterfaces,
+    routing_contexts: routingContexts,
+    static_routes: allStaticRoutes,
+    target_context: null,
+    transparent_mode: allBridgeDomains.length > 0,
+    bridge_domains: allBridgeDomains,
+    l2_interfaces: allL2Interfaces,
+    vwire_pairs: [],
+    metadata: {
+      source_vendor: 'srx',
+      source_version: version,
+      export_date: new Date().toISOString(),
+      rule_count: allPolicies.length,
+      nat_rule_count: allNatRules.length,
+      object_count: allAddressObjects.length + allAddressGroups.length + allServiceObjects.length + allServiceGroups.length,
+      zone_count: allZones.length,
+      interface_count: allInterfaces.length,
+      vpn_tunnel_count: allVpnTunnels.length,
+      syslog_server_count: allSyslogConfig.length,
+      dhcp_config_count: allDhcpConfig.length,
+      qos_profile_count: allQosConfig.length,
+      routing_context_count: routingContexts.length,
+      static_route_count: allStaticRoutes.length,
+      ha_enabled: !!(haConfig && haConfig.enabled),
+      multi_vsys: true,
+    },
+  };
+
+  return {
+    intermediateConfig,
+    warnings,
+    parseStats: intermediateConfig.metadata,
+  };
+}
+
+/**
+ * Parses a single logical-system or tenant sub-tree using all existing parse functions.
+ */
+function parseContextSubTree(subTree, setCommands, ctxLabel, ctxName, warnings) {
+  const zones = parseZones(subTree, warnings);
+  const addressObjects = parseAddressObjects(subTree, warnings);
+  const addressGroups = parseAddressGroups(subTree, warnings);
+  const serviceObjects = parseServiceObjects(subTree, warnings);
+  const serviceGroups = parseServiceGroups(subTree, warnings);
+  const policies = parseSecurityPolicies(subTree, warnings);
+  const natRules = parseNatRules(subTree, warnings);
+  const applications = parseApplications(subTree, warnings);
+  const schedules = parseSchedulers(setCommands, warnings);
+  const { staticRoutes } = parseSrxStaticRoutes(subTree, warnings);
+  const vpnTunnels = parseSrxVpnConfig(subTree, warnings);
+  const screenConfig = parseSrxScreenConfig(subTree, zones, warnings);
+  const syslogConfig = parseSrxSyslogConfig(subTree, warnings);
+  const dhcpConfig = parseSrxDhcpConfig(subTree, warnings);
+  const qosConfig = parseSrxQosConfig(subTree, warnings);
+  const interfaces = parseSrxInterfaces(subTree, zones, warnings);
+  const bridgeDomains = parseSrxBridgeDomains(subTree, warnings);
+  const l2Interfaces = detectSrxL2Interfaces(subTree, interfaces, warnings);
+
+  return {
+    zones, addressObjects, addressGroups, serviceObjects, serviceGroups,
+    policies, natRules, applications, schedules, staticRoutes,
+    vpnTunnels, screenConfig, syslogConfig, dhcpConfig, qosConfig,
+    interfaces, bridgeDomains, l2Interfaces,
   };
 }
 

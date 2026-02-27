@@ -9,6 +9,12 @@
  *
  * SRX samples:
  *   5. SRX Basic — SRX set commands: 3 zones, address objects, 6 security policies, source NAT
+ *
+ * Multi-context samples (for merge mode / auto-split):
+ *   PAN-OS Multi-Vsys — 2 virtual systems (vsys1 + vsys2), triggers auto-split
+ *   FortiGate Multi-VDOM — 2 VDOMs (root + guest), triggers auto-split
+ *   SRX Logical-Systems — 2 logical-systems (LS-BRANCH + LS-DC), shared trust zone for cross-LS
+ *   SRX Tenants — 1 tenant (TENANT-A), tests tenant parsing path
  */
 
 export const SAMPLE_CONFIGS = {
@@ -4320,5 +4326,244 @@ nat-policy
 ip route-static 0.0.0.0 0.0.0.0 203.0.113.2
 ip route-static 10.0.0.0 255.0.0.0 10.1.1.1
 #`,
+  },
+
+  panos_multivsys: {
+    vendor: 'panos',
+    label: 'Multi-Vsys (2 vsys)',
+    description: 'Two virtual systems: vsys1 (trust/untrust, 3 rules) + vsys2 (dmz/mgmt, 2 rules). Triggers auto-split.',
+    xml: `<?xml version="1.0"?>
+<config version="10.2.0" urldb="paloaltonetworks">
+  <devices><entry name="localhost.localdomain">
+    <vsys>
+      <entry name="vsys1">
+        <zone><entry name="trust"><network><layer3><member>ethernet1/1</member></layer3></network></entry>
+              <entry name="untrust"><network><layer3><member>ethernet1/2</member></layer3></network></entry></zone>
+        <address>
+          <entry name="Web-Server"><ip-netmask>10.1.1.10/32</ip-netmask></entry>
+          <entry name="App-Server"><ip-netmask>10.1.1.20/32</ip-netmask></entry>
+          <entry name="LAN-Net"><ip-netmask>10.1.0.0/16</ip-netmask></entry>
+        </address>
+        <rulebase><security><rules>
+          <entry name="Allow-Outbound"><from><member>trust</member></from><to><member>untrust</member></to><source><member>LAN-Net</member></source><destination><member>any</member></destination><application><member>web-browsing</member><member>ssl</member><member>dns</member></application><action>allow</action></entry>
+          <entry name="Allow-Inbound-HTTPS"><from><member>untrust</member></from><to><member>trust</member></to><source><member>any</member></source><destination><member>Web-Server</member></destination><service><member>service-https</member></service><action>allow</action></entry>
+          <entry name="Deny-All-Vsys1"><from><member>any</member></from><to><member>any</member></to><source><member>any</member></source><destination><member>any</member></destination><application><member>any</member></application><action>deny</action></entry>
+        </rules></security></rulebase>
+      </entry>
+      <entry name="vsys2">
+        <zone><entry name="dmz"><network><layer3><member>ethernet1/3</member></layer3></network></entry>
+              <entry name="mgmt"><network><layer3><member>ethernet1/4</member></layer3></network></entry></zone>
+        <address>
+          <entry name="DMZ-Server"><ip-netmask>172.16.1.10/32</ip-netmask></entry>
+          <entry name="Mgmt-Net"><ip-netmask>192.168.100.0/24</ip-netmask></entry>
+        </address>
+        <rulebase><security><rules>
+          <entry name="Allow-DMZ-to-Mgmt"><from><member>dmz</member></from><to><member>mgmt</member></to><source><member>DMZ-Server</member></source><destination><member>Mgmt-Net</member></destination><service><member>service-https</member></service><action>allow</action></entry>
+          <entry name="Deny-All-Vsys2"><from><member>any</member></from><to><member>any</member></to><source><member>any</member></source><destination><member>any</member></destination><application><member>any</member></application><action>deny</action></entry>
+        </rules></security></rulebase>
+      </entry>
+    </vsys>
+    <network>
+      <interface><ethernet>
+        <entry name="ethernet1/1"><layer3><ip><entry name="10.1.1.1/24"/></ip></layer3></entry>
+        <entry name="ethernet1/2"><layer3><ip><entry name="203.0.113.1/30"/></ip></layer3></entry>
+        <entry name="ethernet1/3"><layer3><ip><entry name="172.16.1.1/24"/></ip></layer3></entry>
+        <entry name="ethernet1/4"><layer3><ip><entry name="192.168.100.1/24"/></ip></layer3></entry>
+      </ethernet></interface>
+      <virtual-router><entry name="default"><routing-table><ip><static-route>
+        <entry name="default-route"><nexthop><ip-address>203.0.113.2</ip-address></nexthop><destination>0.0.0.0/0</destination><interface>ethernet1/2</interface></entry>
+      </static-route></ip></routing-table></entry></virtual-router>
+    </network>
+  </entry></devices>
+</config>`,
+  },
+
+  fortigate_multivdom: {
+    vendor: 'fortigate',
+    label: 'Multi-VDOM (2 VDOMs)',
+    description: 'Two VDOMs: root (LAN/WAN, 3 rules) + guest (guest/wan, 2 rules). Triggers auto-split.',
+    xml: `config global
+end
+config vdom
+edit root
+config system interface
+  edit "port1"
+    set vdom "root"
+    set ip 10.10.1.1 255.255.255.0
+    set type physical
+    set allowaccess ping https ssh
+  next
+  edit "port2"
+    set vdom "root"
+    set ip 203.0.113.1 255.255.255.252
+    set type physical
+  next
+end
+config firewall address
+  edit "LAN-Subnet"
+    set subnet 10.10.1.0 255.255.255.0
+  next
+  edit "File-Server"
+    set type ipmask
+    set subnet 10.10.1.50 255.255.255.255
+  next
+end
+config firewall policy
+  edit 1
+    set name "Allow-LAN-Outbound"
+    set srcintf "port1"
+    set dstintf "port2"
+    set srcaddr "LAN-Subnet"
+    set dstaddr "all"
+    set action accept
+    set schedule "always"
+    set service "HTTP" "HTTPS" "DNS"
+    set nat enable
+  next
+  edit 2
+    set name "Allow-Inbound-HTTPS"
+    set srcintf "port2"
+    set dstintf "port1"
+    set srcaddr "all"
+    set dstaddr "File-Server"
+    set action accept
+    set schedule "always"
+    set service "HTTPS"
+  next
+  edit 3
+    set name "Deny-All-Root"
+    set srcintf "any"
+    set dstintf "any"
+    set srcaddr "all"
+    set dstaddr "all"
+    set action deny
+    set schedule "always"
+    set service "ALL"
+  next
+end
+config router static
+  edit 1
+    set gateway 203.0.113.2
+    set device "port2"
+  next
+end
+end
+edit guest
+config system interface
+  edit "port3"
+    set vdom "guest"
+    set ip 192.168.50.1 255.255.255.0
+    set type physical
+    set allowaccess ping
+  next
+  edit "port4"
+    set vdom "guest"
+    set ip 203.0.113.5 255.255.255.252
+    set type physical
+  next
+end
+config firewall address
+  edit "Guest-Net"
+    set subnet 192.168.50.0 255.255.255.0
+  next
+end
+config firewall policy
+  edit 1
+    set name "Allow-Guest-Internet"
+    set srcintf "port3"
+    set dstintf "port4"
+    set srcaddr "Guest-Net"
+    set dstaddr "all"
+    set action accept
+    set schedule "always"
+    set service "HTTP" "HTTPS" "DNS"
+    set nat enable
+  next
+  edit 2
+    set name "Deny-Guest-Default"
+    set srcintf "any"
+    set dstintf "any"
+    set srcaddr "all"
+    set dstaddr "all"
+    set action deny
+    set schedule "always"
+    set service "ALL"
+  next
+end
+config router static
+  edit 1
+    set gateway 203.0.113.6
+    set device "port4"
+  next
+end
+end
+end`,
+  },
+
+  srx_logicalsystems: {
+    vendor: 'srx',
+    label: 'Logical-Systems (2 LS)',
+    description: 'Two logical-systems: LS-BRANCH (trust/untrust, 3 rules) + LS-DC (servers/mgmt, 2 rules) with shared trust zone for cross-LS.',
+    xml: `set logical-systems LS-BRANCH interfaces ge-0/0/0 unit 0 family inet address 10.1.1.1/24
+set logical-systems LS-BRANCH interfaces ge-0/0/1 unit 0 family inet address 203.0.113.1/30
+set logical-systems LS-BRANCH security zones security-zone trust interfaces ge-0/0/0.0
+set logical-systems LS-BRANCH security zones security-zone trust host-inbound-traffic system-services ping
+set logical-systems LS-BRANCH security zones security-zone untrust interfaces ge-0/0/1.0
+set logical-systems LS-BRANCH security zones security-zone untrust screen untrust-screen
+set logical-systems LS-BRANCH security address-book global address Branch-LAN 10.1.0.0/16
+set logical-systems LS-BRANCH security address-book global address Web-Server 10.1.1.10/32
+set logical-systems LS-BRANCH security policies from-zone trust to-zone untrust policy Allow-Outbound match source-address Branch-LAN
+set logical-systems LS-BRANCH security policies from-zone trust to-zone untrust policy Allow-Outbound match destination-address any
+set logical-systems LS-BRANCH security policies from-zone trust to-zone untrust policy Allow-Outbound match application junos-http
+set logical-systems LS-BRANCH security policies from-zone trust to-zone untrust policy Allow-Outbound match application junos-https
+set logical-systems LS-BRANCH security policies from-zone trust to-zone untrust policy Allow-Outbound match application junos-dns-udp
+set logical-systems LS-BRANCH security policies from-zone trust to-zone untrust policy Allow-Outbound then permit
+set logical-systems LS-BRANCH security policies from-zone untrust to-zone trust policy Allow-Inbound-HTTPS match source-address any
+set logical-systems LS-BRANCH security policies from-zone untrust to-zone trust policy Allow-Inbound-HTTPS match destination-address Web-Server
+set logical-systems LS-BRANCH security policies from-zone untrust to-zone trust policy Allow-Inbound-HTTPS match application junos-https
+set logical-systems LS-BRANCH security policies from-zone untrust to-zone trust policy Allow-Inbound-HTTPS then permit
+set logical-systems LS-BRANCH security policies default-policy deny-all
+set logical-systems LS-BRANCH routing-options static route 0.0.0.0/0 next-hop 203.0.113.2
+set logical-systems LS-DC interfaces ge-0/0/2 unit 0 family inet address 172.16.1.1/24
+set logical-systems LS-DC interfaces ge-0/0/3 unit 0 family inet address 192.168.200.1/24
+set logical-systems LS-DC security zones security-zone servers interfaces ge-0/0/2.0
+set logical-systems LS-DC security zones security-zone servers host-inbound-traffic system-services ping
+set logical-systems LS-DC security zones security-zone mgmt interfaces ge-0/0/3.0
+set logical-systems LS-DC security zones security-zone mgmt host-inbound-traffic system-services ssh
+set logical-systems LS-DC security zones security-zone trust
+set logical-systems LS-DC security address-book global address DC-Servers 172.16.1.0/24
+set logical-systems LS-DC security address-book global address Mgmt-Net 192.168.200.0/24
+set logical-systems LS-DC security address-book global address Admin-PC 192.168.200.10/32
+set logical-systems LS-DC security policies from-zone mgmt to-zone servers policy Admin-Access match source-address Admin-PC
+set logical-systems LS-DC security policies from-zone mgmt to-zone servers policy Admin-Access match destination-address DC-Servers
+set logical-systems LS-DC security policies from-zone mgmt to-zone servers policy Admin-Access match application junos-ssh
+set logical-systems LS-DC security policies from-zone mgmt to-zone servers policy Admin-Access match application junos-https
+set logical-systems LS-DC security policies from-zone mgmt to-zone servers policy Admin-Access then permit
+set logical-systems LS-DC security policies default-policy deny-all
+set logical-systems LS-DC routing-options static route 0.0.0.0/0 next-hop 172.16.1.254`,
+  },
+
+  srx_tenants: {
+    vendor: 'srx',
+    label: 'Tenant (1 tenant)',
+    description: 'Single tenant TENANT-A with 2 zones and 2 security policies. Tests tenant parsing path.',
+    xml: `set tenants TENANT-A interfaces ge-0/0/5 unit 0 family inet address 10.50.1.1/24
+set tenants TENANT-A interfaces ge-0/0/6 unit 0 family inet address 10.50.2.1/24
+set tenants TENANT-A security zones security-zone internal interfaces ge-0/0/5.0
+set tenants TENANT-A security zones security-zone internal host-inbound-traffic system-services ping
+set tenants TENANT-A security zones security-zone external interfaces ge-0/0/6.0
+set tenants TENANT-A security address-book global address Tenant-LAN 10.50.1.0/24
+set tenants TENANT-A security address-book global address Tenant-Server 10.50.2.10/32
+set tenants TENANT-A security policies from-zone internal to-zone external policy Allow-Outbound match source-address Tenant-LAN
+set tenants TENANT-A security policies from-zone internal to-zone external policy Allow-Outbound match destination-address any
+set tenants TENANT-A security policies from-zone internal to-zone external policy Allow-Outbound match application junos-http
+set tenants TENANT-A security policies from-zone internal to-zone external policy Allow-Outbound match application junos-https
+set tenants TENANT-A security policies from-zone internal to-zone external policy Allow-Outbound then permit
+set tenants TENANT-A security policies from-zone external to-zone internal policy Allow-Server-Access match source-address any
+set tenants TENANT-A security policies from-zone external to-zone internal policy Allow-Server-Access match destination-address Tenant-Server
+set tenants TENANT-A security policies from-zone external to-zone internal policy Allow-Server-Access match application junos-https
+set tenants TENANT-A security policies from-zone external to-zone internal policy Allow-Server-Access then permit
+set tenants TENANT-A security policies default-policy deny-all
+set tenants TENANT-A routing-options static route 0.0.0.0/0 next-hop 10.50.2.254`,
   },
 };

@@ -2,7 +2,7 @@
  * Project Save/Load — Serialization, validation, and migration for .fpic.json files
  */
 
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 const VENDOR_NAMES = {
   panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate',
@@ -18,6 +18,7 @@ const STATE_KEYS = [
   'warningStatuses', 'srxTranslatedPolicies', 'srxOutput', 'convertWarnings',
   'conversionSummary', 'outputFormat', 'targetContext', 'greenfieldMode',
   'greenfieldTemplate', 'editTab', 'platformView', 'bottomTab',
+  'mergeMode', 'configSlots', 'activeSlotIndex', 'crossLsLinks',
 ];
 
 const STATE_DEFAULTS = {
@@ -47,6 +48,10 @@ const STATE_DEFAULTS = {
   editTab: 'rules',
   platformView: 'panos',
   bottomTab: 'output',
+  mergeMode: false,
+  configSlots: [],
+  activeSlotIndex: 0,
+  crossLsLinks: [],
 };
 
 /**
@@ -114,8 +119,17 @@ function migrateProject(project) {
     }
   }
 
+  if (p.fpic_version < 2) {
+    // V1 had no merge mode — add defaults
+    p.state.mergeMode = false;
+    p.state.configSlots = [];
+    p.state.activeSlotIndex = 0;
+    p.state.crossLsLinks = [];
+    p.fpic_version = 2;
+  }
+
   // Future migrations:
-  // if (p.fpic_version < 2) { ... p.fpic_version = 2; }
+  // if (p.fpic_version < 3) { ... p.fpic_version = 3; }
 
   return p;
 }

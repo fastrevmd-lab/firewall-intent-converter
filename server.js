@@ -24,8 +24,8 @@ import { parseCheckPointConfig } from './src/parsers/checkpoint-parser.js';
 import { parseSonicWallConfig } from './src/parsers/sonicwall-parser.js';
 import { parseHuaweiConfig } from './src/parsers/huawei-parser.js';
 import { detectVendor } from './src/parsers/parser-utils.js';
-import { convertToSrxSetCommands } from './src/converters/srx-converter.js';
-import { buildSrxXml } from './src/converters/srx-xml-builder.js';
+import { convertToSrxSetCommands, convertMergedToSrxSetCommands } from './src/converters/srx-converter.js';
+import { buildSrxXml, buildMergedSrxXml } from './src/converters/srx-xml-builder.js';
 import { validateSrxOutput } from './src/validators/srx-validator.js';
 import { detectShadowedRules } from './src/analysis/shadow-detector.js';
 
@@ -311,6 +311,31 @@ app.post('/api/convert', (req, res) => {
     });
   } catch (error) {
     console.error('[convert] Error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Multi-Firewall Merge Convert API
+// ---------------------------------------------------------------------------
+
+app.post('/api/merge-convert', (req, res) => {
+  try {
+    const { configSlots, crossLsLinks = [], format = 'set', globalConfig = {} } = req.body;
+    if (!configSlots || !Array.isArray(configSlots) || configSlots.length < 1) {
+      return res.status(400).json({ error: 'configSlots array is required with at least 1 entry' });
+    }
+
+    let output;
+    if (format === 'xml') {
+      output = buildMergedSrxXml(configSlots, crossLsLinks, globalConfig);
+    } else {
+      output = convertMergedToSrxSetCommands(configSlots, crossLsLinks, globalConfig);
+    }
+
+    res.json({ output, format });
+  } catch (error) {
+    console.error('[merge-convert] Error:', error.message);
     res.status(400).json({ error: error.message });
   }
 });

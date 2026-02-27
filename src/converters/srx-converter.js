@@ -2052,3 +2052,110 @@ function groupByZonePair(rules) {
   }
   return groups;
 }
+
+// ---------------------------------------------------------------------------
+// Multi-Firewall Merge Converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts multiple intermediate configs into a merged SRX output
+ * with per-logical-system sections and shared chassis-level config.
+ *
+ * @param {Array<{lsName: string, intermediateConfig: Object, interfaceMappings: Object}>} configSlots
+ * @param {Array<{ls1: string, ls2: string, sharedZone: string, lt1Unit: number, lt2Unit: number}>} crossLsLinks
+ * @param {Object} globalConfig - Chassis-level config (HA, syslog)
+ * @returns {{ commands: string[], warnings: Object[], summary: Object }}
+ */
+export function convertMergedToSrxSetCommands(configSlots, crossLsLinks = [], globalConfig = {}) {
+  const allCommands = [];
+  const allWarnings = [];
+  const perLsSummaries = [];
+
+  // 1. Global chassis-level config (not inside any LS)
+  allCommands.push('# =============================================');
+  allCommands.push('# Multi-Firewall Merge — Chassis-Level Config');
+  allCommands.push('# =============================================');
+  allCommands.push(`# Logical-systems: ${configSlots.map(s => s.lsName).join(', ')}`);
+  allCommands.push('');
+
+  // HA config at chassis level
+  if (globalConfig.ha_config && globalConfig.ha_config.enabled) {
+    const haCommands = [];
+    const haWarnings = [];
+    const haSummary = {};
+    convertHaConfig(globalConfig.ha_config, haCommands, haWarnings, haSummary);
+    allCommands.push(...haCommands);
+    allWarnings.push(...haWarnings);
+    allCommands.push('');
+  }
+
+  // Syslog at chassis level
+  if (globalConfig.syslog_config && globalConfig.syslog_config.length > 0) {
+    const sysCommands = [];
+    convertSyslogConfig(globalConfig.syslog_config, sysCommands, allWarnings, {});
+    allCommands.push(...sysCommands);
+    allCommands.push('');
+  }
+
+  // 2. Per-LS sections
+  for (const slot of configSlots) {
+    const { lsName, intermediateConfig: config, interfaceMappings = {} } = slot;
+
+    allCommands.push('# =============================================');
+    allCommands.push(`# Logical-System: ${lsName}`);
+    allCommands.push('# =============================================');
+
+    // Use existing converter with targetContext set to logical-system
+    const targetContext = { type: 'logical-system', name: lsName };
+    const result = convertToSrxSetCommands(config, interfaceMappings, targetContext);
+
+    allCommands.push(...result.commands);
+    allWarnings.push(...result.warnings.map(w => ({ ...w, _ls: lsName })));
+    perLsSummaries.push({ lsName, summary: result.summary });
+    allCommands.push('');
+  }
+
+  // 3. Cross-LS lt- tunnel interfaces
+  if (crossLsLinks.length > 0) {
+    allCommands.push('# =============================================');
+    allCommands.push('# Cross-Logical-System Tunnel Interfaces (lt-)');
+    allCommands.push('# =============================================');
+    allCommands.push('# Auto-detected from shared zone names across logical-systems');
+    allCommands.push('');
+
+    for (const link of crossLsLinks) {
+      const ls1 = sanitizeJunosName(link.ls1);
+      const ls2 = sanitizeJunosName(link.ls2);
+      const u1 = link.lt1Unit;
+      const u2 = link.lt2Unit;
+      const zone = sanitizeJunosName(link.sharedZone);
+
+      allCommands.push(`# ${link.ls1} <-> ${link.ls2} via zone "${link.sharedZone}"`);
+
+      // Side A
+      allCommands.push(`set logical-systems ${ls1} interfaces lt-0/0/0 unit ${u1} encapsulation ethernet`);
+      allCommands.push(`set logical-systems ${ls1} interfaces lt-0/0/0 unit ${u1} peer-unit ${u2}`);
+      allCommands.push(`set logical-systems ${ls1} interfaces lt-0/0/0 unit ${u1} family inet`);
+      allCommands.push(`set logical-systems ${ls1} security zones security-zone ${zone} interfaces lt-0/0/0.${u1}`);
+
+      // Side B
+      allCommands.push(`set logical-systems ${ls2} interfaces lt-0/0/0 unit ${u2} encapsulation ethernet`);
+      allCommands.push(`set logical-systems ${ls2} interfaces lt-0/0/0 unit ${u2} peer-unit ${u1}`);
+      allCommands.push(`set logical-systems ${ls2} interfaces lt-0/0/0 unit ${u2} family inet`);
+      allCommands.push(`set logical-systems ${ls2} security zones security-zone ${zone} interfaces lt-0/0/0.${u2}`);
+
+      allCommands.push('');
+    }
+  }
+
+  // 4. Merged summary
+  const mergedSummary = {
+    logical_systems: configSlots.length,
+    cross_ls_links: crossLsLinks.length,
+    per_ls: perLsSummaries,
+    total_policies: perLsSummaries.reduce((sum, ls) => sum + (ls.summary.policies_converted || 0), 0),
+    total_warnings: allWarnings.length,
+  };
+
+  return { commands: allCommands, warnings: allWarnings, summary: mergedSummary };
+}
