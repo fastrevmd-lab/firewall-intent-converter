@@ -19,7 +19,7 @@ import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning, isPre
  * @param {Object} [interfaceMappings] - User-defined PAN-OS → SRX interface mappings
  * @returns {{ xml: string, warnings: Object[] }}
  */
-export function buildSrxXml(config, interfaceMappings = {}, targetContext = null) {
+export function buildSrxXml(config, interfaceMappings = {}, targetContext = null, options = {}) {
   const warnings = [];
   const lines = [];
   xmlCustomfwicApps.clear();
@@ -39,20 +39,24 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   const useContext = ctx && ctx.type && ctx.type !== 'none' && ctx.name;
   const indent = useContext ? '    ' : '  ';
 
-  lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+  const omitWrapper = options.omitConfigurationWrapper || false;
 
-  // Site identification header (for SDC/Mist integration)
-  const siteN = config.metadata?.siteName;
-  const siteG = config.metadata?.siteGroup;
-  if (siteN || siteG) {
-    let siteComment = '<!-- Site Identification:';
-    if (siteN) siteComment += ` Site: ${escapeXml(siteN)}`;
-    if (siteG) siteComment += ` | Site Group: ${escapeXml(siteG)}`;
-    siteComment += ' -->';
-    lines.push(siteComment);
+  if (!omitWrapper) {
+    lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+
+    // Site identification header (for SDC/Mist integration)
+    const siteN = config.metadata?.siteName;
+    const siteG = config.metadata?.siteGroup;
+    if (siteN || siteG) {
+      let siteComment = '<!-- Site Identification:';
+      if (siteN) siteComment += ` Site: ${escapeXml(siteN)}`;
+      if (siteG) siteComment += ` | Site Group: ${escapeXml(siteG)}`;
+      siteComment += ' -->';
+      lines.push(siteComment);
+    }
+
+    lines.push('<configuration>');
   }
-
-  lines.push('<configuration>');
 
   // Open logical-system or tenant wrapper
   if (useContext) {
@@ -135,7 +139,9 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
     lines.push(`  </${ctxTag}>`);
   }
 
-  lines.push('</configuration>');
+  if (!omitWrapper) {
+    lines.push('</configuration>');
+  }
 
   return {
     xml: lines.join('\n'),
@@ -1600,6 +1606,120 @@ function buildSystemConfigXml(systemConfig, lines, indent = '  ') {
   }
 
   lines.push(`${indent}</system>`);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-Firewall Merge XML Builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a merged Junos XML configuration from multiple config slots,
+ * each wrapped in a logical-system section.
+ *
+ * @param {Array<{lsName: string, intermediateConfig: Object, interfaceMappings: Object}>} configSlots
+ * @param {Array<{ls1: string, ls2: string, sharedZone: string, lt1Unit: number, lt2Unit: number}>} crossLsLinks
+ * @param {Object} globalConfig - Chassis-level config
+ * @returns {{ xml: string, warnings: Object[], summary: Object }}
+ */
+export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig = {}) {
+  const allLines = [];
+  const allWarnings = [];
+  const perLsSummaries = [];
+
+  allLines.push('<?xml version="1.0" encoding="UTF-8"?>');
+  allLines.push(`<!-- Multi-Firewall Merge: ${configSlots.map(s => s.lsName).join(', ')} -->`);
+  allLines.push('<configuration>');
+
+  // Per-LS sections
+  for (const slot of configSlots) {
+    const ctx = { type: 'logical-system', name: slot.lsName };
+    const result = buildSrxXml(
+      slot.intermediateConfig,
+      slot.interfaceMappings || {},
+      ctx,
+      { omitConfigurationWrapper: true }
+    );
+    allLines.push('');
+    allLines.push(`  <!-- Logical-System: ${escapeXml(slot.lsName)} -->`);
+    allLines.push(result.xml);
+    allWarnings.push(...result.warnings.map(w => ({ ...w, _ls: slot.lsName })));
+    perLsSummaries.push({ lsName: slot.lsName });
+  }
+
+  // Cross-LS lt- tunnel interfaces
+  if (crossLsLinks.length > 0) {
+    allLines.push('');
+    allLines.push('  <!-- Cross-Logical-System Tunnel Interfaces (lt-) -->');
+    for (const link of crossLsLinks) {
+      const ls1 = escapeXml(sanitizeJunosName(link.ls1));
+      const ls2 = escapeXml(sanitizeJunosName(link.ls2));
+      const zone = escapeXml(sanitizeJunosName(link.sharedZone));
+      const u1 = link.lt1Unit;
+      const u2 = link.lt2Unit;
+
+      // Side A lt- interface in LS1
+      allLines.push(`  <logical-systems>`);
+      allLines.push(`    <name>${ls1}</name>`);
+      allLines.push(`    <interfaces>`);
+      allLines.push(`      <interface>`);
+      allLines.push(`        <name>lt-0/0/0</name>`);
+      allLines.push(`        <unit>`);
+      allLines.push(`          <name>${u1}</name>`);
+      allLines.push(`          <encapsulation>ethernet</encapsulation>`);
+      allLines.push(`          <peer-unit>${u2}</peer-unit>`);
+      allLines.push(`          <family><inet/></family>`);
+      allLines.push(`        </unit>`);
+      allLines.push(`      </interface>`);
+      allLines.push(`    </interfaces>`);
+      allLines.push(`    <security>`);
+      allLines.push(`      <zones>`);
+      allLines.push(`        <security-zone>`);
+      allLines.push(`          <name>${zone}</name>`);
+      allLines.push(`          <interfaces>`);
+      allLines.push(`            <name>lt-0/0/0.${u1}</name>`);
+      allLines.push(`          </interfaces>`);
+      allLines.push(`        </security-zone>`);
+      allLines.push(`      </zones>`);
+      allLines.push(`    </security>`);
+      allLines.push(`  </logical-systems>`);
+
+      // Side B lt- interface in LS2
+      allLines.push(`  <logical-systems>`);
+      allLines.push(`    <name>${ls2}</name>`);
+      allLines.push(`    <interfaces>`);
+      allLines.push(`      <interface>`);
+      allLines.push(`        <name>lt-0/0/0</name>`);
+      allLines.push(`        <unit>`);
+      allLines.push(`          <name>${u2}</name>`);
+      allLines.push(`          <encapsulation>ethernet</encapsulation>`);
+      allLines.push(`          <peer-unit>${u1}</peer-unit>`);
+      allLines.push(`          <family><inet/></family>`);
+      allLines.push(`        </unit>`);
+      allLines.push(`      </interface>`);
+      allLines.push(`    </interfaces>`);
+      allLines.push(`    <security>`);
+      allLines.push(`      <zones>`);
+      allLines.push(`        <security-zone>`);
+      allLines.push(`          <name>${zone}</name>`);
+      allLines.push(`          <interfaces>`);
+      allLines.push(`            <name>lt-0/0/0.${u2}</name>`);
+      allLines.push(`          </interfaces>`);
+      allLines.push(`        </security-zone>`);
+      allLines.push(`      </zones>`);
+      allLines.push(`    </security>`);
+      allLines.push(`  </logical-systems>`);
+    }
+  }
+
+  allLines.push('</configuration>');
+
+  const summary = {
+    logical_systems: configSlots.length,
+    cross_ls_links: crossLsLinks.length,
+    per_ls: perLsSummaries,
+  };
+
+  return { xml: allLines.join('\n'), warnings: allWarnings, summary };
 }
 
 function escapeXml(str) {

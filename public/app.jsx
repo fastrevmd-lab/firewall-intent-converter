@@ -101,6 +101,18 @@ export default function App() {
   const [showLoadConfirm, setShowLoadConfirm] = useState(null);
   const projectFileInputRef = React.useRef(null);
 
+  // --- Multi-Firewall Merge mode state ---
+  const [mergeMode, setMergeMode] = useState(false);
+  const [configSlots, setConfigSlots] = useState([]);
+  const [activeSlotIndex, setActiveSlotIndex] = useState(0);
+  const [crossLsLinks, setCrossLsLinks] = useState([]);
+  const [showAutoSplitPrompt, setShowAutoSplitPrompt] = useState(null);
+
+  // Computed active config for merge mode
+  const activeConfig = mergeMode
+    ? configSlots[activeSlotIndex]?.intermediateConfig
+    : intermediateConfig;
+
   // --- LLM Translation state (feature/llm-translate) ---
   const [srxTranslatedPolicies, setSrxTranslatedPolicies] = useState(null);
   const [isTranslating, setIsTranslating] = useState(false);
@@ -239,6 +251,17 @@ export default function App() {
 
       // Auto-open model selector after successful parse
       setShowModelSelector(true);
+
+      // Detect multi-vsys/VDOM/logical-system configs for auto-split prompt
+      const rc = data.intermediateConfig.routing_contexts || [];
+      const contextCount = rc.filter(c => !(c.type === 'default' && c.name === 'default')).length;
+      if (!mergeMode && contextCount > 1) {
+        setShowAutoSplitPrompt({
+          contexts: rc.filter(c => !(c.type === 'default' && c.name === 'default')),
+          config: data.intermediateConfig,
+          vendor: effectiveVendor,
+        });
+      }
     } catch (err) {
       setError(`Parse error: ${err.message}`);
       setIntermediateConfig(null);
@@ -249,7 +272,7 @@ export default function App() {
       setIsLoading(false);
       setLoadingMessage('');
     }
-  }, [configText]);
+  }, [configText, mergeMode]);
 
   // ------------------------------------------------------------------
   // Convert button click — warn if not all policies accepted
@@ -312,30 +335,224 @@ export default function App() {
   }, [intermediateConfig, interfaceMappings, srxTranslatedPolicies, siteName, siteGroup]);
 
   // ------------------------------------------------------------------
+  // Merge mode helpers
+  // ------------------------------------------------------------------
+
+  /** Update the active slot's intermediateConfig in merge mode */
+  const updateActiveSlot = useCallback((updaterFn) => {
+    setConfigSlots(prev => prev.map((slot, i) =>
+      i === activeSlotIndex ? { ...slot, intermediateConfig: updaterFn(slot.intermediateConfig) } : slot
+    ));
+  }, [activeSlotIndex]);
+
+  /** Dispatch config updates to either top-level or active slot */
+  const updateConfig = useCallback((updaterFn) => {
+    if (mergeMode) {
+      updateActiveSlot(updaterFn);
+    } else {
+      setIntermediateConfig(updaterFn);
+    }
+  }, [mergeMode, updateActiveSlot]);
+
+  // Slot CRUD
+  const handleAddSlot = useCallback(() => {
+    const newSlot = {
+      id: crypto.randomUUID(),
+      lsName: `LS-${configSlots.length + 1}`,
+      configText: '',
+      intermediateConfig: null,
+      sourceVendor: 'panos',
+      sourceModel: '',
+      interfaceMappings: {},
+      parseWarnings: [],
+      parseStats: null,
+      isSanitized: false,
+      sanitizationTable: null,
+      srxTranslatedPolicies: null,
+      warningStatuses: {},
+    };
+    setConfigSlots(prev => [...prev, newSlot]);
+    setActiveSlotIndex(configSlots.length);
+  }, [configSlots.length]);
+
+  const handleRemoveSlot = useCallback((index) => {
+    if (configSlots.length <= 2) return;
+    setConfigSlots(prev => prev.filter((_, i) => i !== index));
+    setActiveSlotIndex(prev => prev >= configSlots.length - 1 ? Math.max(0, configSlots.length - 2) : prev);
+  }, [configSlots.length]);
+
+  const handleUpdateSlotLsName = useCallback((index, name) => {
+    setConfigSlots(prev => prev.map((slot, i) =>
+      i === index ? { ...slot, lsName: name } : slot
+    ));
+  }, []);
+
+  const handleModeSwitch = useCallback((enableMerge) => {
+    if (enableMerge && !mergeMode) {
+      setConfigSlots([
+        { id: crypto.randomUUID(), lsName: 'LS-1', configText: '', intermediateConfig: null, sourceVendor: 'panos', sourceModel: '', interfaceMappings: {}, parseWarnings: [], parseStats: null, isSanitized: false, sanitizationTable: null, srxTranslatedPolicies: null, warningStatuses: {} },
+        { id: crypto.randomUUID(), lsName: 'LS-2', configText: '', intermediateConfig: null, sourceVendor: 'panos', sourceModel: '', interfaceMappings: {}, parseWarnings: [], parseStats: null, isSanitized: false, sanitizationTable: null, srxTranslatedPolicies: null, warningStatuses: {} },
+      ]);
+      setActiveSlotIndex(0);
+      setCrossLsLinks([]);
+    }
+    setMergeMode(enableMerge);
+  }, [mergeMode]);
+
+  // Auto-split accept handler
+  const handleAutoSplitAccept = useCallback(() => {
+    if (!showAutoSplitPrompt) return;
+    const { config, vendor, contexts } = showAutoSplitPrompt;
+
+    // Dynamically import auto-split (browser module)
+    import('./utils/auto-split.js').then(({ autoSplitRoutingContexts, detectCrossLsLinks }) => {
+      const splits = autoSplitRoutingContexts(config);
+      if (!splits || splits.length === 0) {
+        setShowAutoSplitPrompt(null);
+        return;
+      }
+
+      const slots = splits.map((s, i) => ({
+        id: crypto.randomUUID(),
+        lsName: s.lsName,
+        configText: configText,
+        intermediateConfig: s.intermediateConfig,
+        sourceVendor: vendor,
+        sourceModel: '',
+        interfaceMappings: {},
+        parseWarnings: parseWarnings,
+        parseStats: s.intermediateConfig.metadata,
+        isSanitized,
+        sanitizationTable,
+        srxTranslatedPolicies: null,
+        warningStatuses: {},
+      }));
+
+      setMergeMode(true);
+      setConfigSlots(slots);
+      setActiveSlotIndex(0);
+      setCrossLsLinks(detectCrossLsLinks(splits));
+      setShowAutoSplitPrompt(null);
+    });
+  }, [showAutoSplitPrompt, configText, parseWarnings, isSanitized, sanitizationTable]);
+
+  // Merge convert handler
+  const handleMergeConvert = useCallback(async (format = 'set') => {
+    const parsedSlots = configSlots.filter(s => s.intermediateConfig);
+    if (parsedSlots.length === 0) return;
+
+    setIsLoading(true);
+    setLoadingMessage('Merging and converting to SRX format...');
+    setError(null);
+
+    try {
+      const slotsPayload = parsedSlots.map(slot => ({
+        lsName: slot.lsName,
+        intermediateConfig: slot.srxTranslatedPolicies
+          ? { ...slot.intermediateConfig, security_policies: slot.srxTranslatedPolicies }
+          : slot.intermediateConfig,
+        interfaceMappings: slot.interfaceMappings,
+      }));
+
+      // Extract global config (HA from first slot that has it, syslog aggregated)
+      const globalConfig = {
+        ha_config: parsedSlots.find(s => s.intermediateConfig.ha_config?.enabled)?.intermediateConfig.ha_config || { enabled: false },
+        syslog_config: parsedSlots.flatMap(s => s.intermediateConfig.syslog_config || []),
+      };
+
+      const response = await fetch('/api/merge-convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ configSlots: slotsPayload, crossLsLinks, format, globalConfig }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Merge conversion failed');
+
+      setSrxOutput(data.output);
+      setConvertWarnings(data.output.warnings || []);
+      setConversionSummary(data.output.summary || null);
+      setOutputFormat(format);
+      setBottomTab('output');
+    } catch (err) {
+      setError(`Merge conversion error: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+      setLoadingMessage('');
+    }
+  }, [configSlots, crossLsLinks]);
+
+  // Parse a slot's config in merge mode
+  const handleParseSlot = useCallback(async (slotIndex, vendorHint) => {
+    const slot = configSlots[slotIndex];
+    if (!slot || !slot.configText.trim()) return;
+    setIsLoading(true);
+    setLoadingMessage(`Parsing config for ${slot.lsName}...`);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ configText: slot.configText }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Parse failed');
+
+      const policies = data.intermediateConfig.security_policies || [];
+      policies.forEach(rule => { rule._review_status = 'unreviewed'; });
+
+      const detectedVendor = data.detectedVendor || data.intermediateConfig?.metadata?.source_vendor || 'panos';
+
+      setConfigSlots(prev => prev.map((s, i) => i === slotIndex ? {
+        ...s,
+        intermediateConfig: data.intermediateConfig,
+        sourceVendor: detectedVendor,
+        parseWarnings: data.warnings || [],
+        parseStats: data.parseStats || null,
+      } : s));
+
+      // Recalculate cross-LS links after parse
+      import('./utils/auto-split.js').then(({ detectCrossLsLinks }) => {
+        const updatedSlots = configSlots.map((s, i) => i === slotIndex
+          ? { ...s, intermediateConfig: data.intermediateConfig }
+          : s
+        );
+        setCrossLsLinks(detectCrossLsLinks(updatedSlots.filter(s => s.intermediateConfig)));
+      });
+    } catch (err) {
+      setError(`Parse error (${configSlots[slotIndex]?.lsName}): ${err.message}`);
+    } finally {
+      setIsLoading(false);
+      setLoadingMessage('');
+    }
+  }, [configSlots]);
+
+  // ------------------------------------------------------------------
   // Config update handlers (mutable editing)
   // ------------------------------------------------------------------
 
   /** Update a single security rule by index */
   const handleUpdateRule = useCallback((index, updatedRule) => {
-    setIntermediateConfig(prev => {
+    updateConfig(prev => {
       const policies = [...prev.security_policies];
       policies[index] = updatedRule;
       return { ...prev, security_policies: policies };
     });
-  }, []);
+  }, [updateConfig]);
 
   /** Delete a security rule by index */
   const handleDeleteRule = useCallback((index) => {
-    setIntermediateConfig(prev => ({
+    updateConfig(prev => ({
       ...prev,
       security_policies: prev.security_policies.filter((_, i) => i !== index),
     }));
     setSelectedRule(null);
-  }, []);
+  }, [updateConfig]);
 
   /** Add a new security rule */
   const handleAddRule = useCallback(() => {
-    setIntermediateConfig(prev => {
+    updateConfig(prev => {
       const newIndex = (prev.security_policies?.length || 0) + 1;
       const newRule = {
         name: `new-rule-${newIndex}`,
@@ -363,52 +580,52 @@ export default function App() {
         security_policies: [...(prev.security_policies || []), newRule],
       };
     });
-  }, []);
+  }, [updateConfig]);
 
   /** Update zones */
   const handleZonesUpdate = useCallback((zones) => {
-    setIntermediateConfig(prev => ({ ...prev, zones }));
-  }, []);
+    updateConfig(prev => ({ ...prev, zones }));
+  }, [updateConfig]);
 
   /** Update NAT rules */
   const handleNATUpdate = useCallback((natRules) => {
-    setIntermediateConfig(prev => ({ ...prev, nat_rules: natRules }));
-  }, []);
+    updateConfig(prev => ({ ...prev, nat_rules: natRules }));
+  }, [updateConfig]);
 
   /** Update VPN tunnels */
   const handleVPNUpdate = useCallback((vpnTunnels) => {
-    setIntermediateConfig(prev => ({ ...prev, vpn_tunnels: vpnTunnels }));
-  }, []);
+    updateConfig(prev => ({ ...prev, vpn_tunnels: vpnTunnels }));
+  }, [updateConfig]);
 
   /** Update HA config */
   const handleHAUpdate = useCallback((haConfig) => {
-    setIntermediateConfig(prev => ({ ...prev, ha_config: haConfig }));
-  }, []);
+    updateConfig(prev => ({ ...prev, ha_config: haConfig }));
+  }, [updateConfig]);
 
   /** Update Screen config */
   const handleScreenUpdate = useCallback((screenConfig) => {
-    setIntermediateConfig(prev => ({ ...prev, screen_config: screenConfig }));
-  }, []);
+    updateConfig(prev => ({ ...prev, screen_config: screenConfig }));
+  }, [updateConfig]);
 
   /** Update Syslog config */
   const handleSyslogUpdate = useCallback((syslogConfig) => {
-    setIntermediateConfig(prev => ({ ...prev, syslog_config: syslogConfig }));
-  }, []);
+    updateConfig(prev => ({ ...prev, syslog_config: syslogConfig }));
+  }, [updateConfig]);
 
   /** Update DHCP config */
   const handleDHCPUpdate = useCallback((dhcpConfig) => {
-    setIntermediateConfig(prev => ({ ...prev, dhcp_config: dhcpConfig }));
-  }, []);
+    updateConfig(prev => ({ ...prev, dhcp_config: dhcpConfig }));
+  }, [updateConfig]);
 
   /** Update QoS config */
   const handleQoSUpdate = useCallback((qosConfig) => {
-    setIntermediateConfig(prev => ({ ...prev, qos_config: qosConfig }));
-  }, []);
+    updateConfig(prev => ({ ...prev, qos_config: qosConfig }));
+  }, [updateConfig]);
 
   /** Update a config section (for ObjectEditor) */
   const handleConfigUpdate = useCallback((field, items) => {
-    setIntermediateConfig(prev => ({ ...prev, [field]: items }));
-  }, []);
+    updateConfig(prev => ({ ...prev, [field]: items }));
+  }, [updateConfig]);
 
   // ------------------------------------------------------------------
   // Greenfield handlers
@@ -960,7 +1177,34 @@ export default function App() {
         )}
 
         <div className="navbar-actions">
-          {intermediateConfig && (
+          {/* Merge mode toggle */}
+          {!greenfieldMode && !isHealthCheckMode && (
+            <div className="navbar-mode-toggle">
+              <button
+                className={`mode-btn ${!mergeMode ? 'active' : ''}`}
+                onClick={() => handleModeSwitch(false)}
+                disabled={!!intermediateConfig || configSlots.some(s => s.intermediateConfig)}
+                title="Single config conversion"
+              >
+                Single
+              </button>
+              <button
+                className={`mode-btn ${mergeMode ? 'active' : ''}`}
+                onClick={() => handleModeSwitch(true)}
+                disabled={!!intermediateConfig || configSlots.some(s => s.intermediateConfig)}
+                title="Merge multiple firewalls into logical-systems"
+              >
+                Multi-LS
+              </button>
+            </div>
+          )}
+          {mergeMode && (
+            <span className="stat-badge" style={{ fontSize: 11 }}>
+              LS: {configSlots.filter(s => s.intermediateConfig).length}/{configSlots.length} parsed
+              {crossLsLinks.length > 0 && ` | ${crossLsLinks.length} cross-LS`}
+            </span>
+          )}
+          {(mergeMode ? activeConfig : intermediateConfig) && (
             <button
               className="btn btn-secondary btn-sm"
               onClick={() => setShowModelSelector(true)}
@@ -1068,26 +1312,62 @@ export default function App() {
       <div className="main-content">
         {/* LEFT: Config Input */}
         <ConfigInput
-          configText={configText}
-          onConfigChange={handleConfigChange}
-          onParse={handleParse}
+          configText={mergeMode ? (configSlots[activeSlotIndex]?.configText || '') : configText}
+          onConfigChange={mergeMode
+            ? (text) => setConfigSlots(prev => prev.map((s, i) => i === activeSlotIndex ? { ...s, configText: text } : s))
+            : handleConfigChange
+          }
+          onParse={mergeMode ? (() => handleParseSlot(activeSlotIndex)) : handleParse}
           onSanitize={handleSanitize}
           onStartGreenfield={handleStartGreenfield}
           onStartGreenfieldWithTemplate={handleStartGreenfieldWithTemplate}
           greenfieldMode={greenfieldMode}
           isLoading={isLoading}
-          isParsed={!!intermediateConfig}
-          isSanitized={isSanitized}
-          sanitizationTable={sanitizationTable}
+          isParsed={mergeMode ? !!configSlots[activeSlotIndex]?.intermediateConfig : !!intermediateConfig}
+          isSanitized={mergeMode ? (configSlots[activeSlotIndex]?.isSanitized || false) : isSanitized}
+          sanitizationTable={mergeMode ? (configSlots[activeSlotIndex]?.sanitizationTable || null) : sanitizationTable}
           sourceModel={sourceModel}
           targetModel={targetModel}
           onOpenModels={() => setShowModelSelector(true)}
+          mergeMode={mergeMode}
+          configSlots={configSlots}
+          activeSlotIndex={activeSlotIndex}
+          onActivateSlot={setActiveSlotIndex}
+          onAddSlot={handleAddSlot}
+          onRemoveSlot={handleRemoveSlot}
+          onUpdateSlotLsName={handleUpdateSlotLsName}
         />
 
         {/* CENTER: Tabbed Editor Panel */}
         <div className="panel policy-table-panel">
-          {intermediateConfig ? (
+          {(mergeMode ? activeConfig : intermediateConfig) ? (
             <>
+              {/* Merge mode: config slot selector bar */}
+              {mergeMode && (
+                <div className="merge-config-selector">
+                  {configSlots.map((slot, i) => (
+                    <button
+                      key={slot.id}
+                      className={`merge-config-btn ${i === activeSlotIndex ? 'active' : ''}`}
+                      onClick={() => setActiveSlotIndex(i)}
+                      disabled={!slot.intermediateConfig}
+                      title={slot.intermediateConfig ? `${slot.sourceVendor} - ${slot.intermediateConfig.security_policies?.length || 0} rules` : 'Not parsed'}
+                    >
+                      <span className="merge-config-name">{slot.lsName}</span>
+                      {slot.intermediateConfig && (
+                        <span className="merge-config-stats">
+                          {slot.intermediateConfig.security_policies?.length || 0}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                  {crossLsLinks.length > 0 && (
+                    <span className="cross-ls-badge" title={crossLsLinks.map(l => `${l.ls1} ↔ ${l.ls2} (${l.sharedZone})`).join(', ')}>
+                      {crossLsLinks.length} lt-link{crossLsLinks.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+              )}
               {/* Platform view toggle + Tab bar */}
               <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'stretch', padding: 0 }}>
                 {/* Platform view toggle */}
@@ -1146,10 +1426,10 @@ export default function App() {
                       )}
                       <button
                         className="btn btn-primary btn-sm"
-                        onClick={() => handleConvertClick('set')}
+                        onClick={() => mergeMode ? handleMergeConvert('set') : handleConvertClick('set')}
                         disabled={isLoading}
                       >
-                        Convert to SRX
+                        {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
                       </button>
                       <button
                         className="btn btn-secondary btn-sm push-btn"
@@ -1311,7 +1591,7 @@ export default function App() {
                       policies={
                         platformView === 'srx'
                           ? (srxTranslatedPolicies || [])
-                          : (intermediateConfig.security_policies || [])
+                          : ((mergeMode ? activeConfig : intermediateConfig)?.security_policies || [])
                       }
                       warnings={allWarnings}
                       selectedRule={selectedRule}
@@ -1406,7 +1686,7 @@ export default function App() {
                 )}
                 {editTab === 'zones' && (
                   <ZoneEditor
-                    zones={intermediateConfig.zones || []}
+                    zones={(mergeMode ? activeConfig : intermediateConfig)?.zones || []}
                     onZonesUpdate={handleZonesUpdate}
                     viewMode={effectiveViewMode}
                     interfaceMappings={interfaceMappings}
@@ -1414,54 +1694,43 @@ export default function App() {
                 )}
                 {editTab === 'objects' && (
                   <ObjectEditor
-                    intermediateConfig={intermediateConfig}
+                    intermediateConfig={mergeMode ? activeConfig : intermediateConfig}
                     onConfigUpdate={handleConfigUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}
                 {editTab === 'nat' && (
                   <NATEditor
-                    natRules={intermediateConfig.nat_rules || []}
+                    natRules={(mergeMode ? activeConfig : intermediateConfig)?.nat_rules || []}
                     onNATUpdate={handleNATUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}
                 {editTab === 'routing' && (
                   <RoutingEditor
-                    routingContexts={intermediateConfig.routing_contexts || []}
-                    staticRoutes={intermediateConfig.static_routes || []}
-                    interfaces={intermediateConfig.interfaces || []}
-                    bridgeDomains={intermediateConfig.bridge_domains || []}
-                    l2Interfaces={intermediateConfig.l2_interfaces || []}
-                    vwirePairs={intermediateConfig.vwire_pairs || []}
-                    onRoutesUpdate={(routes) => {
-                      const updated = { ...intermediateConfig, static_routes: routes };
-                      setIntermediateConfig(updated);
-                    }}
-                    onInterfacesUpdate={(interfaces) => {
-                      setIntermediateConfig(prev => ({ ...prev, interfaces }));
-                    }}
-                    onBridgeDomainsUpdate={(bridgeDomains) => {
-                      setIntermediateConfig(prev => ({ ...prev, bridge_domains: bridgeDomains }));
-                    }}
-                    onL2InterfacesUpdate={(l2Interfaces) => {
-                      setIntermediateConfig(prev => ({ ...prev, l2_interfaces: l2Interfaces }));
-                    }}
-                    onVwirePairsUpdate={(vwirePairs) => {
-                      setIntermediateConfig(prev => ({ ...prev, vwire_pairs: vwirePairs }));
-                    }}
+                    routingContexts={(mergeMode ? activeConfig : intermediateConfig)?.routing_contexts || []}
+                    staticRoutes={(mergeMode ? activeConfig : intermediateConfig)?.static_routes || []}
+                    interfaces={(mergeMode ? activeConfig : intermediateConfig)?.interfaces || []}
+                    bridgeDomains={(mergeMode ? activeConfig : intermediateConfig)?.bridge_domains || []}
+                    l2Interfaces={(mergeMode ? activeConfig : intermediateConfig)?.l2_interfaces || []}
+                    vwirePairs={(mergeMode ? activeConfig : intermediateConfig)?.vwire_pairs || []}
+                    onRoutesUpdate={(routes) => updateConfig(prev => ({ ...prev, static_routes: routes }))}
+                    onInterfacesUpdate={(interfaces) => updateConfig(prev => ({ ...prev, interfaces }))}
+                    onBridgeDomainsUpdate={(bridgeDomains) => updateConfig(prev => ({ ...prev, bridge_domains: bridgeDomains }))}
+                    onL2InterfacesUpdate={(l2Interfaces) => updateConfig(prev => ({ ...prev, l2_interfaces: l2Interfaces }))}
+                    onVwirePairsUpdate={(vwirePairs) => updateConfig(prev => ({ ...prev, vwire_pairs: vwirePairs }))}
                   />
                 )}
                 {editTab === 'vpn' && (
                   <VPNEditor
-                    vpnTunnels={intermediateConfig.vpn_tunnels || []}
+                    vpnTunnels={(mergeMode ? activeConfig : intermediateConfig)?.vpn_tunnels || []}
                     onVPNUpdate={handleVPNUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}
                 {editTab === 'ha' && (
                   <HAEditor
-                    haConfig={intermediateConfig.ha_config}
+                    haConfig={(mergeMode ? activeConfig : intermediateConfig)?.ha_config}
                     onHAUpdate={handleHAUpdate}
                     viewMode={effectiveViewMode}
                     targetModel={targetModel}
@@ -1469,28 +1738,28 @@ export default function App() {
                 )}
                 {editTab === 'screen' && (
                   <ScreenEditor
-                    screenConfig={intermediateConfig.screen_config || []}
+                    screenConfig={(mergeMode ? activeConfig : intermediateConfig)?.screen_config || []}
                     onScreenUpdate={handleScreenUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}
                 {editTab === 'syslog' && (
                   <SyslogEditor
-                    syslogConfig={intermediateConfig.syslog_config || []}
+                    syslogConfig={(mergeMode ? activeConfig : intermediateConfig)?.syslog_config || []}
                     onSyslogUpdate={handleSyslogUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}
                 {editTab === 'dhcp' && (
                   <DHCPEditor
-                    dhcpConfig={intermediateConfig.dhcp_config || []}
+                    dhcpConfig={(mergeMode ? activeConfig : intermediateConfig)?.dhcp_config || []}
                     onDHCPUpdate={handleDHCPUpdate}
                     viewMode={effectiveViewMode}
                   />
                 )}
                 {editTab === 'qos' && (
                   <QoSEditor
-                    qosConfig={intermediateConfig.qos_config || []}
+                    qosConfig={(mergeMode ? activeConfig : intermediateConfig)?.qos_config || []}
                     onQoSUpdate={handleQoSUpdate}
                     viewMode={effectiveViewMode}
                   />
@@ -1520,7 +1789,7 @@ export default function App() {
         {/* RIGHT: Interview / Rule Details */}
         <InterviewPanel
           selectedRule={selectedRule}
-          intermediateConfig={intermediateConfig}
+          intermediateConfig={mergeMode ? activeConfig : intermediateConfig}
           warnings={allWarnings}
           isTranslating={isTranslating}
           translationProgress={translationProgress}
@@ -1529,7 +1798,7 @@ export default function App() {
             const isTranslated = platformView === 'srx' && srxTranslatedPolicies;
             const policies = isTranslated
               ? srxTranslatedPolicies
-              : intermediateConfig?.security_policies;
+              : (mergeMode ? activeConfig : intermediateConfig)?.security_policies;
             if (!policies) return;
             const index = policies.findIndex(
               r => r.name === selectedRule.name && r._rule_index === selectedRule._rule_index
@@ -1639,6 +1908,47 @@ export default function App() {
       {/* --- Modals --- */}
       {showFeedback && (
         <FeedbackModal onClose={() => setShowFeedback(false)} />
+      )}
+
+      {/* Auto-split prompt for multi-vsys/VDOM/logical-system configs */}
+      {showAutoSplitPrompt && (
+        <div className="modal-overlay" onClick={() => setShowAutoSplitPrompt(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
+            <div className="modal-header">
+              <h2>Multiple Contexts Detected</h2>
+              <button className="modal-close" onClick={() => setShowAutoSplitPrompt(null)}>x</button>
+            </div>
+            <div className="modal-body" style={{ padding: 16 }}>
+              <p style={{ marginBottom: 12 }}>
+                This configuration contains <strong>{showAutoSplitPrompt.contexts.length}</strong> routing contexts
+                ({showAutoSplitPrompt.contexts.map(c => c.name).join(', ')}).
+              </p>
+              <p style={{ marginBottom: 12 }}>
+                Would you like to split them into separate <strong>SRX logical-systems</strong>?
+                Each context will become an independent config slot that can be edited and converted separately.
+              </p>
+              <div style={{ background: 'var(--bg-secondary)', padding: 10, borderRadius: 6, fontSize: 12 }}>
+                {showAutoSplitPrompt.contexts.map((ctx, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+                    <span className="stat-badge">{ctx.type}</span>
+                    <strong>{ctx.name}</strong>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      {ctx.zones?.length || 0} zones
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-actions" style={{ padding: '12px 16px', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowAutoSplitPrompt(null)}>
+                Keep as Single Config
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={handleAutoSplitAccept}>
+                Split into Logical-Systems
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showSettings && (

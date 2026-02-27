@@ -127,6 +127,15 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Version-safe** — Project files include a version field for forward-compatible migrations. Missing state fields are filled with defaults on load
 - **Full state preservation** — Saves all workflow progress including greenfield mode, health check mode, sanitization state, and warning resolutions
 
+### Multi-Firewall Merge (Logical-Systems)
+- **Multi-LS Merge mode** — Toggle between Single config and Multi-LS Merge mode via the navbar pill toggle. Merge mode lets you import multiple firewall configs and combine them into a single SRX with logical-system separation
+- **Slot-based import** — Each logical-system gets its own config slot with independent vendor detection, parsing, sanitization, and interface mapping. Add/remove slots dynamically, rename logical-systems inline
+- **Auto-split detection** — When a single config contains multiple routing contexts (PAN-OS multi-vsys, FortiGate multi-VDOM, SRX logical-systems/tenants), auto-split is offered to break them into separate logical-system slots
+- **SRX logical-system/tenant parsing** — SRX parser detects `set logical-systems` and `set tenants` prefixes, parses each context independently with full zone/policy/NAT/address support, and tags policies with `_logical_system`
+- **Cross-LS traffic detection** — Shared zone names across logical-systems are auto-detected and generate `lt-0/0/0` tunnel interface pairs with `peer-unit` linking for inter-LS communication
+- **Merged output** — "Merge & Convert to SRX" produces a single output with per-LS sections (`set logical-systems LS-NAME ...`) plus cross-LS tunnel commands. Both set command and XML output formats supported
+- **Config selector** — Center panel shows a config selector bar to switch between logical-system slots while editing
+
 ### Greenfield Configuration Builder
 - **Template picker** — Choose from 4 pre-built deployment templates (Branch Office, Data Center, Campus Edge, Cloud Gateway) or start blank. Templates pre-fill zones, policies, NAT, screens, routes, and system config
 - **Day-0 system config** — Templates include hostname, DNS servers, NTP servers, timezone, login banner, and management services (SSH/HTTPS/NETCONF). System config is emitted in both SRX set commands (`set system host-name`, `set system name-server`, etc.) and XML output (`<system>` block)
