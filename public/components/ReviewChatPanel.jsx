@@ -6,6 +6,7 @@
  * inline suggestion parsing and accept/reject per suggestion.
  */
 import React, { useState, useEffect, useRef } from 'react';
+import { safeJsonParse } from '../utils/safe-json.js';
 import {
   getLLMChatResponse,
   getLLMStatus,
@@ -122,7 +123,7 @@ export default function ReviewChatPanel({
       }
       // Try to parse the JSON
       try {
-        const json = JSON.parse(match[1].trim());
+        const json = safeJsonParse(match[1].trim());
         if (json.rule_name && json.field) {
           parts.push({ type: 'suggestion', data: json });
         } else {

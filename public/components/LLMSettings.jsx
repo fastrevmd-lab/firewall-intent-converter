@@ -13,6 +13,7 @@ import {
   VENDOR_PROMPT_KEYS,
   loadVendorTranslatePrompt,
 } from '../utils/llm-client.js';
+import { safeJsonParse } from '../utils/safe-json.js';
 
 const VENDOR_LABELS = {
   '': 'Default (Generic)',
@@ -71,7 +72,7 @@ export default function LLMSettings({ onClose, initialTab }) {
     try {
       const saved = localStorage.getItem('llm-settings');
       if (saved) {
-        const settings = JSON.parse(saved);
+        const settings = safeJsonParse(saved);
         setProvider(settings.provider || 'claude');
         setApiKey(settings.apiKey || '');
         setModel(settings.model || 'claude-sonnet-4-6');
@@ -93,7 +94,7 @@ export default function LLMSettings({ onClose, initialTab }) {
     try {
       const mcpSaved = localStorage.getItem('mcp-settings');
       if (mcpSaved) {
-        const mcpSettings = JSON.parse(mcpSaved);
+        const mcpSettings = safeJsonParse(mcpSaved);
         setMcpUrl(mcpSettings.url || '');
       }
     } catch { /* ignore */ }

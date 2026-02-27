@@ -1,3 +1,5 @@
+import { safeJsonParse } from './safe-json.js';
+
 /**
  * Browser-Side LLM API Client
  * ==============================
@@ -491,7 +493,7 @@ export function loadSystemPrompt(type = 'fullReview', sourceVendor = null) {
     try {
       const saved = localStorage.getItem('llm-settings');
       if (saved) {
-        const settings = JSON.parse(saved);
+        const settings = safeJsonParse(saved);
         const vendorKey = `translateSystemPrompt_${sourceVendor}`;
         const prompt = settings[vendorKey];
         if (prompt && prompt.trim()) return prompt;
@@ -506,7 +508,7 @@ export function loadSystemPrompt(type = 'fullReview', sourceVendor = null) {
   try {
     const saved = localStorage.getItem('llm-settings');
     if (saved) {
-      const settings = JSON.parse(saved);
+      const settings = safeJsonParse(saved);
       const key = keys[type] || keys.fullReview;
       const prompt = settings[key];
       if (prompt && prompt.trim()) return prompt;
@@ -531,7 +533,7 @@ export function loadVendorTranslatePrompt(vendor) {
   try {
     const saved = localStorage.getItem('llm-settings');
     if (saved) {
-      const settings = JSON.parse(saved);
+      const settings = safeJsonParse(saved);
       const vendorKey = `translateSystemPrompt_${vendor}`;
       const prompt = settings[vendorKey];
       if (prompt && prompt.trim()) return prompt;
@@ -945,7 +947,7 @@ async function callCustomChat(settings, messages, systemPrompt) {
 function loadSettings() {
   try {
     const saved = localStorage.getItem('llm-settings');
-    if (saved) return JSON.parse(saved);
+    if (saved) return safeJsonParse(saved);
   } catch { /* ignore */ }
   return {};
 }
@@ -1191,14 +1193,14 @@ export function parseTranslationResponse(response) {
   const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
   if (fenceMatch) {
     try {
-      policies = JSON.parse(fenceMatch[1].trim());
+      policies = safeJsonParse(fenceMatch[1].trim());
     } catch { /* fall through */ }
   }
 
   // Strategy 2: Parse the entire response as JSON
   if (!policies) {
     try {
-      policies = JSON.parse(response.trim());
+      policies = safeJsonParse(response.trim());
     } catch { /* fall through */ }
   }
 
@@ -1210,7 +1212,7 @@ export function parseTranslationResponse(response) {
       const endIdx = response.lastIndexOf(']');
       if (endIdx > startIdx) {
         try {
-          policies = JSON.parse(response.slice(startIdx, endIdx + 1));
+          policies = safeJsonParse(response.slice(startIdx, endIdx + 1));
         } catch { /* fall through */ }
       }
     }
@@ -1226,7 +1228,7 @@ export function parseTranslationResponse(response) {
       if (lastBrace !== -1) {
         jsonStr = jsonStr.slice(0, lastBrace + 1) + ']';
         try {
-          policies = JSON.parse(jsonStr);
+          policies = safeJsonParse(jsonStr);
           console.warn('[translate] Repaired truncated JSON response — output may be incomplete.');
         } catch { /* fall through */ }
       }

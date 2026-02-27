@@ -8,6 +8,7 @@
  * Renders inside the center panel (no outer panel wrapper).
  */
 import React, { useState, useEffect, useRef } from 'react';
+import { safeJsonParse } from '../utils/safe-json.js';
 import {
   getLLMChatResponse,
   getLLMStatus,
@@ -130,7 +131,7 @@ export default function GreenfieldChat({
     let match;
     while ((match = regex.exec(content)) !== null) {
       try {
-        const json = JSON.parse(match[1].trim());
+        const json = safeJsonParse(match[1].trim());
         if (json.action && json.data) {
           onApplyAction(json.action, json.data);
         }
@@ -150,7 +151,7 @@ export default function GreenfieldChat({
         parts.push({ type: 'text', content: content.slice(lastIndex, match.index) });
       }
       try {
-        const json = JSON.parse(match[1].trim());
+        const json = safeJsonParse(match[1].trim());
         if (json.action && json.data) {
           parts.push({ type: 'action', data: json });
         } else {
