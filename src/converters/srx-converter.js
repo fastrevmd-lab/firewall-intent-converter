@@ -95,6 +95,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   convertDhcpConfig(config.dhcp_config, commands, warnings, summary);
   convertQosConfig(config.qos_config, commands, warnings, summary);
   convertL2Config(config, commands, warnings, summary);
+  convertUserIdentification(config.security_policies, commands, warnings);
 
   // Generate placeholder definitions for unmapped Customfwic applications
   if (customfwicApps.size > 0) {
@@ -922,6 +923,46 @@ function convertSchedules(schedules, commands, warnings) {
 }
 
 // ---------------------------------------------------------------------------
+// User Identification (JIMS) — emitted when policies use source_users
+// ---------------------------------------------------------------------------
+
+function convertUserIdentification(policies, commands, warnings) {
+  if (!policies || policies.length === 0) return;
+  const identityPolicies = policies.filter(p => p.source_users && p.source_users.length > 0);
+  if (identityPolicies.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# User Identification (JIMS Integration)');
+  commands.push('# =============================================');
+  commands.push('# NOTE: JIMS server connection details must be configured manually');
+  commands.push('set services user-identification identity-management connection connect-method https');
+  commands.push('set services user-identification identity-management connection port 1443');
+  commands.push('# set services user-identification identity-management connection primary address <JIMS_SERVER_IP>');
+  commands.push('# set services user-identification identity-management connection primary client-id <CLIENT_ID>');
+  commands.push('# set services user-identification identity-management connection primary client-secret <SECRET>');
+  commands.push('set services user-identification device-information authentication-source active-directory-authentication-table');
+  commands.push('');
+
+  // Document all unique identity references
+  const allIdentities = new Set();
+  for (const p of identityPolicies) {
+    for (const id of p.source_users) allIdentities.add(id);
+  }
+  commands.push(`# Identity references used in ${identityPolicies.length} policies:`);
+  for (const id of allIdentities) {
+    commands.push(`#   - ${id}`);
+  }
+  commands.push('');
+
+  warnings.push(createWarning(
+    'interview_required',
+    'services/user-identification',
+    `${identityPolicies.length} policies use identity-based match (source_users) — JIMS server configuration required`,
+    'Configure JIMS server IP, client-id, and client-secret. Ensure AD user/group names match the source firewall identities.'
+  ));
+}
+
+// ---------------------------------------------------------------------------
 // Security Policy Converter
 // ---------------------------------------------------------------------------
 
@@ -990,6 +1031,13 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         const apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor);
         for (const app of apps) {
           commands.push(`set ${policyPath} match application ${app}`);
+        }
+
+        // Match criteria: source identity (user/group via JIMS)
+        if (policy.source_users && policy.source_users.length > 0) {
+          for (const identity of policy.source_users) {
+            commands.push(`set ${policyPath} match source-identity "${sanitizeJunosName(identity)}"`);
+          }
         }
 
         // Action

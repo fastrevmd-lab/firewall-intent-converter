@@ -650,6 +650,8 @@ function parseSinglePolicy(name, data, srcZones, dstZones, ruleIndex, warnings) 
   const dstAddresses = collectKeys(matchNode['destination-address']);
   // Applications
   const applications = collectKeys(matchNode.application);
+  // Source identity (user/group references via JIMS)
+  const sourceIdentity = collectKeys(matchNode['source-identity']);
 
   // Action
   let action = 'deny';
@@ -719,6 +721,7 @@ function parseSinglePolicy(name, data, srcZones, dstZones, ruleIndex, warnings) 
     tags: [],
     disabled,
     schedule: schedulerName,
+    source_users: sourceIdentity.filter(id => id !== 'any'),
     _rule_index: ruleIndex,
   };
 }

@@ -549,6 +549,7 @@ function parseSecurityPolicies(sections, warnings) {
     tags: ['added_by_fpic'],
     disabled: false,
     schedule: '',
+    source_users: [],
     _rule_index: ruleIndex++,
     _implicit: true,
     _huawei: {
@@ -597,6 +598,7 @@ function buildSecurityPolicy(ruleName, lines, ruleIndex, warnings) {
   const services = [];
   const applications = [];
   const profileRefs = {};
+  const srcUsers = [];
   let action = 'deny';
   let disabled = false;
   let description = '';
@@ -671,6 +673,18 @@ function buildSecurityPolicy(ruleName, lines, ruleIndex, warnings) {
       if (appName.toLowerCase() !== 'any') {
         applications.push(appName);
       }
+      continue;
+    }
+
+    // Source user identity
+    const srcUserMatch = trimmed.match(/^source-user\s+(\S+)/i);
+    if (srcUserMatch) {
+      srcUsers.push(srcUserMatch[1]);
+      continue;
+    }
+    const srcUserGroupMatch = trimmed.match(/^source-user-group\s+(\S+)/i);
+    if (srcUserGroupMatch) {
+      srcUsers.push(`group:${srcUserGroupMatch[1]}`);
       continue;
     }
 
@@ -759,6 +773,7 @@ function buildSecurityPolicy(ruleName, lines, ruleIndex, warnings) {
     tags: [],
     disabled,
     schedule,
+    source_users: srcUsers,
     _rule_index: ruleIndex,
     _huawei: {
       priority: 0,

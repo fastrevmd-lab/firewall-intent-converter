@@ -991,8 +991,31 @@ function buildPolicyFromRule(rule, uidMap, ruleIndex, layerName, warnings) {
   const comments = rule.comments || rule.comment || '';
   const sectionName = rule._sectionName || '';
 
+  // Separate identity references (access-role) from address objects in source
+  const srcIdentities = [];
+  const srcAddrUids = [];
+  if (Array.isArray(rule.source)) {
+    for (const uidOrObj of rule.source) {
+      const obj = resolveUid(uidOrObj, uidMap);
+      if (obj && obj.type === 'access-role') {
+        const roleName = obj.name || extractUidString(uidOrObj);
+        srcIdentities.push(roleName);
+      } else {
+        srcAddrUids.push(uidOrObj);
+      }
+    }
+  }
+  if (srcIdentities.length > 0) {
+    warnings.push(createWarning(
+      'warning',
+      `rule/${ruleName}/source-identity`,
+      `Rule "${ruleName}" uses Access Role [${srcIdentities.join(', ')}] — SRX source-identity supports user/group only, network/machine conditions are lost`,
+      'Create separate address-based match conditions for the network/machine parts of the Access Role'
+    ));
+  }
+
   // Resolve source and destination addresses
-  const srcAddrs = resolveUidArray(rule.source, uidMap, warnings, `rule/${ruleName}/source`);
+  const srcAddrs = srcAddrUids.length > 0 ? resolveUidArray(srcAddrUids, uidMap, warnings, `rule/${ruleName}/source`) : resolveUidArray(rule.source, uidMap, warnings, `rule/${ruleName}/source`);
   const dstAddrs = resolveUidArray(rule.destination, uidMap, warnings, `rule/${ruleName}/destination`);
 
   // Resolve services
@@ -1035,6 +1058,7 @@ function buildPolicyFromRule(rule, uidMap, ruleIndex, layerName, warnings) {
     tags: [],
     disabled: !enabled,
     schedule: '',
+    source_users: srcIdentities,
     _rule_index: ruleIndex,
     _checkpoint: {
       uid: ruleUid,

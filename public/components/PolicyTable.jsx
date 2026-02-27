@@ -35,6 +35,11 @@ export default function PolicyTable({
   const isSonicwall = viewMode === 'sonicwall';
   const isHuawei = viewMode === 'huawei';
 
+  // Check if any policy uses identity-based matching (conditional Users column)
+  const hasIdentityPolicies = useMemo(() => {
+    return (policies || []).some(p => p.source_users && p.source_users.length > 0);
+  }, [policies]);
+
   // Build a lookup of warning counts per rule
   const warningsByRule = useMemo(() => {
     const map = {};
@@ -139,7 +144,7 @@ export default function PolicyTable({
     let value = editValue;
 
     // Convert comma-separated strings back to arrays for array fields
-    const arrayFields = ['src_zones', 'dst_zones', 'src_addresses', 'dst_addresses', 'applications', 'services'];
+    const arrayFields = ['src_zones', 'dst_zones', 'src_addresses', 'dst_addresses', 'applications', 'services', 'source_users'];
     if (arrayFields.includes(field)) {
       value = editValue.split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -513,6 +518,7 @@ export default function PolicyTable({
         <tr>
           <th onClick={() => handleSort('_rule_index')}>#{sortIndicator('_rule_index')}</th>
           <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
+          {hasIdentityPolicies && <th>Users</th>}
           <th onClick={() => handleSort('src_zones')}>Src Zone{sortIndicator('src_zones')}</th>
           <th onClick={() => handleSort('dst_zones')}>Dst Zone{sortIndicator('dst_zones')}</th>
           <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
@@ -541,6 +547,7 @@ export default function PolicyTable({
                 {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
                 {renderEditableCell(policy, 'name', policy.name)}
               </td>
+              {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
               <td>{renderEditableCell(policy, 'src_zones', renderCellValues(policy.src_zones))}</td>
               <td>{renderEditableCell(policy, 'dst_zones', renderCellValues(policy.dst_zones))}</td>
               <td>{renderEditableCell(policy, 'src_addresses', <>{policy.negate_source && <span className="cell-chip negate-chip">NOT</span>}{renderCellValues(policy.src_addresses)}</>)}</td>
@@ -574,7 +581,7 @@ export default function PolicyTable({
   /** Render the SRX Security Director-style table */
   const renderSrxTable = () => {
     const zonePairGroups = groupByZonePair(displayPolicies);
-    const srxColCount = 8;
+    const srxColCount = hasIdentityPolicies ? 9 : 8;
 
     return (
       <table className="policy-table srx-table">
@@ -585,6 +592,7 @@ export default function PolicyTable({
             <th>Sources</th>
             <th>Destinations</th>
             <th onClick={() => handleSort('applications')}>Applications / Ports{sortIndicator('applications')}</th>
+            {hasIdentityPolicies && <th>Source Identity</th>}
             <th onClick={() => handleSort('action')} style={{ width: 100 }}>Action{sortIndicator('action')}</th>
             <th>Security Subscriptions</th>
             <th style={{ width: 70 }}>Options</th>
@@ -675,6 +683,7 @@ export default function PolicyTable({
                         {renderSrxApps(policy)}
                       </div>
                     </td>
+                    {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
                     <td>{renderSrxAction(policy)}</td>
                     <td>{renderSrxSubscriptions(policy)}</td>
                     <td style={{ textAlign: 'center' }}>
@@ -766,6 +775,7 @@ export default function PolicyTable({
           <th onClick={() => handleSort('dst_zones')}>To{sortIndicator('dst_zones')}</th>
           <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
           <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          {hasIdentityPolicies && <th>Users</th>}
           <th>Schedule</th>
           <th onClick={() => handleSort('services')}>Service{sortIndicator('services')}</th>
           <th onClick={() => handleSort('action')} style={{ width: 90 }}>Action{sortIndicator('action')}</th>
@@ -812,6 +822,7 @@ export default function PolicyTable({
                   <>{policy.negate_destination && <span className="cell-chip negate-chip">NOT</span>}{renderCellValues(policy.dst_addresses)}</>
                 ))}
               </td>
+              {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
               <td>
                 <span className="fg-schedule">{fg.schedule || 'always'}</span>
               </td>
@@ -847,6 +858,7 @@ export default function PolicyTable({
           <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
           <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
           <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          {hasIdentityPolicies && <th>Users</th>}
           <th onClick={() => handleSort('services')}>Services &amp; Apps{sortIndicator('services')}</th>
           <th onClick={() => handleSort('action')} style={{ width: 80 }}>Action{sortIndicator('action')}</th>
           <th>Track</th>
@@ -883,6 +895,7 @@ export default function PolicyTable({
                   <>{policy.negate_destination && <span className="cell-chip negate-chip">NOT</span>}{renderCellValues(policy.dst_addresses)}</>
                 ))}
               </td>
+              {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
               <td>{renderEditableCell(policy, 'services', renderCellValues(policy.services))}</td>
               <td>
                 <span className={`action-${policy.action === 'allow' ? 'permit' : 'deny'}`}>
@@ -922,6 +935,7 @@ export default function PolicyTable({
           <th onClick={() => handleSort('dst_zones')}>To{sortIndicator('dst_zones')}</th>
           <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
           <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          {hasIdentityPolicies && <th>Users</th>}
           <th onClick={() => handleSort('services')}>Service{sortIndicator('services')}</th>
           <th onClick={() => handleSort('action')} style={{ width: 80 }}>Action{sortIndicator('action')}</th>
           <th style={{ width: 40 }}>DPI</th>
@@ -951,6 +965,7 @@ export default function PolicyTable({
               <td>{renderEditableCell(policy, 'dst_zones', renderCellValues(policy.dst_zones))}</td>
               <td>{renderEditableCell(policy, 'src_addresses', renderCellValues(policy.src_addresses))}</td>
               <td>{renderEditableCell(policy, 'dst_addresses', renderCellValues(policy.dst_addresses))}</td>
+              {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
               <td>{renderEditableCell(policy, 'services', renderCellValues(policy.services))}</td>
               <td>
                 <span className={`action-${policy.action === 'allow' ? 'permit' : 'deny'}`}>
@@ -990,6 +1005,7 @@ export default function PolicyTable({
           <th onClick={() => handleSort('dst_zones')}>Dst Zone{sortIndicator('dst_zones')}</th>
           <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
           <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          {hasIdentityPolicies && <th>Users</th>}
           <th onClick={() => handleSort('services')}>Service{sortIndicator('services')}</th>
           <th>Profiles</th>
           <th onClick={() => handleSort('action')} style={{ width: 80 }}>Action{sortIndicator('action')}</th>
@@ -1018,6 +1034,7 @@ export default function PolicyTable({
               <td>{renderEditableCell(policy, 'dst_zones', renderCellValues(policy.dst_zones))}</td>
               <td>{renderEditableCell(policy, 'src_addresses', renderCellValues(policy.src_addresses))}</td>
               <td>{renderEditableCell(policy, 'dst_addresses', renderCellValues(policy.dst_addresses))}</td>
+              {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
               <td>{renderEditableCell(policy, 'services', renderCellValues(policy.services))}</td>
               <td>{renderProfileCell(policy)}</td>
               <td>
@@ -1112,6 +1129,7 @@ export default function PolicyTable({
           <th>Protocol</th>
           <th onClick={() => handleSort('src_addresses')}>Source{sortIndicator('src_addresses')}</th>
           <th onClick={() => handleSort('dst_addresses')}>Destination{sortIndicator('dst_addresses')}</th>
+          {hasIdentityPolicies && <th>Users</th>}
           <th>Service / Port</th>
           <th style={{ width: 52 }}>Log</th>
           <th style={{ width: 50 }}>Hits</th>
@@ -1177,6 +1195,7 @@ export default function PolicyTable({
                   </div>
                 ))}
               </td>
+              {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
               <td>{renderEditableCell(policy, 'services', renderCiscoService(policy))}</td>
               <td style={{ textAlign: 'center' }}>{renderCiscoLog(policy)}</td>
               <td style={{ textAlign: 'center' }}>{renderCiscoHitCount(policy)}</td>

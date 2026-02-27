@@ -124,13 +124,22 @@
   - VxLAN: VTEP interfaces, VNI mappings, underlay routing integration
   - Source vendors: PAN-OS (virtual-router BGP/OSPF), FortiGate (router bgp/ospf), Cisco ASA (router bgp/ospf), SRX round-trip
   - SRX output: `set protocols bgp`, `set protocols ospf`, `set protocols evpn`, `set interfaces vtep`, `set switch-options`
-- [ ] **User-ID / identity-based policies** — Parse and convert user/group identity references in security policies:
-  - PAN-OS: User-ID (`source-user` field, user/group references, User-ID agent config)
-  - FortiGate: FSSO (Fortinet Single Sign-On) user/group policies, LDAP/RADIUS identity sources
-  - Cisco ASA: Identity firewall (IDFW), AD agent, user-based ACLs
-  - SRX output: `set services user-identification`, JIMS (Juniper Identity Management Service) integration, `source-identity` in policies
-  - Intermediate schema: `source_users` / `source_user_groups` fields on security policies
-  - UI: User/group display in policy table, identity source configuration in Settings
+- [x] **User-ID / identity-based policies** — Parse and convert user/group identity references in security policies:
+  - `source_users` field on intermediate schema, extracted from all 7 vendors
+  - PAN-OS: `<source-user>` extraction (DOMAIN\user, group references, special values)
+  - FortiGate: FSSO users/groups (`set users`, `set groups`)
+  - Cisco ASA: IDFW `user`/`user-group`/`object-group-user` tokens in ACLs
+  - Check Point: Access Role objects (`type: 'access-role'`) separated from address sources
+  - SonicWall: `source.user` and `source.group` from JSON rules
+  - Huawei USG: `source-user` and `source-user-group` lines in security policies
+  - SRX parser: `source-identity` round-trip support
+  - SRX converter: `set ... match source-identity`, JIMS service config (placeholder)
+  - SRX XML builder: `<source-identity>` elements + `<user-identification>` service block
+  - PolicyTable: conditional "Users" column across all 7 vendor views
+  - InterviewPanel: editable Source Users chips field
+  - DiffPanel: source_users field comparison
+  - LLM: schema, translation rules, normalization, greenfield prompt
+  - Shadow detector: identity-aware shadow analysis
 
 ### Blocked — Waiting on Vendor APIs
 - [ ] **Push to SDC / SD On-Prem / Mist** — Direct deployment to Juniper management platforms. Requires HPE Juniper public REST APIs. UI placeholder already present ("Push via MCP" button)
@@ -145,7 +154,7 @@
 - **NetFlow / Telemetry** — sFlow, streaming telemetry not converted
 - **Management Access** — Admin users, SNMP communities, SSH/API access not converted
 - **Dynamic Routing** — Only static routes currently (Rev9 planned)
-- **User Identity** — User-ID / FSSO / IDFW not converted currently (Rev9 planned)
+- **User Identity** — User-ID / FSSO / IDFW parsed and converted to SRX `source-identity` — requires manual JIMS server configuration
 - **Virtual-Wire** — SRX has no native vwire; mapped to bridge-domain with TODO comments for interface assignment
 - **MNHA** — Only 2-node configurations supported
 - **Application Mapping** — ~120 apps mapped; unmapped apps get `Customfwic` suffix + warning

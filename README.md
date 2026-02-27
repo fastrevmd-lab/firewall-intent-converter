@@ -238,6 +238,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **DHCP** — DHCP server pools, relay helpers, address assignment
 - **QoS / CoS** — Traffic shaping profiles, policy maps, scheduler maps, interface CoS bindings
 - **Schedules** — Time-based rule scheduling with day-of-week and time-range support
+- **User-ID / Identity policies** — `source_users` field extracted from all vendors (PAN-OS `<source-user>`, FortiGate FSSO users/groups, Cisco ASA IDFW, Check Point Access Roles, SonicWall user/group, Huawei source-user). Converted to SRX `source-identity` match conditions with JIMS service placeholder config
 
 ### Push & Integration
 - **Push via MCP** — Connect to an MCP server to push configurations directly to SRX devices (configurable in Settings)
@@ -252,7 +253,7 @@ The following features are **not converted** by this tool and must be configured
 
 - **AAA / Authentication** — RADIUS, TACACS+, LDAP server configuration and authentication policies
 - **Dynamic Routing Protocols** — BGP, OSPF, EVPN, VxLAN (only static routes are converted; planned for Rev8)
-- **User-ID / Identity Policies** — PAN-OS User-ID, FortiGate FSSO, Cisco IDFW user/group-based policies (planned for Rev8)
+- **User-ID / Identity Policies** — Parsed from all vendors (PAN-OS User-ID, FortiGate FSSO, Cisco IDFW, Check Point Access Role, SonicWall user/group, Huawei source-user) and converted to SRX `source-identity` match conditions with JIMS placeholder config. Requires manual JIMS server setup on the SRX.
 - **SSL/TLS Decryption** — PAN-OS decryption rules are parsed, displayed in the SSL B&I tab, and used during LLM translation to set `_srx_decrypt` on matching security rules. However, full SRX SSL Proxy config generation (certificate management, PKI, proxy profiles) is not yet automated
 - **Policy-Based Forwarding** — PAN-OS PBF rules are parsed and displayed in the PBF tab but not converted to SRX filter-based forwarding
 - **NetFlow / Telemetry** — sFlow, traffic monitoring, streaming telemetry

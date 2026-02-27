@@ -573,6 +573,13 @@ function parseJsonAccessRules(config, warnings) {
     // Connection limit
     const connectionLimitEnabled = rule.connection_limit?.enabled === true;
 
+    // User/group identity references
+    const srcUsers = [];
+    const userRef = rule.source?.user;
+    const groupRef = rule.source?.group;
+    if (userRef && userRef !== 'all' && userRef !== 'All') srcUsers.push(typeof userRef === 'string' ? userRef : String(userRef));
+    if (groupRef && groupRef !== 'all' && groupRef !== 'All') srcUsers.push(`group:${typeof groupRef === 'string' ? groupRef : String(groupRef)}`);
+
     const policy = {
       name: sanitizeJunosName(ruleName),
       src_zones: fromZone ? [fromZone] : [],
@@ -592,6 +599,7 @@ function parseJsonAccessRules(config, warnings) {
       tags: [],
       disabled: !enabled,
       schedule: scheduleName,
+      source_users: srcUsers,
       _rule_index: ruleIndex++,
       _sonicwall: {
         uuid,
@@ -601,6 +609,15 @@ function parseJsonAccessRules(config, warnings) {
         schedule: scheduleName,
       },
     };
+
+    if (policy.source_users.length > 0) {
+      warnings.push(createWarning(
+        'warning',
+        `security-rule/${policy.name}`,
+        `Rule "${policy.name}" uses identity [${policy.source_users.join(', ')}] — SRX requires JIMS for user identification`,
+        'Configure SRX user-identification with JIMS and verify user/group names match Active Directory'
+      ));
+    }
 
     policies.push(policy);
   }
@@ -1025,6 +1042,7 @@ function parseCliAccessRules(lines, warnings) {
         tags: [],
         disabled: false,
         schedule: '',
+        source_users: [],
         _rule_index: ruleIndex++,
         _sonicwall: {
           uuid: '',

@@ -163,7 +163,7 @@ When reviewing or suggesting changes to specific rules, include a JSON code bloc
 {"rule_name": "the-rule-name", "field": "field_name", "current": "current_value", "suggested": "new_value", "reason": "Why this change is recommended"}
 \`\`\`
 
-Valid fields: name, action, description, src_zones, dst_zones, src_addresses, dst_addresses, applications, services, log_start, log_end, disabled, profile_group, security_profiles, tags
+Valid fields: name, action, description, src_zones, dst_zones, src_addresses, dst_addresses, source_users, applications, services, log_start, log_end, disabled, profile_group, security_profiles, tags
 
 For array fields use JSON arrays: ["value1", "value2"]. For boolean fields use true/false.
 
@@ -262,7 +262,7 @@ As you collect answers, emit JSON action blocks to progressively build the confi
 
 **Security Policies:**
 \`\`\`json
-{"action": "add_policy", "data": {"name": "policy-name", "src_zones": ["trust"], "dst_zones": ["untrust"], "src_addresses": ["any"], "dst_addresses": ["any"], "applications": ["junos-http", "junos-https"], "services": ["any"], "action": "allow", "log_start": false, "log_end": true, "description": "Allow outbound web"}}
+{"action": "add_policy", "data": {"name": "policy-name", "src_zones": ["trust"], "dst_zones": ["untrust"], "src_addresses": ["any"], "dst_addresses": ["any"], "source_users": [], "applications": ["junos-http", "junos-https"], "services": ["any"], "action": "allow", "log_start": false, "log_end": true, "description": "Allow outbound web"}}
 \`\`\`
 
 **NAT Rules:**
@@ -320,6 +320,7 @@ Return ONLY a JSON array of translated policies. No explanation outside the JSON
   "dst_zones": ["zone2"],
   "src_addresses": ["addr1"],
   "dst_addresses": ["addr2"],
+  "source_users": [],
   "applications": ["app1"],
   "services": ["svc1"],
   "log_start": false,
@@ -354,6 +355,13 @@ Return ONLY a JSON array of translated policies. No explanation outside the JSON
 - Use Junos application identifiers where possible (junos-http, junos-https, junos-ssh, junos-dns-udp, junos-dns-tcp, junos-ping, junos-ntp, etc.)
 - Keep custom or unknown apps in the applications array and note need for custom definition in _translation_notes
 - Port-only rules: keep in services array, note opportunity for AppID upgrade in _translation_notes
+
+### User Identity / Source Users
+- source_users contains user/group identity references (DOMAIN\\user, group:GroupName, etc.)
+- Map to SRX source-identity match conditions — preserve values as-is
+- PAN-OS special values: "known-user", "unknown", "pre-logon" — note in _translation_notes as no direct SRX equivalent
+- If source_users is empty or absent, omit from translation (means no identity restriction)
+- When source_users is present, note in _translation_notes that JIMS integration is required
 
 ### Rule Ordering
 - Most specific rules first (SRX is first-match-wins, top-down evaluation)
@@ -1021,7 +1029,8 @@ Suggest alternatives or configuration adjustments for features not covered by th
       r.profile_group ? `prof=${r.profile_group}` : '',
       profileInfo ? `profiles=[${profileInfo}]` : '',
     ].filter(Boolean).join(' ');
-    return `${i + 1}. [${r.action}] "${r.name}" ${src}->${dst} apps=${apps} svc=${svcs} ${flags}`;
+    const identityInfo = (r.source_users || []).length > 0 ? ` users=[${r.source_users.join(',')}]` : '';
+    return `${i + 1}. [${r.action}] "${r.name}" ${src}->${dst}${identityInfo} apps=${apps} svc=${svcs} ${flags}`;
   }).join('\n');
 
   // Build additional config context for greenfield reviews
@@ -1248,6 +1257,7 @@ export function parseTranslationResponse(response) {
     p.dst_addresses = Array.isArray(p.dst_addresses) ? p.dst_addresses : (p.dst_addresses ? [p.dst_addresses] : ['any']);
     p.applications = Array.isArray(p.applications) ? p.applications : (p.applications ? [p.applications] : []);
     p.services = Array.isArray(p.services) ? p.services : (p.services ? [p.services] : []);
+    p.source_users = Array.isArray(p.source_users) ? p.source_users : (p.source_users ? [p.source_users] : []);
 
     // Normalize booleans
     p.log_start = !!p.log_start;

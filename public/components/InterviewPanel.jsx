@@ -356,6 +356,23 @@ export default function InterviewPanel({
           )}
         </div>
 
+        {/* Source Users / Identity (only when rule has identity references) */}
+        {(selectedRule.source_users && selectedRule.source_users.length > 0) && (
+          <div className="detail-section">
+            <h3>{isSrx ? 'Source Identity' : 'User / Group Identity'}</h3>
+            <EditableChipsField
+              label={isSrx ? 'Source Identity' : 'Source Users'}
+              values={selectedRule.source_users}
+              onChange={(v) => handleFieldChange('source_users', v)}
+            />
+            {isSrx && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '4px 0' }}>
+                Requires JIMS integration for user identification
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Applications / Services */}
         <div className="detail-section">
           <h3>{isSrx ? 'Applications / Ports' : 'Applications & Services'}</h3>
@@ -474,6 +491,7 @@ export default function InterviewPanel({
               rule={selectedRule}
               onProfileChange={handleProfileChange}
               onFieldChange={handleFieldChange}
+              onUpdateRule={onUpdateRule}
             />
           ) : (
             <>
@@ -738,7 +756,7 @@ const SRX_SUBSCRIPTION_TOGGLES = [
   { key: 'icap-redirect',    label: 'ICAP Redirect',    sub: 'ICAP Content Adaptation',    srxField: '_srx_icap_redirect' },
 ];
 
-function SrxSecurityToggles({ rule, onProfileChange, onFieldChange }) {
+function SrxSecurityToggles({ rule, onProfileChange, onFieldChange, onUpdateRule }) {
   const sp = rule.security_profiles || {};
 
   const isEnabled = (toggle) => {
@@ -763,8 +781,13 @@ function SrxSecurityToggles({ rule, onProfileChange, onFieldChange }) {
   };
 
   const handleToggleChange = (toggle, checked) => {
-    onFieldChange(toggle.srxField, checked);
-    if (!checked) onFieldChange(toggle.srxField + '_profile', '');
+    // Batch both field changes into a single update to avoid race condition
+    // where the second onFieldChange overwrites the first
+    if (!checked) {
+      onUpdateRule({ ...rule, [toggle.srxField]: false, [toggle.srxField + '_profile']: '' });
+    } else {
+      onFieldChange(toggle.srxField, true);
+    }
   };
 
   return (

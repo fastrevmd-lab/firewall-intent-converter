@@ -993,6 +993,8 @@ function parseSecurityRules(vsys, warnings) {
     const dstAddresses = extractMembers(entry.destination);
     const applications = extractMembers(entry.application);
     const services = extractMembers(entry.service);
+    const sourceUsers = extractMembers(entry['source-user']);
+    const filteredUsers = sourceUsers.length === 1 && sourceUsers[0] === 'any' ? [] : sourceUsers;
     const action = parseAction(entry.action);
     const disabled = entry.disabled === 'yes' || entry.disabled === true;
     const description = entry.description || '';
@@ -1104,6 +1106,16 @@ function parseSecurityRules(vsys, warnings) {
       ));
     }
 
+    // Flag User-ID source-user usage
+    if (filteredUsers.length > 0) {
+      warnings.push(createWarning(
+        'warning',
+        `security-rule/${name}`,
+        `Rule "${name}" uses User-ID source users [${filteredUsers.join(', ')}] — SRX requires JIMS integration for user identification`,
+        'Configure SRX user-identification with JIMS and verify user/group names match Active Directory'
+      ));
+    }
+
     return {
       name,
       src_zones: srcZones,
@@ -1123,6 +1135,7 @@ function parseSecurityRules(vsys, warnings) {
       tags,
       disabled,
       schedule: entry.schedule ? String(entry.schedule) : '',
+      source_users: filteredUsers,
       _rule_index: index + 1,
     };
   });

@@ -116,15 +116,22 @@ function detectShadows(zonePairs, warnings) {
 }
 
 function checkShadow(earlier, later) {
+  const earlierUsers = earlier.source_users || [];
+  const laterUsers = later.source_users || [];
+
   if (isAnyMatch(earlier)) {
+    // If earlier has no identity restriction but later does, later is more specific — not shadowed
+    if (earlierUsers.length === 0 && laterUsers.length > 0) return null;
     return 'fully shadowed (any/any/any match-all)';
   }
   if (arraysMatchUnordered(earlier.src_addresses, later.src_addresses) &&
       arraysMatchUnordered(earlier.dst_addresses, later.dst_addresses) &&
+      (earlierUsers.length === 0 || arraysMatchUnordered(earlierUsers, laterUsers)) &&
       servicesMatch(earlier, later)) {
     return 'exactly shadowed (identical match criteria)';
   }
-  if (isSupersetByAny(earlier, later)) {
+  if (isSupersetByAny(earlier, later) &&
+      (earlierUsers.length === 0 || arraysMatchUnordered(earlierUsers, laterUsers))) {
     return 'shadowed (earlier rule uses broader match criteria)';
   }
   return null;
