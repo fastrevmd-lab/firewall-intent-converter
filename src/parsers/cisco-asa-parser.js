@@ -623,6 +623,7 @@ function parseAclEntry(tokens, aclName, warnings) {
     inactive: false,
     remark: '',
     _aclName: aclName,
+    sourceUsers: [],
   };
 
   if (i >= tokens.length) return null;
@@ -633,6 +634,15 @@ function parseAclEntry(tokens, aclName, warnings) {
   // Protocol
   if (i < tokens.length) {
     entry.protocol = tokens[i++];
+  }
+
+  // User / user-group identity (ASA Identity Firewall — between protocol and source address)
+  while (i < tokens.length && (tokens[i] === 'user' || tokens[i] === 'user-group' || tokens[i] === 'object-group-user')) {
+    const userType = tokens[i++];
+    if (i < tokens.length) {
+      const userRef = tokens[i++];
+      entry.sourceUsers.push(userType === 'user' ? userRef : `group:${userRef}`);
+    }
   }
 
   // Source address
@@ -1077,6 +1087,7 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
         tags: [],
         disabled: entry.inactive,
         schedule: entry.timeRange || '',
+        source_users: entry.sourceUsers || [],
         _rule_index: ruleIndex++,
         _cisco: {
           aclName: ag.aclName,
@@ -1092,6 +1103,15 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
           logLevel: entry.logLevel,
         },
       };
+
+      if (policy.source_users.length > 0) {
+        warnings.push(createWarning(
+          'warning',
+          `security-rule/${policy.name}`,
+          `Rule "${policy.name}" uses IDFW identity [${policy.source_users.join(', ')}] — SRX requires JIMS for user identification`,
+          'Configure SRX user-identification with JIMS and verify user/group names match Active Directory'
+        ));
+      }
 
       policies.push(policy);
       remarkAccum = '';
@@ -1128,6 +1148,7 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
         tags: [],
         disabled: entry.inactive,
         schedule: entry.timeRange || '',
+        source_users: entry.sourceUsers || [],
         _rule_index: ruleIndex++,
         _cisco: {
           aclName,
@@ -1179,6 +1200,7 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
           description: `ASA implicit: higher security-level (${srcIface.securityLevel}) to lower (${dstIface.securityLevel})`,
           tags: ['added_by_fpic'],
           disabled: false,
+          source_users: [],
           _rule_index: ruleIndex++,
           _implicit: true,
           _cisco: {
@@ -1218,6 +1240,7 @@ function buildSecurityPolicies(accessLists, accessGroups, interfaces, warnings) 
     description: 'ASA implicit deny at end of all access-lists',
     tags: ['added_by_fpic'],
     disabled: false,
+    source_users: [],
     _rule_index: ruleIndex++,
     _implicit: true,
     _cisco: {

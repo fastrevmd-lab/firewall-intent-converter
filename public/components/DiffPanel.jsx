@@ -13,6 +13,7 @@ const DIFF_FIELDS = [
   { key: 'dst_zones', label: 'Dest Zones', isArray: true },
   { key: 'src_addresses', label: 'Source Addr', isArray: true },
   { key: 'dst_addresses', label: 'Dest Addr', isArray: true },
+  { key: 'source_users', label: 'Source Users', isArray: true },
   { key: 'applications', label: 'Applications', isArray: true },
   { key: 'services', label: 'Services', isArray: true },
   { key: 'log_start', label: 'Log Start' },

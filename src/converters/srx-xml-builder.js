@@ -119,6 +119,9 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
     buildSecIntelXml(blockLists, lines);
   }
 
+  // User Identification (JIMS) — when policies use source-identity
+  buildUserIdentificationXml(config.security_policies, lines);
+
   // Unsupported feature notices
   lines.push('<!--');
   lines.push('  NOT CONVERTED — Manual Configuration Required');
@@ -261,6 +264,28 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
 }
 
 // ---------------------------------------------------------------------------
+// User Identification (JIMS) XML Builder
+// ---------------------------------------------------------------------------
+
+function buildUserIdentificationXml(policies, lines) {
+  if (!policies || policies.length === 0) return;
+  const identityPolicies = policies.filter(p => p.source_users && p.source_users.length > 0);
+  if (identityPolicies.length === 0) return;
+
+  lines.push('  <services>');
+  lines.push('    <user-identification>');
+  lines.push('      <identity-management>');
+  lines.push('        <connection>');
+  lines.push('          <connect-method>https</connect-method>');
+  lines.push('          <port>1443</port>');
+  lines.push('          <!-- Configure JIMS server address and credentials -->');
+  lines.push('        </connection>');
+  lines.push('      </identity-management>');
+  lines.push('    </user-identification>');
+  lines.push('  </services>');
+}
+
+// ---------------------------------------------------------------------------
 // Security Policies XML Builder
 // ---------------------------------------------------------------------------
 
@@ -316,6 +341,11 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
       const apps = resolveApps(policy.applications, policy.services, warnings, policy.name, appGroups, sourceVendor);
       for (const app of apps) {
         lines.push(`            <application>${escapeXml(app)}</application>`);
+      }
+      if (policy.source_users && policy.source_users.length > 0) {
+        for (const identity of policy.source_users) {
+          lines.push(`            <source-identity>${escapeXml(sanitizeJunosName(identity))}</source-identity>`);
+        }
       }
       lines.push('          </match>');
 

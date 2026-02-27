@@ -169,6 +169,7 @@ export function parseFortigateConfig(configText) {
       description: `FortiGate intrazone-traffic default: ${intrazoneAction}`,
       tags: ['added_by_fpic'],
       disabled: false,
+      source_users: [],
       _rule_index: implicitIndex++,
       _implicit: true,
       _fortigate: { ...implicitFortigateBase },
@@ -192,6 +193,7 @@ export function parseFortigateConfig(configText) {
     description: 'FortiGate default: implicit deny at end of policy list',
     tags: ['added_by_fpic'],
     disabled: false,
+    source_users: [],
     _rule_index: implicitIndex++,
     _implicit: true,
     _fortigate: { ...implicitFortigateBase },
@@ -1304,6 +1306,10 @@ function parseSecurityPolicies(tree, warnings) {
       tags: ensureArray(entry['label']),
       disabled,
       schedule: schedule === 'always' ? '' : schedule,
+      source_users: [
+        ...ensureArray(entry['users']).filter(u => u && u !== 'all'),
+        ...ensureArray(entry['groups']).map(g => `group:${g}`),
+      ].filter(Boolean),
       _rule_index: ruleIndex++,
       // FortiGate-specific fields for the FortiGate view
       _fortigate: {
@@ -1318,6 +1324,15 @@ function parseSecurityPolicies(tree, warnings) {
         uuid: getString(entry['uuid']) || '',
       },
     };
+
+    if (policy.source_users.length > 0) {
+      warnings.push(createWarning(
+        'warning',
+        `security-rule/${policy.name}`,
+        `Policy "${policy.name}" uses FSSO identity [${policy.source_users.join(', ')}] — SRX requires JIMS for user identification`,
+        'Configure SRX user-identification with JIMS and ensure FortiGate FSSO groups map to AD groups'
+      ));
+    }
 
     policies.push(policy);
   }

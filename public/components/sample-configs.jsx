@@ -128,6 +128,10 @@ export const SAMPLE_CONFIGS = {
                   <destination>
                     <member>any</member>
                   </destination>
+                  <source-user>
+                    <member>CORP\IT-Admins</member>
+                    <member>CORP\Engineering</member>
+                  </source-user>
                   <application>
                     <member>web-browsing</member>
                     <member>ssl</member>
@@ -3019,6 +3023,7 @@ set security policies from-zone untrust to-zone dmz policy allow-web then log se
 
 set security policies from-zone trust to-zone dmz policy trust-to-dmz match source-address internal-net
 set security policies from-zone trust to-zone dmz policy trust-to-dmz match destination-address dmz-net
+set security policies from-zone trust to-zone dmz policy trust-to-dmz match source-identity "IT-Ops"
 set security policies from-zone trust to-zone dmz policy trust-to-dmz match application any
 set security policies from-zone trust to-zone dmz policy trust-to-dmz then permit
 set security policies from-zone trust to-zone dmz policy trust-to-dmz then log session-close
@@ -3417,6 +3422,7 @@ config firewall policy
         set action accept
         set srcaddr "LAN-Subnet"
         set dstaddr "all"
+        set groups "IT_Staff"
         set schedule "always"
         set service "ALL"
         set utm-status enable
@@ -3633,7 +3639,7 @@ access-list outside_access_in extended remark Deny all other inbound
 access-list outside_access_in extended deny ip any any log
 !
 access-list inside_access_in extended remark Allow internal to internet
-access-list inside_access_in extended permit tcp object internal-net any object-group WEB-SERVICES
+access-list inside_access_in extended permit tcp user CORP\\employees object internal-net any object-group WEB-SERVICES
 access-list inside_access_in extended remark Allow DNS
 access-list inside_access_in extended permit udp object internal-net any eq domain
 access-list inside_access_in extended remark Allow internal to DMZ servers
@@ -3809,6 +3815,13 @@ object network mail-server
       "members": ["svc-smtp"]
     },
     {
+      "uid": "role-it-admins",
+      "name": "IT-Admins-Role",
+      "type": "access-role",
+      "users": "IT-Admins",
+      "networks": "Any"
+    },
+    {
       "uid": "gw-main",
       "name": "CP-GW-01",
       "type": "simple-gateway",
@@ -3883,7 +3896,7 @@ object network mail-server
           "name": "Allow-Admin-SSH",
           "rule-number": 4,
           "enabled": true,
-          "source": ["net-internal"],
+          "source": ["role-it-admins", "net-internal"],
           "destination": ["grp-dmz-servers"],
           "service": ["svc-ssh"],
           "action": { "uid": "act-accept" },
@@ -4051,7 +4064,7 @@ set static-route 10.0.0.0/8 nexthop gateway address 10.1.1.1 on`,
         "uuid": "rule-001",
         "from": "LAN",
         "to": "WAN",
-        "source": { "address": [{ "name": "LAN-Subnet" }] },
+        "source": { "address": [{ "name": "LAN-Subnet" }], "group": "Domain-Users" },
         "destination": { "any": true },
         "service": [{ "name": "Web-Services" }],
         "action": "allow",
@@ -4275,6 +4288,7 @@ security-policy
   destination-zone dmz
   source-address address-set Admin-PC
   destination-address address-set DMZ-Servers
+  source-user admin_group
   service SSH
   action permit
   counting enable
