@@ -168,35 +168,37 @@ export default function ConfigInput({
       {/* Merge mode: slot tab bar */}
       {mergeMode && (
         <div className="merge-slot-tabs">
-          {configSlots.map((slot, i) => (
-            <div
-              key={slot.id}
-              className={`merge-slot-tab ${i === activeSlotIndex ? 'active' : ''}`}
-              onClick={() => onActivateSlot(i)}
-            >
-              <input
-                className="merge-slot-name"
-                value={slot.lsName}
-                onChange={(e) => onUpdateSlotLsName(i, e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                style={{ width: 70, background: 'transparent', border: '1px solid transparent', color: 'inherit', fontSize: 11, padding: '2px 4px', borderRadius: 3 }}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--accent)'; }}
-                onBlur={(e) => { e.target.style.borderColor = 'transparent'; }}
-              />
-              <span className={`merge-slot-status ${slot.intermediateConfig ? 'parsed' : ''}`}>
-                {slot.intermediateConfig ? slot.sourceVendor : 'empty'}
-              </span>
-              {configSlots.length > 2 && (
-                <button
-                  className="merge-slot-remove"
-                  onClick={(e) => { e.stopPropagation(); onRemoveSlot(i); }}
-                  title="Remove this config slot"
-                >
-                  x
-                </button>
-              )}
-            </div>
-          ))}
+          {configSlots.map((slot, i) => {
+            const vendorLabel = { panos: 'PA', srx: 'SRX', fortigate: 'FG', cisco_asa: 'ASA', checkpoint: 'CP', sonicwall: 'SW', huawei_usg: 'HW' }[slot.sourceVendor] || '';
+            return (
+              <div
+                key={slot.id}
+                className={`merge-slot-tab ${i === activeSlotIndex ? 'active' : ''}`}
+                onClick={() => onActivateSlot(i)}
+              >
+                <input
+                  className="merge-slot-name"
+                  value={slot.lsName}
+                  onChange={(e) => onUpdateSlotLsName(i, e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                {slot.intermediateConfig ? (
+                  <span className="merge-slot-vendor-badge">{vendorLabel}</span>
+                ) : (
+                  <span className="merge-slot-empty-badge">--</span>
+                )}
+                {configSlots.length > 2 && (
+                  <button
+                    className="merge-slot-remove"
+                    onClick={(e) => { e.stopPropagation(); onRemoveSlot(i); }}
+                    title="Remove this config slot"
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+            );
+          })}
           <button className="merge-slot-add" onClick={onAddSlot} title="Add another config slot">
             +
           </button>

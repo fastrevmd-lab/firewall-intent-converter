@@ -3228,9 +3228,9 @@ html, body, #root {
   display: flex;
   gap: 0;
   overflow-x: auto;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  padding: 0 4px;
+  padding: 0 8px;
   flex-shrink: 0;
 }
 
@@ -3249,9 +3249,9 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   border: none;
   border-bottom: 2px solid transparent;
@@ -3275,33 +3275,49 @@ html, body, #root {
 /* 9. Inline editable name input */
 .merge-slot-name {
   background: transparent;
-  border: none;
-  border-bottom: 1px solid transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
   color: inherit;
   font-family: inherit;
   font-size: inherit;
-  width: 60px;
-  padding: 0 2px;
+  width: 72px;
+  padding: 2px 4px;
   outline: none;
-  transition: border-bottom-color 0.15s;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.merge-slot-name:hover {
+  background: var(--bg-tertiary);
 }
 
 .merge-slot-name:focus {
-  border-bottom: 1px solid var(--accent);
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
 }
 
-/* 10. Status indicator dot */
-.merge-slot-status {
+/* 10. Vendor badge (parsed) and empty badge */
+.merge-slot-vendor-badge {
   display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
   flex-shrink: 0;
 }
 
-.merge-slot-status.parsed {
-  background: var(--success);
+.merge-slot-empty-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
 }
 
 /* 11. Remove (x) button */

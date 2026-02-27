@@ -1380,7 +1380,7 @@ export default function App() {
                       ? 'from LLM Interview'
                       : isHealthCheckMode
                         ? 'Original Config'
-                        : `from ${sourceModel || ({ srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA', checkpoint: 'Check Point', sonicwall: 'SonicWall', huawei_usg: 'Huawei USG' }[sourceVendor] || 'PAN-OS')}`
+                        : `from ${sourceModel || ({ panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA', checkpoint: 'Check Point', sonicwall: 'SonicWall', huawei_usg: 'Huawei USG' }[sourceVendor] || 'PAN-OS')}`
                     }
                   </button>
                   <button
