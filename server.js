@@ -47,8 +47,7 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      connectSrc: ["'self'", 'https://api.anthropic.com', 'https://api.openai.com',
-                   'http://localhost:*', 'http://127.0.0.1:*'],
+      connectSrc: ["'self'", 'https://api.anthropic.com', 'https://api.openai.com'],
       imgSrc: ["'self'", 'data:'],
       fontSrc: ["'self'"],
     },
@@ -120,7 +119,7 @@ app.post('/api/parse', (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[parse] Error:', error.message);
-    res.status(400).json({ error: error.message });
+    res.status(400).json({ error: isDev ? error.message : 'Failed to parse configuration' });
   }
 });
 
@@ -270,7 +269,7 @@ app.post('/api/sanitize', (req, res) => {
     });
   } catch (error) {
     console.error('[sanitize] Error:', error.message);
-    res.status(400).json({ error: error.message });
+    res.status(400).json({ error: isDev ? error.message : 'Failed to sanitize configuration' });
   }
 });
 
@@ -284,6 +283,9 @@ app.post('/api/convert', (req, res) => {
     const { intermediateConfig, format = 'set', interfaceMappings = {}, targetContext = null } = req.body;
     if (!intermediateConfig) {
       return res.status(400).json({ error: 'intermediateConfig is required' });
+    }
+    if (!['set', 'xml'].includes(format)) {
+      return res.status(400).json({ error: "format must be 'set' or 'xml'" });
     }
 
     let output;
@@ -311,7 +313,7 @@ app.post('/api/convert', (req, res) => {
     });
   } catch (error) {
     console.error('[convert] Error:', error.message);
-    res.status(400).json({ error: error.message });
+    res.status(400).json({ error: isDev ? error.message : 'Failed to convert configuration' });
   }
 });
 
@@ -325,6 +327,9 @@ app.post('/api/merge-convert', (req, res) => {
     if (!configSlots || !Array.isArray(configSlots) || configSlots.length < 1) {
       return res.status(400).json({ error: 'configSlots array is required with at least 1 entry' });
     }
+    if (!['set', 'xml'].includes(format)) {
+      return res.status(400).json({ error: "format must be 'set' or 'xml'" });
+    }
 
     let output;
     if (format === 'xml') {
@@ -336,7 +341,7 @@ app.post('/api/merge-convert', (req, res) => {
     res.json({ output, format });
   } catch (error) {
     console.error('[merge-convert] Error:', error.message);
-    res.status(400).json({ error: error.message });
+    res.status(400).json({ error: isDev ? error.message : 'Failed to merge-convert configuration' });
   }
 });
 

@@ -42,6 +42,7 @@ import SaveProjectModal from './components/SaveProjectModal.jsx';
 import { translatePolicies, getLLMStatus } from './utils/llm-client.js';
 import { buildProjectPayload, validateProjectFile, generateProjectName } from './utils/project-io.js';
 import { GREENFIELD_TEMPLATES } from './data/greenfield-templates.js';
+import { safeJsonParse } from './utils/safe-json.js';
 
 export default function App() {
   // --- Config input state ---
@@ -1064,7 +1065,7 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const json = JSON.parse(event.target.result);
+        const json = safeJsonParse(event.target.result);
         const result = validateProjectFile(json);
         if (!result.valid) {
           setError(`Load project failed: ${result.error}`);
