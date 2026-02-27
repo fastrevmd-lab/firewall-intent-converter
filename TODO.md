@@ -92,10 +92,6 @@
 - [x] **Warning review actions** — Navbar warnings badge is now clickable (switches to Warnings tab), shows unresolved/total count (e.g., `3/12`), and turns green when all resolved. Each warning has Ack/Fixed/Ignore action buttons with click-to-undo support. WarningsPanel adds Unresolved/Resolved status filter alongside existing severity filters. Resolved warnings are dimmed
 - [x] **Navbar policy label clarity** — Review progress counter now reads `Policies: X/Y accepted` instead of just `X/Y accepted` to make it clear it refers to security policies
 
----
-
-## Planned Revisions
-
 ### Rev7 — Multi-Firewall Logical Systems & Minor Features
 - [x] **Feedback/suggestion box** — Chat-bubble icon in the navbar opens a modal where users pick a category (Bug Report, Feature Request, Improvement), write a description, and submit as a pre-filled GitHub Issue in a new tab
 - [x] **Site Name / Site Group** — Optional text fields in Model Selection for site identification. Values are emitted as header comments at the top of SRX set-command and XML output (e.g. `# Site: branch-office-seattle`). Prep for future SDC/Mist integration with site/group concepts
@@ -113,8 +109,13 @@
 - [x] **Security hardening** — Genericized API error messages in production (all endpoints), prototype pollution guards via `safeJsonParse()` on untrusted input (project files, LLM responses, localStorage), production CSP `connectSrc` restricted to remote APIs only, format parameter validation on `/api/convert` and `/api/merge-convert`, dependency vulnerability fixes (rollup, fast-xml-parser)
 
 ### Rev8 — UX & Workflow Enhancements
-- [ ] **"I am new here" guided walkthrough** — Dismissible tooltip bubbles that walk first-time users through the import → review → convert workflow
-- [ ] **Bulk rule operations** — Multi-select rules for batch accept/edit/delete/move
+- [x] **"I am new here" guided walkthrough** — 6-step spotlight tour highlighting Config Input, Parse button, Center panel, Translate with LLM, Rule Details, and SRX Output. CSS mask overlay with positioned tooltips, Next/Skip/Finish navigation, "Don't show again" checkbox with localStorage persistence, and navbar `?` help button to re-trigger the tour anytime. Graceful fallback when target elements are not in DOM
+- [x] **Bulk rule operations** — Multi-select rules with checkbox column across all 7 vendor table renderers (PAN-OS, SRX, FortiGate, Check Point, Cisco ASA, SonicWall, Huawei USG). Ctrl/Cmd+click toggle, Shift+click range selection, header checkbox select-all with indeterminate state. Floating BulkActionBar with Accept All, Enable/Disable, Move Up, Move Down, Delete Selected. Selection auto-clears on view/tab/slot change
+- [x] **Multi-logical-system vendor detection fix** — SRX configs using only `set logical-systems` or `set tenants` prefixed commands now correctly detected as Junos SRX instead of falling through to PAN-OS parser
+
+---
+
+## Planned Revisions
 
 ### Rev9 — Dynamic Routing & Identity
 - [ ] **Dynamic routing protocols** — Parse and convert BGP, OSPF, EVPN, and VxLAN configurations from all supported source vendors to SRX equivalents:
