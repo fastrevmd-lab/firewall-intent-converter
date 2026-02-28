@@ -13,28 +13,27 @@
 
 ### Prerequisites
 
-- **Node.js** 18+ (tested with Node 24)
-- **npm** (comes with Node.js)
+- **Node.js** 18+ and **npm** — only needed for development and building. The built app is a static SPA that runs entirely in the browser with no server required.
 
-### Install & Run
+### Development
 
 ```bash
 git clone <repo-url> firewall-intent-converter
 cd firewall-intent-converter
 npm install
-node server.js
+npm run dev
 ```
 
-Open **http://localhost:3000** in your browser.
-
-That's it — a single command runs both the Express API server and the Vite dev server (with hot module replacement) on port 3000.
+Open **http://localhost:5173** in your browser. Vite serves the app with hot module replacement.
 
 ### Production Build
 
 ```bash
 npm run build          # Vite compiles to dist/
-NODE_ENV=production node server.js   # Serves static dist/ + API
+npm run preview        # Preview the production build locally
 ```
+
+The `dist/` folder is a fully self-contained static SPA — deploy it to any static file host (Nginx, Apache, S3, GitHub Pages, Netlify, etc.) or open `dist/index.html` directly from the filesystem. No server runtime required.
 
 ## Usage
 
@@ -274,8 +273,7 @@ See [TODO.md](TODO.md) for the full roadmap and planned features.
 
 ```
 firewall-intent-converter/
-├── server.js                     # Express server (API + Vite middleware)
-├── vite.config.js                # Vite config (React, publicDir: 'static')
+├── vite.config.js                # Vite config (React, publicDir: 'static', relative base)
 ├── package.json
 ├── TODO.md                       # Roadmap & TODO (Rev1–Rev8+)
 ├── index.html                    # Entry HTML
@@ -293,7 +291,7 @@ firewall-intent-converter/
 │       ├── full-review.txt       # Translation instructions — vendor pitfalls, cross-vendor gaps
 │       ├── greenfield.txt        # Greenfield interview prompt — guided SRX config builder
 │       └── translate-srx_healthcheck.txt # SRX Health Check audit prompt — compliance & best practices
-├── src/                          # Server-side modules
+├── src/                          # Shared modules (imported by both browser and build)
 │   ├── parsers/
 │   │   ├── panos-parser.js       # PAN-OS XML → intermediate JSON
 │   │   ├── srx-parser.js         # Junos SRX set/hierarchical → intermediate JSON
@@ -311,7 +309,7 @@ firewall-intent-converter/
 │   ├── validators/
 │   │   └── srx-validator.js      # SRX output validation
 │   └── interview/
-│       ├── llm-client.js         # Server-side LLM client (unused in browser mode)
+│       ├── llm-client.js         # LLM client helpers
 │       └── question-engine.js    # Interview question logic
 ├── public/                       # React frontend (transpiled by Vite)
 │   ├── main.jsx                  # React entry point
@@ -344,16 +342,8 @@ firewall-intent-converter/
 │   └── data/
 │       ├── hardware-db.js        # PAN-OS, SRX, FortiGate, Cisco, Check Point, SonicWall + Huawei model database (current + EOS)
 │       └── greenfield-templates.js # Pre-built greenfield templates (branch, datacenter, campus, cloud, blank)
-└── dist/                         # Production build output (generated)
+└── dist/                         # Production build output (generated, fully static)
 ```
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/parse` | Parse config text (PAN-OS XML, Junos SRX, FortiOS, Cisco ASA, Check Point JSON, SonicWall JSON/CLI, or Huawei VRP) into vendor-neutral intermediate JSON. Auto-detects source format. |
-| `POST` | `/api/convert` | Convert intermediate JSON to SRX output (set commands or XML) |
-| `POST` | `/api/sanitize` | Replace sensitive data in config text with placeholders |
 
 ## Configuration
 
@@ -387,17 +377,11 @@ Editable plain-text prompt files control how the LLM behaves during translation 
 
 MCP server configuration is stored in `localStorage` under the key `mcp-settings`. Use the Settings modal (MCP Connection tab) to configure the server URL, test the connection, and view connected SRX devices.
 
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Server listen port |
-| `NODE_ENV` | — | Set to `production` to serve static build instead of Vite HMR |
-
 ## Tech Stack
 
 - **Frontend**: React 18, JSX (no TypeScript, no bundled CSS framework)
-- **Backend**: Express 4, fast-xml-parser
+- **Parsing**: fast-xml-parser (runs in-browser)
 - **Build**: Vite 5 with `@vitejs/plugin-react`
 - **Styling**: Custom CSS with dark theme (CSS variables, no preprocessor)
 - **LLM**: Direct browser-to-provider API calls (no server proxy)
+- **Architecture**: Fully static SPA — all parsing, conversion, and validation runs client-side in the browser. No backend server required.
