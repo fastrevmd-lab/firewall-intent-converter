@@ -708,6 +708,8 @@ export default function App() {
       application_groups: [],
       vpn_tunnels: [],
       static_routes: [],
+      bgp_config: [],
+      ospf_config: [],
       interfaces: [],
       routing_contexts: [],
       ha_config: { enabled: false },
@@ -1699,7 +1701,7 @@ export default function App() {
                     className={`center-tab-btn ${editTab === 'routing' ? 'active' : ''}`}
                     onClick={() => setEditTab('routing')}
                   >
-                    Intf/Routing ({intermediateConfig.interfaces?.length || 0}/{intermediateConfig.static_routes?.length || 0})
+                    Intf/Routing ({intermediateConfig.interfaces?.length || 0}/{intermediateConfig.static_routes?.length || 0}{(intermediateConfig.bgp_config?.length > 0 || intermediateConfig.ospf_config?.length > 0) ? '/Dyn' : ''})
                   </button>
                   <button
                     className={`center-tab-btn ${editTab === 'dhcp' ? 'active' : ''}`}
@@ -1917,6 +1919,10 @@ export default function App() {
                     onBridgeDomainsUpdate={(bridgeDomains) => updateConfig(prev => ({ ...prev, bridge_domains: bridgeDomains }))}
                     onL2InterfacesUpdate={(l2Interfaces) => updateConfig(prev => ({ ...prev, l2_interfaces: l2Interfaces }))}
                     onVwirePairsUpdate={(vwirePairs) => updateConfig(prev => ({ ...prev, vwire_pairs: vwirePairs }))}
+                    bgpConfig={(mergeMode ? activeConfig : intermediateConfig)?.bgp_config || []}
+                    ospfConfig={(mergeMode ? activeConfig : intermediateConfig)?.ospf_config || []}
+                    onBgpConfigUpdate={(bgp) => updateConfig(prev => ({ ...prev, bgp_config: bgp }))}
+                    onOspfConfigUpdate={(ospf) => updateConfig(prev => ({ ...prev, ospf_config: ospf }))}
                   />
                 )}
                 {editTab === 'vpn' && (

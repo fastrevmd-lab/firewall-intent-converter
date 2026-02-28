@@ -49,6 +49,8 @@ export function parseCiscoAsaConfig(configText) {
   const natRules = parseNatRules(blocks, lines, warnings);
   const timeRanges = parseTimeRanges(blocks);
   const staticRoutes = parseCiscoStaticRoutes(lines, warnings);
+  const bgpConfig = parseAsaBgpConfig(lines, warnings);
+  const ospfConfig = parseAsaOspfConfig(lines, warnings);
   const routingContexts = detectCiscoContexts(lines, warnings);
   const haConfig = parseCiscoHaConfig(lines, warnings);
   const screenConfig = parseCiscoScreenConfig(lines, warnings);
@@ -126,6 +128,8 @@ export function parseCiscoAsaConfig(configText) {
     interfaces: normalizedInterfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
+    bgp_config: bgpConfig,
+    ospf_config: ospfConfig,
     target_context: null,
     transparent_mode: transparentMode,
     bridge_domains: bridgeDomains,
@@ -151,6 +155,8 @@ export function parseCiscoAsaConfig(configText) {
       qos_profile_count: qosConfig.length,
       routing_context_count: routingContexts.length,
       static_route_count: staticRoutes.length,
+      bgp_instance_count: bgpConfig.length,
+      ospf_instance_count: ospfConfig.length,
       ha_enabled: !!(haConfig && haConfig.enabled),
       multi_vsys: routingContexts.length > 1,
     },
@@ -1318,6 +1324,210 @@ function parseCiscoStaticRoutes(lines, warnings) {
     }
   }
   return routes;
+}
+
+// ---------------------------------------------------------------------------
+// BGP Configuration
+// ---------------------------------------------------------------------------
+
+function parseAsaBgpConfig(lines, warnings) {
+  const bgpConfigs = [];
+  let inBgp = false;
+  let currentAs = null;
+  let routerId = '';
+  const neighbors = [];
+  const networks = [];
+  const redistribute = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (/^router bgp\s+(\d+)/.test(trimmed)) {
+      currentAs = parseInt(trimmed.match(/^router bgp\s+(\d+)/)[1]) || null;
+      inBgp = true;
+      continue;
+    }
+
+    if (inBgp && (trimmed.startsWith('!') || (trimmed.startsWith('router ') && !trimmed.startsWith('router bgp')))) {
+      // End of BGP block
+      if (currentAs) {
+        bgpConfigs.push({
+          instance: '',
+          local_as: currentAs,
+          router_id: routerId,
+          peer_groups: neighbors.length > 0 ? [{ name: 'PEERS', type: 'external', neighbors: [...neighbors] }] : [],
+          networks: [...networks],
+          redistribute: [...redistribute],
+        });
+      }
+      inBgp = false;
+      currentAs = null;
+      routerId = '';
+      neighbors.length = 0;
+      networks.length = 0;
+      redistribute.length = 0;
+      continue;
+    }
+
+    if (!inBgp) continue;
+
+    if (trimmed.startsWith('bgp router-id ')) {
+      routerId = trimmed.slice(14).trim();
+    } else if (trimmed.startsWith('neighbor ')) {
+      const tokens = tokenize(trimmed);
+      // neighbor <ip> remote-as <asn>
+      if (tokens[2] === 'remote-as' && tokens[3]) {
+        const existing = neighbors.find(n => n.address === tokens[1]);
+        if (existing) {
+          existing.peer_as = parseInt(tokens[3]) || null;
+        } else {
+          neighbors.push({
+            address: tokens[1],
+            peer_as: parseInt(tokens[3]) || null,
+            description: '',
+            update_source: '',
+            local_address: '',
+            import_policy: '',
+            export_policy: '',
+            authentication_key: '',
+            enabled: true,
+          });
+        }
+      } else if (tokens[2] === 'description') {
+        const existing = neighbors.find(n => n.address === tokens[1]);
+        if (existing) existing.description = tokens.slice(3).join(' ');
+      } else if (tokens[2] === 'shutdown') {
+        const existing = neighbors.find(n => n.address === tokens[1]);
+        if (existing) existing.enabled = false;
+      }
+    } else if (trimmed.startsWith('network ')) {
+      const tokens = tokenize(trimmed);
+      // network <prefix> mask <mask>
+      if (tokens[2] === 'mask' && tokens[3]) {
+        const cidr = maskToCidr(tokens[3]);
+        networks.push({ prefix: `${tokens[1]}/${cidr}`, policy: '' });
+      } else {
+        networks.push({ prefix: tokens[1], policy: '' });
+      }
+    } else if (trimmed.startsWith('redistribute ')) {
+      const tokens = tokenize(trimmed);
+      redistribute.push({ protocol: tokens[1], policy: '' });
+    }
+  }
+
+  // Handle case where BGP block ends at EOF
+  if (inBgp && currentAs) {
+    bgpConfigs.push({
+      instance: '',
+      local_as: currentAs,
+      router_id: routerId,
+      peer_groups: neighbors.length > 0 ? [{ name: 'PEERS', type: 'external', neighbors: [...neighbors] }] : [],
+      networks: [...networks],
+      redistribute: [...redistribute],
+    });
+  }
+
+  return bgpConfigs;
+}
+
+// ---------------------------------------------------------------------------
+// OSPF Configuration
+// ---------------------------------------------------------------------------
+
+function parseAsaOspfConfig(lines, warnings) {
+  const ospfConfigs = [];
+  let inOspf = false;
+  let processId = 0;
+  let routerId = '';
+  const areaMap = {};
+  const redistribute = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (/^router ospf\s+(\d+)/.test(trimmed)) {
+      processId = parseInt(trimmed.match(/^router ospf\s+(\d+)/)[1]) || 0;
+      inOspf = true;
+      continue;
+    }
+
+    if (inOspf && (trimmed.startsWith('!') || (trimmed.startsWith('router ') && !trimmed.startsWith('router ospf')))) {
+      if (Object.keys(areaMap).length > 0) {
+        ospfConfigs.push({
+          instance: '',
+          router_id: routerId,
+          reference_bandwidth: null,
+          areas: Object.values(areaMap),
+          redistribute: [...redistribute],
+        });
+      }
+      inOspf = false;
+      processId = 0;
+      routerId = '';
+      Object.keys(areaMap).forEach(k => delete areaMap[k]);
+      redistribute.length = 0;
+      continue;
+    }
+
+    if (!inOspf) continue;
+
+    if (trimmed.startsWith('router-id ')) {
+      routerId = trimmed.slice(10).trim();
+    } else if (trimmed.startsWith('network ')) {
+      const tokens = tokenize(trimmed);
+      // network <prefix> <wildcard> area <area-id>
+      if (tokens[3] === 'area' && tokens[4]) {
+        const areaId = tokens[4];
+        if (!areaMap[areaId]) {
+          areaMap[areaId] = { area_id: areaId, area_type: 'normal', interfaces: [], networks: [] };
+        }
+        const wildcard = tokens[2];
+        const cidr = wildcardToCidr(wildcard);
+        areaMap[areaId].networks.push({ prefix: `${tokens[1]}/${cidr}` });
+      }
+    } else if (trimmed.startsWith('area ')) {
+      const tokens = tokenize(trimmed);
+      const areaId = tokens[1];
+      if (!areaMap[areaId]) {
+        areaMap[areaId] = { area_id: areaId, area_type: 'normal', interfaces: [], networks: [] };
+      }
+      if (tokens[2] === 'stub') {
+        areaMap[areaId].area_type = tokens[3] === 'no-summary' ? 'totally-stub' : 'stub';
+      } else if (tokens[2] === 'nssa') {
+        areaMap[areaId].area_type = tokens[3] === 'no-summary' ? 'totally-nssa' : 'nssa';
+      }
+    } else if (trimmed.startsWith('redistribute ')) {
+      const tokens = tokenize(trimmed);
+      redistribute.push({ protocol: tokens[1], policy: '', metric_type: null });
+    }
+  }
+
+  // Handle case where OSPF block ends at EOF
+  if (inOspf && Object.keys(areaMap).length > 0) {
+    ospfConfigs.push({
+      instance: '',
+      router_id: routerId,
+      reference_bandwidth: null,
+      areas: Object.values(areaMap),
+      redistribute: [...redistribute],
+    });
+  }
+
+  return ospfConfigs;
+}
+
+function wildcardToCidr(wildcard) {
+  if (!wildcard) return 32;
+  const parts = wildcard.split('.');
+  if (parts.length !== 4) return 32;
+  let bits = 0;
+  for (const part of parts) {
+    const val = 255 - parseInt(part);
+    if (val <= 0) continue;
+    let b = val;
+    while (b > 0) { bits++; b = (b << 1) & 0xFF; }
+  }
+  return 32 - bits;
 }
 
 // ---------------------------------------------------------------------------

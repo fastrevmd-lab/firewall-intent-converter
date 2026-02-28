@@ -59,6 +59,8 @@ export function parseFortigateConfig(configText) {
     ? parseSwitchInterfaces(tree, warnings)
     : { l2Interfaces: [], bridgeDomains: [] };
   const staticRoutes = parseStaticRoutes(tree, warnings);
+  const bgpConfig = parseFortiBgpConfig(tree, warnings);
+  const ospfConfig = parseFortiOspfConfig(tree, warnings);
   const haConfig = parseHaConfig(tree, warnings);
   const screenConfig = parseScreenConfig(tree, warnings);
 
@@ -234,6 +236,8 @@ export function parseFortigateConfig(configText) {
     vwire_pairs: [],
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
+    bgp_config: bgpConfig,
+    ospf_config: ospfConfig,
     target_context: null,
     // FortiGate-specific extras (for the FortiGate view)
     _fortigate: {
@@ -256,6 +260,8 @@ export function parseFortigateConfig(configText) {
       qos_profile_count: qosConfig.length,
       routing_context_count: routingContexts.length,
       static_route_count: staticRoutes.length,
+      bgp_instance_count: bgpConfig.length,
+      ospf_instance_count: ospfConfig.length,
       ha_enabled: !!(haConfig && haConfig.enabled),
       multi_vsys: routingContexts.length > 1,
     },
@@ -316,6 +322,207 @@ function parseStaticRoutes(tree, warnings) {
   }
 
   return routes;
+}
+
+// ---------------------------------------------------------------------------
+// BGP Configuration
+// ---------------------------------------------------------------------------
+
+function parseFortiBgpConfig(tree, warnings) {
+  const bgpSection = tree['router bgp'];
+  if (!bgpSection || typeof bgpSection !== 'object') return [];
+
+  const localAs = parseInt(getString(bgpSection['as'])) || null;
+  const routerId = getString(bgpSection['router-id']) || '';
+
+  if (!localAs) return [];
+
+  // Parse neighbors
+  const peerGroups = [];
+  const defaultGroup = { name: 'PEERS', type: 'external', neighbors: [] };
+
+  const neighborSection = bgpSection['neighbor'];
+  if (neighborSection && typeof neighborSection === 'object') {
+    for (const [id, entry] of Object.entries(neighborSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const addr = getString(entry['remote-ip']) || id;
+      const peerAs = parseInt(getString(entry['remote-as'])) || null;
+      const groupType = peerAs && peerAs === localAs ? 'internal' : 'external';
+      defaultGroup.type = groupType;
+      defaultGroup.neighbors.push({
+        address: addr.split('/')[0], // remove CIDR if present
+        peer_as: peerAs,
+        description: getString(entry['description']) || '',
+        update_source: getString(entry['update-source']) || '',
+        local_address: '',
+        import_policy: getString(entry['route-map-in']) || '',
+        export_policy: getString(entry['route-map-out']) || '',
+        authentication_key: '',
+        enabled: getString(entry['shutdown']) !== 'enable',
+      });
+    }
+  }
+
+  if (defaultGroup.neighbors.length > 0) peerGroups.push(defaultGroup);
+
+  // Parse networks
+  const networks = [];
+  const networkSection = bgpSection['network'];
+  if (networkSection && typeof networkSection === 'object') {
+    for (const [id, entry] of Object.entries(networkSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const prefix = getString(entry['prefix']);
+      if (prefix) {
+        // FortiGate prefix format: "ip mask" or CIDR
+        const parts = prefix.split(/\s+/);
+        const formatted = parts.length === 2 ? `${parts[0]}/${maskToCidr(parts[1])}` : prefix;
+        networks.push({ prefix: formatted, policy: '' });
+      }
+    }
+  }
+
+  // Parse redistribution — handles both nested and flattened key formats
+  const redistribute = [];
+  const redistSection = bgpSection['redistribute'];
+  if (redistSection && typeof redistSection === 'object') {
+    for (const [proto, entry] of Object.entries(redistSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      if (getString(entry['status']) === 'enable') {
+        redistribute.push({ protocol: proto, policy: getString(entry['route-map']) || '' });
+      }
+    }
+  }
+  // Flattened keys: 'redistribute "static"', 'redistribute "connected"', etc.
+  for (const key of Object.keys(bgpSection)) {
+    const redistMatch = key.match(/^redistribute\s+"?(\w+)"?$/);
+    if (redistMatch) {
+      const entry = bgpSection[key];
+      if (typeof entry === 'object' && entry !== null && getString(entry['status']) === 'enable') {
+        redistribute.push({ protocol: redistMatch[1], policy: getString(entry['route-map']) || '' });
+      }
+    }
+  }
+
+  return [{
+    instance: '',
+    local_as: localAs,
+    router_id: routerId,
+    peer_groups: peerGroups,
+    networks,
+    redistribute,
+  }];
+}
+
+// ---------------------------------------------------------------------------
+// OSPF Configuration
+// ---------------------------------------------------------------------------
+
+function parseFortiOspfConfig(tree, warnings) {
+  const ospfSection = tree['router ospf'];
+  if (!ospfSection || typeof ospfSection !== 'object') return [];
+
+  const routerId = getString(ospfSection['router-id']) || '';
+
+  // Parse areas
+  const areas = [];
+  const areaSection = ospfSection['area'];
+  if (areaSection && typeof areaSection === 'object') {
+    for (const [id, entry] of Object.entries(areaSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const areaId = getString(entry['id']) || id;
+      let areaType = 'normal';
+      const typeVal = getString(entry['type']);
+      if (typeVal === 'stub') areaType = getString(entry['no-summary']) === 'enable' ? 'totally-stub' : 'stub';
+      else if (typeVal === 'nssa') areaType = getString(entry['no-summary']) === 'enable' ? 'totally-nssa' : 'nssa';
+      areas.push({ area_id: areaId, area_type: areaType, interfaces: [], networks: [] });
+    }
+  }
+
+  // Parse OSPF interfaces (FortiGate links interfaces to areas separately)
+  const ospfIfSection = ospfSection['ospf-interface'];
+  if (ospfIfSection && typeof ospfIfSection === 'object') {
+    for (const [id, entry] of Object.entries(ospfIfSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const ifName = getString(entry['interface']) || id;
+      const areaRef = getString(entry['area']) || '0.0.0.0';
+      const iface = {
+        name: ifName,
+        cost: entry['cost'] ? parseInt(getString(entry['cost'])) || null : null,
+        hello_interval: entry['hello-interval'] ? parseInt(getString(entry['hello-interval'])) || null : null,
+        dead_interval: entry['dead-interval'] ? parseInt(getString(entry['dead-interval'])) || null : null,
+        authentication: null,
+        passive: false,
+        network_type: getString(entry['network-type']) || null,
+      };
+
+      // Authentication
+      const authType = getString(entry['authentication']);
+      if (authType === 'md5') {
+        iface.authentication = { type: 'md5', key_id: 1, key: getString(entry['md5-key']) || '' };
+      } else if (authType === 'text') {
+        iface.authentication = { type: 'simple', key: getString(entry['authentication-key']) || '' };
+      }
+
+      // Find or create the matching area
+      let area = areas.find(a => a.area_id === areaRef);
+      if (!area) {
+        area = { area_id: areaRef, area_type: 'normal', interfaces: [], networks: [] };
+        areas.push(area);
+      }
+      area.interfaces.push(iface);
+    }
+  }
+
+  // Parse passive interfaces
+  const passiveSection = ospfSection['passive-interface'];
+  if (passiveSection && typeof passiveSection === 'object') {
+    for (const [id, entry] of Object.entries(passiveSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const ifName = getString(entry['name']) || id;
+      // Mark matching interfaces as passive
+      for (const area of areas) {
+        for (const iface of area.interfaces) {
+          if (iface.name === ifName) iface.passive = true;
+        }
+      }
+    }
+  }
+
+  if (areas.length === 0) return [];
+
+  // Parse redistribution — handles both nested "redistribute" > "<proto>" and
+  // flattened 'redistribute "<proto>"' keys from FortiGate config format
+  const redistribute = [];
+  const redistSection = ospfSection['redistribute'];
+  if (redistSection && typeof redistSection === 'object') {
+    for (const [proto, entry] of Object.entries(redistSection)) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      if (getString(entry['status']) === 'enable') {
+        const metricType = getString(entry['metric-type']);
+        redistribute.push({ protocol: proto, policy: getString(entry['route-map']) || '', metric_type: metricType || null });
+      }
+    }
+  }
+  // Flattened keys: 'redistribute "static"', 'redistribute "connected"', etc.
+  for (const key of Object.keys(ospfSection)) {
+    const redistMatch = key.match(/^redistribute\s+"?(\w+)"?$/);
+    if (redistMatch) {
+      const entry = ospfSection[key];
+      if (typeof entry === 'object' && entry !== null && getString(entry['status']) === 'enable') {
+        const proto = redistMatch[1];
+        const metricType = getString(entry['metric-type']);
+        redistribute.push({ protocol: proto, policy: getString(entry['route-map']) || '', metric_type: metricType || null });
+      }
+    }
+  }
+
+  return [{
+    instance: '',
+    router_id: routerId,
+    reference_bandwidth: null,
+    areas,
+    redistribute,
+  }];
 }
 
 // ---------------------------------------------------------------------------

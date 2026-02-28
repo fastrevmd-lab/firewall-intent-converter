@@ -7,9 +7,11 @@
  */
 import React, { useState } from 'react';
 
-export default function RoutingEditor({ routingContexts, staticRoutes, onRoutesUpdate, interfaces, onInterfacesUpdate, bridgeDomains, l2Interfaces, vwirePairs, onBridgeDomainsUpdate, onL2InterfacesUpdate, onVwirePairsUpdate }) {
+export default function RoutingEditor({ routingContexts, staticRoutes, onRoutesUpdate, interfaces, onInterfacesUpdate, bridgeDomains, l2Interfaces, vwirePairs, onBridgeDomainsUpdate, onL2InterfacesUpdate, onVwirePairsUpdate, bgpConfig, ospfConfig, onBgpConfigUpdate, onOspfConfigUpdate }) {
   const [editingIndex, setEditingIndex] = useState(null);
   const [editingIfIndex, setEditingIfIndex] = useState(null);
+  const [expandedBgpGroup, setExpandedBgpGroup] = useState(null);
+  const [expandedOspfArea, setExpandedOspfArea] = useState(null);
 
   /* ---- Static route handlers ---- */
   const handleChange = (index, field, value) => {
@@ -371,6 +373,189 @@ export default function RoutingEditor({ routingContexts, staticRoutes, onRoutesU
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* BGP Configuration */}
+      {bgpConfig && bgpConfig.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 14, marginBottom: 8, color: '#94a3b8' }}>
+            BGP Configuration
+            <span className="badge" style={{ marginLeft: 6, fontSize: 10, background: '#1e40af', color: '#93c5fd' }}>
+              {bgpConfig.length} instance{bgpConfig.length !== 1 ? 's' : ''}
+            </span>
+          </h3>
+          {bgpConfig.map((bgp, bi) => (
+            <div key={bi} style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: 12, marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  AS: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{bgp.local_as || '—'}</span>
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  Router ID: <span style={{ color: '#e2e8f0' }}>{bgp.router_id || '—'}</span>
+                </div>
+                {bgp.instance && (
+                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                    Instance: <span style={{ color: '#e2e8f0' }}>{bgp.instance}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Peer Groups */}
+              {(bgp.peer_groups || []).map((group, gi) => {
+                const groupKey = `${bi}-${gi}`;
+                const isExpanded = expandedBgpGroup === groupKey;
+                return (
+                  <div key={gi} style={{ marginBottom: 6 }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '4px 0' }}
+                      onClick={() => setExpandedBgpGroup(isExpanded ? null : groupKey)}
+                    >
+                      <span style={{ fontSize: 10, color: '#64748b' }}>{isExpanded ? '▼' : '▶'}</span>
+                      <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}>{group.name}</span>
+                      <span className="badge" style={{ fontSize: 10, background: group.type === 'external' ? '#065f46' : '#1e3a5f', color: group.type === 'external' ? '#6ee7b7' : '#93c5fd' }}>
+                        {group.type === 'external' ? 'EBGP' : 'IBGP'}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#64748b' }}>{group.neighbors?.length || 0} neighbor{(group.neighbors?.length || 0) !== 1 ? 's' : ''}</span>
+                    </div>
+                    {isExpanded && (group.neighbors || []).length > 0 && (
+                      <table className="routing-table" style={{ marginLeft: 16, marginTop: 4 }}>
+                        <thead>
+                          <tr>
+                            <th>Address</th><th>Peer AS</th><th>Description</th><th>Import</th><th>Export</th><th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.neighbors.map((n, ni) => (
+                            <tr key={ni}>
+                              <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{n.address}</td>
+                              <td>{n.peer_as || '—'}</td>
+                              <td style={{ color: '#94a3b8', fontSize: 11 }}>{n.description || '—'}</td>
+                              <td style={{ fontSize: 11 }}>{n.import_policy || '—'}</td>
+                              <td style={{ fontSize: 11 }}>{n.export_policy || '—'}</td>
+                              <td>
+                                <span className="badge" style={{ fontSize: 9, background: n.enabled !== false ? '#065f46' : '#7f1d1d', color: n.enabled !== false ? '#6ee7b7' : '#fca5a5' }}>
+                                  {n.enabled !== false ? 'Active' : 'Disabled'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Networks */}
+              {bgp.networks && bgp.networks.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
+                  Networks: <span style={{ color: '#94a3b8' }}>{bgp.networks.map(n => n.prefix).join(', ')}</span>
+                </div>
+              )}
+
+              {/* Redistribution */}
+              {bgp.redistribute && bgp.redistribute.length > 0 && (
+                <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                  Redistribute: <span style={{ color: '#94a3b8' }}>{bgp.redistribute.map(r => r.protocol).join(', ')}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* OSPF Configuration */}
+      {ospfConfig && ospfConfig.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 14, marginBottom: 8, color: '#94a3b8' }}>
+            OSPF Configuration
+            <span className="badge" style={{ marginLeft: 6, fontSize: 10, background: '#7c2d12', color: '#fdba74' }}>
+              {ospfConfig.reduce((sum, o) => sum + (o.areas?.length || 0), 0)} area{ospfConfig.reduce((sum, o) => sum + (o.areas?.length || 0), 0) !== 1 ? 's' : ''}
+            </span>
+          </h3>
+          {ospfConfig.map((ospf, oi) => (
+            <div key={oi} style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: 12, marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  Router ID: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{ospf.router_id || '—'}</span>
+                </div>
+                {ospf.reference_bandwidth && (
+                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                    Ref BW: <span style={{ color: '#e2e8f0' }}>{ospf.reference_bandwidth}</span>
+                  </div>
+                )}
+                {ospf.instance && (
+                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                    Instance: <span style={{ color: '#e2e8f0' }}>{ospf.instance}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Areas */}
+              {(ospf.areas || []).map((area, ai) => {
+                const areaKey = `${oi}-${ai}`;
+                const isExpanded = expandedOspfArea === areaKey;
+                const ifaceCount = (area.interfaces?.length || 0) + (area.networks?.length || 0);
+                return (
+                  <div key={ai} style={{ marginBottom: 6 }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '4px 0' }}
+                      onClick={() => setExpandedOspfArea(isExpanded ? null : areaKey)}
+                    >
+                      <span style={{ fontSize: 10, color: '#64748b' }}>{isExpanded ? '▼' : '▶'}</span>
+                      <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}>Area {area.area_id}</span>
+                      <span className="badge" style={{ fontSize: 10, background: area.area_type === 'normal' ? '#1e3a5f' : '#7c2d12', color: area.area_type === 'normal' ? '#93c5fd' : '#fdba74' }}>
+                        {area.area_type}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#64748b' }}>{ifaceCount} interface{ifaceCount !== 1 ? 's' : ''}</span>
+                    </div>
+                    {isExpanded && (
+                      <>
+                        {(area.interfaces || []).length > 0 && (
+                          <table className="routing-table" style={{ marginLeft: 16, marginTop: 4 }}>
+                            <thead>
+                              <tr>
+                                <th>Interface</th><th>Cost</th><th>Hello</th><th>Dead</th><th>Passive</th><th>Auth</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {area.interfaces.map((iface, ii) => (
+                                <tr key={ii}>
+                                  <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{iface.name}</td>
+                                  <td>{iface.cost ?? '—'}</td>
+                                  <td>{iface.hello_interval ?? '—'}</td>
+                                  <td>{iface.dead_interval ?? '—'}</td>
+                                  <td>
+                                    {iface.passive && (
+                                      <span className="badge" style={{ fontSize: 9, background: '#1e3a5f', color: '#93c5fd' }}>Passive</span>
+                                    )}
+                                  </td>
+                                  <td style={{ fontSize: 11 }}>{iface.authentication ? iface.authentication.type : '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {(area.networks || []).length > 0 && (
+                          <div style={{ marginLeft: 16, marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                            Networks: <span style={{ color: '#94a3b8' }}>{area.networks.map(n => n.prefix).join(', ')}</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Redistribution */}
+              {ospf.redistribute && ospf.redistribute.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
+                  Redistribute: <span style={{ color: '#94a3b8' }}>{ospf.redistribute.map(r => r.protocol).join(', ')}</span>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

@@ -508,6 +508,56 @@ export const SAMPLE_CONFIGS = {
               </static-route>
             </ip>
           </routing-table>
+          <protocol>
+            <bgp>
+              <enable>yes</enable>
+              <local-as>65010</local-as>
+              <router-id>10.0.1.1</router-id>
+              <peer-group>
+                <entry name="EBGP-ISP">
+                  <type><ebgp/></type>
+                  <peer>
+                    <entry name="203.0.113.2">
+                      <peer-as>65100</peer-as>
+                      <enable>yes</enable>
+                      <local-address><interface>ethernet1/2</interface></local-address>
+                    </entry>
+                  </peer>
+                </entry>
+                <entry name="IBGP-CORE">
+                  <type><ibgp/></type>
+                  <peer>
+                    <entry name="10.0.1.2">
+                      <peer-as>65010</peer-as>
+                      <enable>yes</enable>
+                    </entry>
+                  </peer>
+                </entry>
+              </peer-group>
+            </bgp>
+            <ospf>
+              <enable>yes</enable>
+              <router-id>10.0.1.1</router-id>
+              <area>
+                <entry name="0.0.0.0">
+                  <interface>
+                    <entry name="ethernet1/1">
+                      <metric>10</metric>
+                    </entry>
+                    <entry name="loopback.1">
+                      <passive>yes</passive>
+                    </entry>
+                  </interface>
+                </entry>
+                <entry name="0.0.0.1">
+                  <type><stub/></type>
+                  <interface>
+                    <entry name="ethernet1/2"/>
+                  </interface>
+                </entry>
+              </area>
+            </ospf>
+          </protocol>
         </entry>
         </virtual-router>
         <ike>
@@ -3074,6 +3124,21 @@ set routing-instances MGMT-VRF instance-type virtual-router
 set routing-instances MGMT-VRF interface ge-0/0/4.0
 set routing-instances MGMT-VRF routing-options static route 0.0.0.0/0 next-hop 10.99.0.1
 
+set routing-options autonomous-system 65001
+set routing-options router-id 10.0.0.1
+set protocols bgp group EBGP-UPSTREAM type external
+set protocols bgp group EBGP-UPSTREAM neighbor 203.0.113.2 peer-as 65100
+set protocols bgp group EBGP-UPSTREAM neighbor 203.0.113.2 description "ISP-Primary"
+set protocols bgp group EBGP-UPSTREAM neighbor 203.0.113.3 peer-as 65200
+set protocols bgp group EBGP-UPSTREAM neighbor 203.0.113.3 description "ISP-Secondary"
+set protocols bgp group IBGP-CORE type internal
+set protocols bgp group IBGP-CORE neighbor 10.0.0.2 description "Core-Router"
+set protocols ospf area 0.0.0.0 interface ge-0/0/0.0
+set protocols ospf area 0.0.0.0 interface ge-0/0/1.0 metric 10
+set protocols ospf area 0.0.0.0 interface lo0.0 passive
+set protocols ospf area 0.0.0.1 stub
+set protocols ospf area 0.0.0.1 interface ge-0/0/2.0
+
 set system syslog host 10.0.0.100 any any
 set system syslog host 10.0.0.101 any any
 set system syslog host 10.0.0.101 transport protocol tcp
@@ -3548,6 +3613,67 @@ config firewall policy
         set logtraffic all
         set comments "Implicit deny-all cleanup rule"
     next
+end
+
+config router bgp
+    set as 65020
+    set router-id 10.1.1.1
+    config neighbor
+        edit "203.0.113.2"
+            set remote-as 65100
+            set description "ISP-Primary"
+            set update-source "wan1"
+        next
+        edit "10.1.1.2"
+            set remote-as 65020
+            set description "Core-Switch"
+        next
+    end
+    config network
+        edit 1
+            set prefix 10.1.0.0 255.255.0.0
+        next
+    end
+    config redistribute "static"
+        set status enable
+    next
+end
+
+config router ospf
+    set router-id 10.1.1.1
+    config area
+        edit 0.0.0.0
+        next
+        edit 0.0.0.1
+            set type stub
+        next
+    end
+    config ospf-interface
+        edit "internal1-ospf"
+            set interface "internal1"
+            set area 0.0.0.0
+            set cost 10
+            set hello-interval 10
+            set dead-interval 40
+        next
+        edit "internal2-ospf"
+            set interface "internal2"
+            set area 0.0.0.1
+            set cost 20
+        next
+        edit "lo-ospf"
+            set interface "loopback0"
+            set area 0.0.0.0
+        next
+    end
+    config passive-interface
+        edit "loopback0"
+            set name "loopback0"
+        next
+    end
+    config redistribute "static"
+        set status enable
+    next
 end`,
   },
 
@@ -3709,7 +3835,25 @@ object network web-server
  nat (dmz,outside) static 203.0.113.10
 object network mail-server
  nat (dmz,outside) static 203.0.113.20
-`,
+!
+router bgp 65030
+ bgp router-id 10.1.1.1
+ neighbor 203.0.113.2 remote-as 65100
+ neighbor 203.0.113.2 description ISP-Primary
+ neighbor 203.0.113.2 activate
+ neighbor 10.1.1.2 remote-as 65030
+ neighbor 10.1.1.2 description Core-Switch
+ neighbor 10.1.1.2 activate
+ network 10.1.0.0 mask 255.255.0.0
+ redistribute static
+!
+router ospf 1
+ router-id 10.1.1.1
+ network 10.1.1.0 0.0.0.255 area 0
+ network 10.1.2.0 0.0.0.255 area 0
+ network 172.16.1.0 0.0.0.255 area 1
+ redistribute static subroutine
+!`,
   },
 
   // =========================================================================
@@ -4325,6 +4469,27 @@ nat-policy
 #
 ip route-static 0.0.0.0 0.0.0.0 203.0.113.2
 ip route-static 10.0.0.0 255.0.0.0 10.1.1.1
+#
+bgp 65040
+ router-id 10.1.1.254
+ peer 203.0.113.2 as-number 65100
+ peer 203.0.113.2 description ISP-Primary
+ peer 10.1.1.253 as-number 65040
+ peer 10.1.1.253 description HA-Peer
+ address-family ipv4 unicast
+  peer 203.0.113.2 enable
+  peer 10.1.1.253 enable
+  network 10.1.1.0 255.255.255.0
+  import-route static
+#
+ospf 1 router-id 10.1.1.254
+ area 0.0.0.0
+  network 10.1.1.0 0.0.0.255
+  network 203.0.113.0 0.0.0.3
+ area 0.0.0.1
+  stub
+  network 172.16.1.0 0.0.0.255
+ import-route static
 #`,
   },
 

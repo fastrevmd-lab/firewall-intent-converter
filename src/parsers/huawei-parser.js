@@ -989,6 +989,189 @@ function parseStaticRoutes(allLines, warnings) {
 
 
 // ---------------------------------------------------------------------------
+// BGP Configuration
+// ---------------------------------------------------------------------------
+
+function parseHuaweiBgpConfig(sections, warnings) {
+  const bgpConfigs = [];
+
+  for (const sec of sections) {
+    const match = sec.header.match(/^bgp\s+(\d+)/i);
+    if (!match) continue;
+
+    const localAs = parseInt(match[1]) || null;
+    let routerId = '';
+    const neighbors = [];
+    const networks = [];
+    const redistribute = [];
+    let inAddrFamily = false;
+
+    for (const line of sec.lines) {
+      const trimmed = line.trim();
+
+      if (/^ipv4-family\s+unicast/i.test(trimmed) || /^address-family\s+ipv4\s+unicast/i.test(trimmed)) {
+        inAddrFamily = true;
+        continue;
+      }
+      if (inAddrFamily && trimmed === '#') {
+        inAddrFamily = false;
+        continue;
+      }
+
+      if (trimmed.startsWith('router-id ')) {
+        routerId = trimmed.slice(10).trim();
+      } else if (trimmed.startsWith('peer ')) {
+        const tokens = trimmed.split(/\s+/);
+        const peerAddr = tokens[1];
+        if (tokens[2] === 'as-number') {
+          const existing = neighbors.find(n => n.address === peerAddr);
+          if (existing) {
+            existing.peer_as = parseInt(tokens[3]) || null;
+          } else {
+            neighbors.push({
+              address: peerAddr,
+              peer_as: parseInt(tokens[3]) || null,
+              description: '',
+              update_source: '',
+              local_address: '',
+              import_policy: '',
+              export_policy: '',
+              authentication_key: '',
+              enabled: true,
+            });
+          }
+        } else if (tokens[2] === 'description') {
+          const existing = neighbors.find(n => n.address === peerAddr);
+          if (existing) existing.description = tokens.slice(3).join(' ');
+        } else if (tokens[2] === 'route-policy') {
+          const existing = neighbors.find(n => n.address === peerAddr);
+          if (existing) {
+            const direction = tokens[4]; // import or export
+            if (direction === 'import') existing.import_policy = tokens[3];
+            else if (direction === 'export') existing.export_policy = tokens[3];
+          }
+        } else if (tokens[2] === 'enable' && inAddrFamily) {
+          // Peer activation in address-family — mark as enabled
+          const existing = neighbors.find(n => n.address === peerAddr);
+          if (existing) existing.enabled = true;
+        }
+      } else if (trimmed.startsWith('network ') && inAddrFamily) {
+        const tokens = trimmed.split(/\s+/);
+        const prefix = tokens[1];
+        const mask = tokens[2];
+        if (prefix && mask) {
+          const cidr = huaweiMaskToCidr(mask);
+          networks.push({ prefix: `${prefix}/${cidr}`, policy: '' });
+        } else if (prefix) {
+          networks.push({ prefix, policy: '' });
+        }
+      } else if (trimmed.startsWith('import-route ') && inAddrFamily) {
+        const tokens = trimmed.split(/\s+/);
+        redistribute.push({ protocol: tokens[1], policy: '' });
+      }
+    }
+
+    if (localAs) {
+      bgpConfigs.push({
+        instance: '',
+        local_as: localAs,
+        router_id: routerId,
+        peer_groups: neighbors.length > 0 ? [{ name: 'PEERS', type: 'external', neighbors }] : [],
+        networks,
+        redistribute,
+      });
+    }
+  }
+
+  return bgpConfigs;
+}
+
+// ---------------------------------------------------------------------------
+// OSPF Configuration
+// ---------------------------------------------------------------------------
+
+function parseHuaweiOspfConfig(sections, warnings) {
+  const ospfConfigs = [];
+
+  for (const sec of sections) {
+    const match = sec.header.match(/^ospf\s+(\d+)/i);
+    if (!match) continue;
+
+    const processId = parseInt(match[1]) || 0;
+    // Router-id can appear on the header line: "ospf 1 router-id 10.1.1.254"
+    const headerRidMatch = sec.header.match(/router-id\s+(\S+)/i);
+    let routerId = headerRidMatch ? headerRidMatch[1] : '';
+    const areaMap = {};
+    const redistribute = [];
+    let currentArea = null;
+
+    for (const line of sec.lines) {
+      const trimmed = line.trim();
+
+      if (trimmed.startsWith('router-id ')) {
+        routerId = trimmed.slice(10).trim();
+      } else if (/^area\s+(\S+)/.test(trimmed)) {
+        const areaMatch = trimmed.match(/^area\s+(\S+)/);
+        currentArea = areaMatch[1];
+        if (!areaMap[currentArea]) {
+          areaMap[currentArea] = { area_id: currentArea, area_type: 'normal', interfaces: [], networks: [] };
+        }
+        // Check for stub/nssa in same line
+        if (/\bstub\b/.test(trimmed)) {
+          areaMap[currentArea].area_type = /\bno-summary\b/.test(trimmed) ? 'totally-stub' : 'stub';
+        } else if (/\bnssa\b/.test(trimmed)) {
+          areaMap[currentArea].area_type = /\bno-summary\b/.test(trimmed) ? 'totally-nssa' : 'nssa';
+        }
+      } else if (trimmed === 'stub' && currentArea) {
+        areaMap[currentArea].area_type = 'stub';
+      } else if (trimmed === 'stub no-summary' && currentArea) {
+        areaMap[currentArea].area_type = 'totally-stub';
+      } else if (trimmed === 'nssa' && currentArea) {
+        areaMap[currentArea].area_type = 'nssa';
+      } else if (trimmed === 'nssa no-summary' && currentArea) {
+        areaMap[currentArea].area_type = 'totally-nssa';
+      } else if (trimmed.startsWith('network ') && currentArea) {
+        const tokens = trimmed.split(/\s+/);
+        // network <prefix> <wildcard>
+        if (tokens.length >= 3) {
+          const prefix = tokens[1];
+          const wildcard = tokens[2];
+          const cidr = huaweiWildcardToCidr(wildcard);
+          areaMap[currentArea].networks.push({ prefix: `${prefix}/${cidr}` });
+        }
+      } else if (trimmed.startsWith('import-route ')) {
+        const tokens = trimmed.split(/\s+/);
+        redistribute.push({ protocol: tokens[1], policy: '', metric_type: null });
+      }
+    }
+
+    if (Object.keys(areaMap).length > 0) {
+      ospfConfigs.push({
+        instance: '',
+        router_id: routerId,
+        reference_bandwidth: null,
+        areas: Object.values(areaMap),
+        redistribute,
+      });
+    }
+  }
+
+  return ospfConfigs;
+}
+
+function huaweiWildcardToCidr(wildcard) {
+  if (!wildcard) return 32;
+  const parts = wildcard.split('.');
+  if (parts.length !== 4) return 32;
+  let bits = 0;
+  for (const part of parts) {
+    let val = parseInt(part);
+    while (val > 0) { bits++; val = val >> 1; }
+  }
+  return 32 - bits;
+}
+
+// ---------------------------------------------------------------------------
 // Time-Range / Schedule Parser
 // ---------------------------------------------------------------------------
 
@@ -1338,6 +1521,8 @@ export function parseHuaweiConfig(configText) {
   const dnatRules = parseNatServers(sections, allLines, warnings);
   const natRules = [...natPolicyRules, ...dnatRules];
   const staticRoutes = parseStaticRoutes(allLines, warnings);
+  const bgpConfig = parseHuaweiBgpConfig(sections, warnings);
+  const ospfConfig = parseHuaweiOspfConfig(sections, warnings);
   const schedules = parseTimeRanges(sections, warnings);
   const securityProfiles = parseSecurityProfiles(sections, warnings);
   const vpnTunnels = parseVpnConfig(sections, warnings);
@@ -1404,6 +1589,8 @@ export function parseHuaweiConfig(configText) {
     interfaces: normalizedInterfaces,
     routing_contexts: [{ name: 'default', type: 'default', virtual_routers: [], zones: [] }],
     static_routes: staticRoutes,
+    bgp_config: bgpConfig,
+    ospf_config: ospfConfig,
     target_context: null,
     transparent_mode: false,
     bridge_domains: [],
@@ -1429,6 +1616,8 @@ export function parseHuaweiConfig(configText) {
       qos_profile_count: 0,
       routing_context_count: 1,
       static_route_count: staticRoutes.length,
+      bgp_instance_count: bgpConfig.length,
+      ospf_instance_count: ospfConfig.length,
       ha_enabled: !!(haConfig && haConfig.enabled),
       multi_vsys: false,
     },
