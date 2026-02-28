@@ -113,6 +113,8 @@ export function parsePanosConfig(configText) {
   const allSecurityProfileDefinitions = {};
   const allDecryptionRules = [];
   const allPbfRules = [];
+  const allBgpConfig = [];
+  const allOspfConfig = [];
   const routingContexts = [];
 
   // Parse HA configuration (device-level, not per-vsys)
@@ -212,12 +214,17 @@ export function parsePanosConfig(configText) {
       ...(multiVsys ? { _vsys: vsysName } : {}),
     });
 
-    // Build routing context for this vsys
-    const virtualRouters = parseVirtualRouters(config, warnings);
+    // Build routing context for this vsys (includes BGP/OSPF extraction)
+    const vrResult = parseVirtualRouters(config, warnings);
+    const virtualRouters = vrResult.virtualRouters || vrResult;
+    const vrBgpConfigs = vrResult.bgpConfigs || [];
+    const vrOspfConfigs = vrResult.ospfConfigs || [];
+    allBgpConfig.push(...vrBgpConfigs);
+    allOspfConfig.push(...vrOspfConfigs);
     routingContexts.push({
       name: vsysName,
       type: 'vsys',
-      virtual_routers: virtualRouters,
+      virtual_routers: Array.isArray(virtualRouters) ? virtualRouters : [],
       zones: zones.map(z => z.name),
     });
 
@@ -305,6 +312,8 @@ export function parsePanosConfig(configText) {
     vwire_pairs: vwirePairs,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
+    bgp_config: allBgpConfig,
+    ospf_config: allOspfConfig,
     target_context: null,
     metadata: {
       source_vendor: 'panos',
@@ -319,6 +328,8 @@ export function parsePanosConfig(configText) {
       interface_count: interfaces.length,
       routing_context_count: routingContexts.length,
       static_route_count: staticRoutes.length,
+      bgp_instance_count: allBgpConfig.length,
+      ospf_instance_count: allOspfConfig.length,
       vpn_tunnel_count: vpnTunnels.length,
       syslog_server_count: syslogConfig.length,
       dhcp_config_count: dhcpConfig.length,
@@ -603,22 +614,32 @@ function parseVirtualRouters(config, warnings) {
   const devices = getNestedValue(config, 'devices');
   if (!devices) return [];
 
+  const bgpConfigs = [];
+  const ospfConfigs = [];
+
   const deviceEntries = extractEntries(devices);
   for (const device of deviceEntries) {
     const vrContainer = getNestedValue(device, 'network.virtual-router');
     if (!vrContainer) continue;
 
     const vrEntries = extractEntries(vrContainer);
-    return vrEntries.map(vr => {
+    const virtualRouters = vrEntries.map(vr => {
       const name = vr['@_name'] || 'default';
       const interfaces = extractMembers(vr.interface || vr);
       const staticRoutes = parseVrStaticRoutes(vr);
 
+      // Parse BGP and OSPF from this virtual-router
+      const bgp = parseVrBgpConfig(vr, name);
+      if (bgp) bgpConfigs.push(bgp);
+      const ospf = parseVrOspfConfig(vr, name);
+      if (ospf) ospfConfigs.push(ospf);
+
       return { name, interfaces, static_routes: staticRoutes };
     });
+    return { virtualRouters, bgpConfigs, ospfConfigs };
   }
 
-  return [];
+  return { virtualRouters: [], bgpConfigs: [], ospfConfigs: [] };
 }
 
 function parseVrStaticRoutes(vrEntry) {
@@ -663,6 +684,152 @@ function parseVrStaticRoutes(vrEntry) {
       vrf: '',
     };
   });
+}
+
+/**
+ * Parses BGP configuration from a PAN-OS virtual-router entry.
+ * Path: virtual-router > entry > protocol > bgp
+ */
+function parseVrBgpConfig(vrEntry, vrName) {
+  const bgpNode = getNestedValue(vrEntry, 'protocol.bgp');
+  if (!bgpNode) return null;
+
+  const enabled = bgpNode.enable === 'yes' || bgpNode.enable === true;
+  if (!enabled && !bgpNode['local-as']) return null;
+
+  const localAs = bgpNode['local-as'] ? parseInt(String(bgpNode['local-as'])) || null : null;
+  const routerId = bgpNode['router-id'] ? String(bgpNode['router-id']) : '';
+
+  // Parse peer groups
+  const peerGroups = [];
+  const pgContainer = getNestedValue(bgpNode, 'peer-group');
+  if (pgContainer) {
+    const pgEntries = extractEntries(pgContainer);
+    for (const pg of pgEntries) {
+      const groupName = pg['@_name'] || 'default';
+      const pgType = pg.type ? (pg.type.ebgp !== undefined ? 'external' :
+        pg.type.ibgp !== undefined ? 'internal' : 'external') : 'external';
+
+      const neighbors = [];
+      const peerContainer = getNestedValue(pg, 'peer');
+      if (peerContainer) {
+        const peerEntries = extractEntries(peerContainer);
+        for (const peer of peerEntries) {
+          const addr = peer['@_name'] || '';
+          neighbors.push({
+            address: addr,
+            peer_as: peer['peer-as'] ? parseInt(String(peer['peer-as'])) || null : null,
+            description: '',
+            update_source: peer['local-address']?.interface ? String(peer['local-address'].interface) : '',
+            local_address: peer['local-address']?.ip ? String(peer['local-address'].ip) : '',
+            import_policy: '',
+            export_policy: '',
+            authentication_key: '',
+            enabled: peer.enable !== 'no',
+          });
+        }
+      }
+      peerGroups.push({ name: groupName, type: pgType, neighbors });
+    }
+  }
+
+  // Parse redistribution profiles
+  const redistribute = [];
+  const redistContainer = getNestedValue(bgpNode, 'redist-rules');
+  if (redistContainer) {
+    const redistEntries = extractEntries(redistContainer);
+    for (const entry of redistEntries) {
+      const proto = entry['@_name'] || '';
+      if (proto) {
+        redistribute.push({ protocol: proto.replace('ip-', ''), policy: '' });
+      }
+    }
+  }
+
+  return {
+    instance: vrName === 'default' ? '' : vrName,
+    local_as: localAs,
+    router_id: routerId,
+    peer_groups: peerGroups,
+    networks: [],
+    redistribute,
+  };
+}
+
+/**
+ * Parses OSPF configuration from a PAN-OS virtual-router entry.
+ * Path: virtual-router > entry > protocol > ospf
+ */
+function parseVrOspfConfig(vrEntry, vrName) {
+  const ospfNode = getNestedValue(vrEntry, 'protocol.ospf');
+  if (!ospfNode) return null;
+
+  const enabled = ospfNode.enable === 'yes' || ospfNode.enable === true;
+  if (!enabled) return null;
+
+  const routerId = ospfNode['router-id'] ? String(ospfNode['router-id']) : '';
+
+  // Parse areas
+  const areas = [];
+  const areaContainer = getNestedValue(ospfNode, 'area');
+  if (areaContainer) {
+    const areaEntries = extractEntries(areaContainer);
+    for (const area of areaEntries) {
+      const areaId = area['@_name'] || '0.0.0.0';
+
+      // Determine area type
+      let areaType = 'normal';
+      if (area.type) {
+        if (area.type.stub !== undefined) {
+          areaType = area.type.stub?.['no-summary'] !== undefined ? 'totally-stub' : 'stub';
+        } else if (area.type.nssa !== undefined) {
+          areaType = area.type.nssa?.['no-summary'] !== undefined ? 'totally-nssa' : 'nssa';
+        }
+      }
+
+      // Parse interface references
+      const interfaces = [];
+      const ifContainer = getNestedValue(area, 'interface');
+      if (ifContainer) {
+        const ifEntries = extractEntries(ifContainer);
+        for (const iface of ifEntries) {
+          const ifName = iface['@_name'] || '';
+          interfaces.push({
+            name: ifName,
+            cost: iface.metric ? parseInt(String(iface.metric)) || null : null,
+            hello_interval: iface['hello-interval'] ? parseInt(String(iface['hello-interval'])) || null : null,
+            dead_interval: iface['dead-counts'] ? parseInt(String(iface['dead-counts'])) || null : null,
+            authentication: null,
+            passive: iface.passive === 'yes' || iface.passive === true,
+            network_type: iface['link-type'] ? String(iface['link-type']) : null,
+          });
+        }
+      }
+
+      areas.push({ area_id: areaId, area_type: areaType, interfaces, networks: [] });
+    }
+  }
+
+  if (areas.length === 0) return null;
+
+  // Parse redistribution
+  const redistribute = [];
+  const redistContainer = getNestedValue(ospfNode, 'export-rules');
+  if (redistContainer) {
+    const redistEntries = extractEntries(redistContainer);
+    for (const entry of redistEntries) {
+      const proto = entry['@_name'] || '';
+      if (proto) redistribute.push({ protocol: proto, policy: '', metric_type: null });
+    }
+  }
+
+  return {
+    instance: vrName === 'default' ? '' : vrName,
+    router_id: routerId,
+    reference_bandwidth: null,
+    areas,
+    redistribute,
+  };
 }
 
 // ---------------------------------------------------------------------------

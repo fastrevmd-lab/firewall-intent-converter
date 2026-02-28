@@ -118,13 +118,19 @@
 ## Planned Revisions
 
 ### Rev9 — Dynamic Routing & Identity
-- [ ] **Dynamic routing protocols** — Parse and convert BGP, OSPF, EVPN, and VxLAN configurations from all supported source vendors to SRX equivalents:
-  - BGP: neighbor config, AS numbers, route policies, address families, communities, peer groups
-  - OSPF: areas, interfaces, authentication, stub/NSSA, route redistribution
+- [x] **Dynamic routing protocols (BGP + OSPF)** — Parse and convert BGP and OSPF configurations from 5 vendors to SRX equivalents:
+  - BGP: peer groups, neighbors, AS numbers, route redistribution, per-instance support
+  - OSPF: areas (normal/stub/NSSA), interfaces, cost/hello/dead intervals, passive, authentication, redistribution
+  - Source vendors: PAN-OS (virtual-router BGP/OSPF), FortiGate (`config router bgp`/`ospf`), Cisco ASA (`router bgp`/`ospf`), Huawei USG (`bgp`/`ospf` sections), SRX round-trip
+  - SRX output: `set protocols bgp group`, `set protocols ospf area`, `set routing-options autonomous-system`
+  - SRX XML builder: unified `buildRoutingXml()` emits `<routing-options>` + `<protocols>` with per-instance support
+  - RoutingEditor UI: BGP section (peer groups, neighbors, networks) + OSPF section (areas, interfaces)
+  - Check Point + SonicWall: empty defaults (no dynamic routing in policy exports)
+  - Sample configs: BGP/OSPF added to PAN-OS, FortiGate, SRX, Cisco ASA, Huawei samples
+- [ ] **EVPN/VxLAN** — Deferred to future revision:
   - EVPN: VXLAN tunnel endpoints (VTEPs), route targets, route distinguishers, MAC-VRF instances
   - VxLAN: VTEP interfaces, VNI mappings, underlay routing integration
-  - Source vendors: PAN-OS (virtual-router BGP/OSPF), FortiGate (router bgp/ospf), Cisco ASA (router bgp/ospf), SRX round-trip
-  - SRX output: `set protocols bgp`, `set protocols ospf`, `set protocols evpn`, `set interfaces vtep`, `set switch-options`
+  - SRX output: `set protocols evpn`, `set interfaces vtep`, `set switch-options`
 - [x] **User-ID / identity-based policies** — Parse and convert user/group identity references in security policies:
   - `source_users` field on intermediate schema, extracted from all 7 vendors
   - PAN-OS: `<source-user>` extraction (DOMAIN\user, group references, special values)
@@ -154,7 +160,7 @@
 - **Policy-Based Forwarding** — PAN-OS PBF rules now parsed and displayed in dedicated tab; SRX filter-based forwarding generation not yet automated
 - **NetFlow / Telemetry** — sFlow, streaming telemetry not converted
 - **Management Access** — Admin users, SNMP communities, SSH/API access not converted
-- **Dynamic Routing** — Only static routes currently (Rev9 planned)
+- **Dynamic Routing** — BGP and OSPF supported; EVPN/VxLAN deferred; OSPFv3 (IPv6) not yet supported
 - **User Identity** — User-ID / FSSO / IDFW parsed and converted to SRX `source-identity` — requires manual JIMS server configuration
 - **Virtual-Wire** — SRX has no native vwire; mapped to bridge-domain with TODO comments for interface assignment
 - **MNHA** — Only 2-node configurations supported

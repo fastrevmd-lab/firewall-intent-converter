@@ -108,6 +108,8 @@ export function parseCheckPointConfig(configText) {
     interfaces: normalizedInterfaces,
     routing_contexts: [{ name: 'default', type: 'default', virtual_routers: [], zones: [] }],
     static_routes: gaiaRoutes,
+    bgp_config: [],
+    ospf_config: [],
     target_context: null,
     transparent_mode: false,
     bridge_domains: [],
