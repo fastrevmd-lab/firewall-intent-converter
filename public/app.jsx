@@ -208,12 +208,12 @@ export default function App() {
   }, [isSanitized]);
 
   // ------------------------------------------------------------------
-  // Parse handler: sends config to /api/parse
+  // Parse handler: auto-sanitizes then sends config to /api/parse
   // ------------------------------------------------------------------
   const handleParse = useCallback(async (selectedVendorHint) => {
     if (!configText.trim()) return;
     setIsLoading(true);
-    setLoadingMessage('Parsing configuration...');
+    setLoadingMessage('Sanitizing & parsing configuration...');
     setError(null);
     setSrxOutput(null);
     setConvertWarnings([]);
@@ -224,10 +224,27 @@ export default function App() {
     setTranslationError(null);
 
     try {
+      // Auto-sanitize before parsing
+      let textToParse = configText;
+      if (!isSanitized) {
+        const sanitizeResponse = await fetch('/api/sanitize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ configText }),
+        });
+        const sanitizeData = await sanitizeResponse.json();
+        if (sanitizeResponse.ok) {
+          textToParse = sanitizeData.sanitizedText;
+          setConfigText(textToParse);
+          setSanitizationTable(sanitizeData.replacements);
+          setIsSanitized(true);
+        }
+      }
+
       const response = await fetch('/api/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ configText }),
+        body: JSON.stringify({ configText: textToParse }),
       });
 
       const data = await response.json();
@@ -501,10 +518,22 @@ export default function App() {
     setError(null);
 
     try {
-      const response = await fetch('/api/parse', {
+      // Auto-sanitize the slot's config before parsing
+      let textToParse = slot.configText;
+      const sanitizeResponse = await fetch('/api/sanitize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ configText: slot.configText }),
+      });
+      const sanitizeData = await sanitizeResponse.json();
+      if (sanitizeResponse.ok) {
+        textToParse = sanitizeData.sanitizedText;
+      }
+
+      const response = await fetch('/api/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ configText: textToParse }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Parse failed');
@@ -516,7 +545,10 @@ export default function App() {
 
       setConfigSlots(prev => prev.map((s, i) => i === slotIndex ? {
         ...s,
+        configText: textToParse,
         intermediateConfig: data.intermediateConfig,
+        isSanitized: true,
+        sanitizationTable: sanitizeData.replacements || [],
         sourceVendor: detectedVendor,
         parseWarnings: data.warnings || [],
         parseStats: data.parseStats || null,
@@ -1467,7 +1499,6 @@ export default function App() {
             : handleConfigChange
           }
           onParse={mergeMode ? (() => handleParseSlot(activeSlotIndex)) : handleParse}
-          onSanitize={handleSanitize}
           onStartGreenfield={handleStartGreenfield}
           onStartGreenfieldWithTemplate={handleStartGreenfieldWithTemplate}
           greenfieldMode={greenfieldMode}
