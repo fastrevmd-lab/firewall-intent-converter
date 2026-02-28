@@ -209,9 +209,11 @@ export default function App() {
 
   // ------------------------------------------------------------------
   // Parse handler: auto-sanitizes then sends config to /api/parse
+  // Accepts optional overrideText for file-upload flow (avoids stale closure)
   // ------------------------------------------------------------------
-  const handleParse = useCallback(async (selectedVendorHint) => {
-    if (!configText.trim()) return;
+  const handleParse = useCallback(async (selectedVendorHint, overrideText) => {
+    const rawText = overrideText || configText;
+    if (!rawText.trim()) return;
     setIsLoading(true);
     setLoadingMessage('Sanitizing & parsing configuration...');
     setError(null);
@@ -225,12 +227,12 @@ export default function App() {
 
     try {
       // Auto-sanitize before parsing
-      let textToParse = configText;
-      if (!isSanitized) {
+      let textToParse = rawText;
+      if (!isSanitized || overrideText) {
         const sanitizeResponse = await fetch('/api/sanitize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ configText }),
+          body: JSON.stringify({ configText: rawText }),
         });
         const sanitizeData = await sanitizeResponse.json();
         if (sanitizeResponse.ok) {
@@ -1499,6 +1501,7 @@ export default function App() {
             : handleConfigChange
           }
           onParse={mergeMode ? (() => handleParseSlot(activeSlotIndex)) : handleParse}
+          onFileLoaded={mergeMode ? undefined : (text, vendor) => handleParse(vendor, text)}
           onStartGreenfield={handleStartGreenfield}
           onStartGreenfieldWithTemplate={handleStartGreenfieldWithTemplate}
           greenfieldMode={greenfieldMode}
