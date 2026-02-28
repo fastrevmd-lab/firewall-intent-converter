@@ -201,8 +201,9 @@ export default function App() {
   // ------------------------------------------------------------------
   // Parse handler: runs parseConfig() locally
   // ------------------------------------------------------------------
-  const handleParse = useCallback((selectedVendorHint) => {
-    if (!configText.trim()) return;
+  const handleParse = useCallback((selectedVendorHint, overrideText) => {
+    const rawText = overrideText || configText;
+    if (!rawText.trim()) return;
     setIsLoading(true);
     setLoadingMessage('Sanitizing & parsing configuration...');
     setError(null);
@@ -216,9 +217,9 @@ export default function App() {
 
     try {
       // Auto-sanitize before parsing
-      let textToParse = configText;
-      if (!isSanitized) {
-        const sanitized = sanitizeConfig(configText);
+      let textToParse = rawText;
+      if (!isSanitized || overrideText) {
+        const sanitized = sanitizeConfig(rawText);
         textToParse = sanitized.sanitizedText;
         setConfigText(textToParse);
         setSanitizationTable(sanitized.replacements);
@@ -1444,6 +1445,7 @@ export default function App() {
             : handleConfigChange
           }
           onParse={mergeMode ? (() => handleParseSlot(activeSlotIndex)) : handleParse}
+          onFileLoaded={mergeMode ? undefined : (text, vendor) => handleParse(vendor, text)}
           onStartGreenfield={handleStartGreenfield}
           onStartGreenfieldWithTemplate={handleStartGreenfieldWithTemplate}
           greenfieldMode={greenfieldMode}

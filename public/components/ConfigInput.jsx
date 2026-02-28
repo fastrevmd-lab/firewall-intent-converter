@@ -77,6 +77,7 @@ export default function ConfigInput({
   configText,
   onConfigChange,
   onParse,
+  onFileLoaded,
   onStartGreenfield,
   onStartGreenfieldWithTemplate,
   greenfieldMode,
@@ -130,6 +131,8 @@ export default function ConfigInput({
     const reader = new FileReader();
     reader.onload = (event) => {
       onConfigChange(event.target.result);
+      // Auto-trigger sanitize + parse after file load
+      if (onFileLoaded) onFileLoaded(event.target.result, selectedVendor);
     };
     reader.readAsText(file);
     e.target.value = '';
