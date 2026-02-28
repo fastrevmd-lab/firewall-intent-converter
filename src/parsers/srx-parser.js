@@ -70,6 +70,8 @@ function parseFlatSrx(tree, setCommands, warnings) {
   const applications = parseApplications(tree, warnings);
   const schedules = parseSchedulers(setCommands, warnings);
   const { staticRoutes, routingContexts } = parseSrxStaticRoutes(tree, warnings);
+  const bgpConfig = parseSrxBgpConfig(tree, warnings);
+  const ospfConfig = parseSrxOspfConfig(tree, warnings);
   const haConfig = parseSrxHaConfig(tree, warnings);
   const screenConfig = parseSrxScreenConfig(tree, zones, warnings);
 
@@ -137,6 +139,8 @@ function parseFlatSrx(tree, setCommands, warnings) {
     interfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
+    bgp_config: bgpConfig,
+    ospf_config: ospfConfig,
     target_context: null,
     transparent_mode: bridgeDomains.length > 0,
     bridge_domains: bridgeDomains,
@@ -157,6 +161,8 @@ function parseFlatSrx(tree, setCommands, warnings) {
       qos_profile_count: qosConfig.length,
       routing_context_count: routingContexts.length,
       static_route_count: staticRoutes.length,
+      bgp_instance_count: bgpConfig.length,
+      ospf_instance_count: ospfConfig.length,
       ha_enabled: !!(haConfig && haConfig.enabled),
       multi_vsys: false,
     },
@@ -185,6 +191,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
   const allApplications = [];
   const allSchedules = [];
   const allStaticRoutes = [];
+  const allBgpConfig = [];
+  const allOspfConfig = [];
   const allVpnTunnels = [];
   const allScreenConfig = [];
   const allSyslogConfig = [];
@@ -231,6 +239,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
     allApplications.push(...parsed.applications);
     allSchedules.push(...parsed.schedules);
     allStaticRoutes.push(...parsed.staticRoutes);
+    allBgpConfig.push(...parsed.bgpConfig);
+    allOspfConfig.push(...parsed.ospfConfig);
     allVpnTunnels.push(...parsed.vpnTunnels);
     allScreenConfig.push(...parsed.screenConfig);
     allSyslogConfig.push(...parsed.syslogConfig);
@@ -272,6 +282,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
     allApplications.push(...parsed.applications);
     allSchedules.push(...parsed.schedules);
     allStaticRoutes.push(...parsed.staticRoutes);
+    allBgpConfig.push(...parsed.bgpConfig);
+    allOspfConfig.push(...parsed.ospfConfig);
     allVpnTunnels.push(...parsed.vpnTunnels);
     allScreenConfig.push(...parsed.screenConfig);
     allSyslogConfig.push(...parsed.syslogConfig);
@@ -346,6 +358,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
     interfaces: allInterfaces,
     routing_contexts: routingContexts,
     static_routes: allStaticRoutes,
+    bgp_config: allBgpConfig,
+    ospf_config: allOspfConfig,
     target_context: null,
     transparent_mode: allBridgeDomains.length > 0,
     bridge_domains: allBridgeDomains,
@@ -366,6 +380,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
       qos_profile_count: allQosConfig.length,
       routing_context_count: routingContexts.length,
       static_route_count: allStaticRoutes.length,
+      bgp_instance_count: allBgpConfig.length,
+      ospf_instance_count: allOspfConfig.length,
       ha_enabled: !!(haConfig && haConfig.enabled),
       multi_vsys: true,
     },
@@ -392,6 +408,8 @@ function parseContextSubTree(subTree, setCommands, ctxLabel, ctxName, warnings) 
   const applications = parseApplications(subTree, warnings);
   const schedules = parseSchedulers(setCommands, warnings);
   const { staticRoutes } = parseSrxStaticRoutes(subTree, warnings);
+  const bgpConfig = parseSrxBgpConfig(subTree, warnings);
+  const ospfConfig = parseSrxOspfConfig(subTree, warnings);
   const vpnTunnels = parseSrxVpnConfig(subTree, warnings);
   const screenConfig = parseSrxScreenConfig(subTree, zones, warnings);
   const syslogConfig = parseSrxSyslogConfig(subTree, warnings);
@@ -404,6 +422,7 @@ function parseContextSubTree(subTree, setCommands, ctxLabel, ctxName, warnings) 
   return {
     zones, addressObjects, addressGroups, serviceObjects, serviceGroups,
     policies, natRules, applications, schedules, staticRoutes,
+    bgpConfig, ospfConfig,
     vpnTunnels, screenConfig, syslogConfig, dhcpConfig, qosConfig,
     interfaces, bridgeDomains, l2Interfaces,
   };
@@ -1357,6 +1376,299 @@ function buildSrxRoute(dest, data, vrf, routingContext) {
     vrf,
     routing_context: routingContext,
   };
+}
+
+// ---------------------------------------------------------------------------
+// BGP Configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses BGP configuration from the SRX config tree.
+ * Handles global `protocols bgp` and per-routing-instance BGP.
+ */
+function parseSrxBgpConfig(tree, warnings) {
+  const bgpConfigs = [];
+
+  // Global BGP
+  const globalBgp = parseBgpFromSubTree(tree, '', warnings);
+  if (globalBgp) bgpConfigs.push(globalBgp);
+
+  // Per-routing-instance BGP
+  const instances = tree?.['routing-instances'];
+  if (instances && typeof instances === 'object') {
+    for (const [instName, instData] of Object.entries(instances)) {
+      if (instName.startsWith('_') || typeof instData !== 'object') continue;
+      const instBgp = parseBgpFromSubTree(instData, instName, warnings);
+      if (instBgp) bgpConfigs.push(instBgp);
+    }
+  }
+
+  return bgpConfigs;
+}
+
+function parseBgpFromSubTree(tree, instance, warnings) {
+  const bgpNode = tree?.protocols?.bgp;
+  if (!bgpNode || typeof bgpNode !== 'object') return null;
+
+  // Get AS number and router-id from routing-options
+  const routingOpts = tree?.['routing-options'];
+  const localAs = routingOpts?.['autonomous-system']
+    ? parseInt(extractStringValue(routingOpts['autonomous-system'])) || null
+    : null;
+  const routerId = routingOpts?.['router-id']
+    ? extractStringValue(routingOpts['router-id'])
+    : '';
+
+  // Parse peer groups
+  const peerGroups = [];
+  const groupNode = bgpNode.group;
+  if (groupNode && typeof groupNode === 'object') {
+    for (const [groupName, groupData] of Object.entries(groupNode)) {
+      if (groupName.startsWith('_') || typeof groupData !== 'object') continue;
+      peerGroups.push(parseBgpGroup(groupName, groupData));
+    }
+  }
+
+  // Parse networks from policy-options (BGP network advertisements)
+  const networks = [];
+  const policyOpts = tree?.['policy-options']?.['policy-statement'];
+  if (policyOpts && typeof policyOpts === 'object') {
+    for (const [stmtName, stmtData] of Object.entries(policyOpts)) {
+      if (stmtName.startsWith('_') || typeof stmtData !== 'object') continue;
+      // Look for route-filter terms that indicate BGP network advertisements
+      const terms = stmtData.term;
+      if (terms && typeof terms === 'object') {
+        for (const [termName, termData] of Object.entries(terms)) {
+          if (termName.startsWith('_') || typeof termData !== 'object') continue;
+          const rf = termData?.from?.['route-filter'];
+          if (rf && typeof rf === 'object') {
+            for (const [prefix, rfData] of Object.entries(rf)) {
+              if (prefix.startsWith('_')) continue;
+              networks.push({ prefix, policy: stmtName });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Parse redistribution from export policies
+  const redistribute = [];
+  const exportPolicies = bgpNode.export;
+  if (exportPolicies) {
+    // Export policies reference policy-statements; check for redistribution patterns
+    const exportList = typeof exportPolicies === 'string' ? [exportPolicies] :
+      (Array.isArray(exportPolicies) ? exportPolicies : Object.keys(exportPolicies).filter(k => !k.startsWith('_')));
+    for (const policyName of exportList) {
+      if (policyOpts?.[policyName]) {
+        const stmt = policyOpts[policyName];
+        const terms = stmt?.term;
+        if (terms && typeof terms === 'object') {
+          for (const [tName, tData] of Object.entries(terms)) {
+            if (tName.startsWith('_') || typeof tData !== 'object') continue;
+            const proto = tData?.from?.protocol;
+            if (proto) {
+              const protoName = extractStringValue(proto);
+              if (protoName && !redistribute.find(r => r.protocol === protoName)) {
+                redistribute.push({ protocol: protoName, policy: policyName });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (peerGroups.length === 0 && !localAs) return null;
+
+  return {
+    instance,
+    local_as: localAs,
+    router_id: routerId,
+    peer_groups: peerGroups,
+    networks,
+    redistribute,
+  };
+}
+
+function parseBgpGroup(groupName, groupData) {
+  const typeVal = extractStringValue(groupData.type) || '';
+  const neighbors = [];
+
+  const neighborNode = groupData.neighbor;
+  if (neighborNode && typeof neighborNode === 'object') {
+    for (const [addr, nData] of Object.entries(neighborNode)) {
+      if (addr.startsWith('_')) continue;
+      const nObj = typeof nData === 'object' ? nData : {};
+      neighbors.push({
+        address: addr,
+        peer_as: nObj['peer-as'] ? parseInt(extractStringValue(nObj['peer-as'])) || null : null,
+        description: nObj.description ? extractStringValue(nObj.description) : '',
+        update_source: '',
+        local_address: nObj['local-address'] ? extractStringValue(nObj['local-address']) : '',
+        import_policy: nObj.import ? extractStringValue(nObj.import) : '',
+        export_policy: nObj.export ? extractStringValue(nObj.export) : '',
+        authentication_key: nObj['authentication-key'] ? extractStringValue(nObj['authentication-key']) : '',
+        enabled: true,
+      });
+    }
+  }
+
+  return {
+    name: groupName,
+    type: typeVal === 'external' ? 'external' : typeVal === 'internal' ? 'internal' : typeVal || 'external',
+    neighbors,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OSPF Configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses OSPFv2 configuration from the SRX config tree.
+ * Handles global `protocols ospf` and per-routing-instance OSPF.
+ */
+function parseSrxOspfConfig(tree, warnings) {
+  const ospfConfigs = [];
+
+  // Global OSPF
+  const globalOspf = parseOspfFromSubTree(tree, '', warnings);
+  if (globalOspf) ospfConfigs.push(globalOspf);
+
+  // Per-routing-instance OSPF
+  const instances = tree?.['routing-instances'];
+  if (instances && typeof instances === 'object') {
+    for (const [instName, instData] of Object.entries(instances)) {
+      if (instName.startsWith('_') || typeof instData !== 'object') continue;
+      const instOspf = parseOspfFromSubTree(instData, instName, warnings);
+      if (instOspf) ospfConfigs.push(instOspf);
+    }
+  }
+
+  return ospfConfigs;
+}
+
+function parseOspfFromSubTree(tree, instance, warnings) {
+  const ospfNode = tree?.protocols?.ospf;
+  if (!ospfNode || typeof ospfNode !== 'object') return null;
+
+  // Get router-id from routing-options
+  const routingOpts = tree?.['routing-options'];
+  const routerId = routingOpts?.['router-id']
+    ? extractStringValue(routingOpts['router-id'])
+    : '';
+
+  const refBw = ospfNode['reference-bandwidth']
+    ? extractStringValue(ospfNode['reference-bandwidth'])
+    : null;
+
+  // Parse areas
+  const areas = [];
+  const areaNode = ospfNode.area;
+  if (areaNode && typeof areaNode === 'object') {
+    for (const [areaId, areaData] of Object.entries(areaNode)) {
+      if (areaId.startsWith('_') || typeof areaData !== 'object') continue;
+      areas.push(parseOspfArea(areaId, areaData));
+    }
+  }
+
+  // Parse redistribution from export policies
+  const redistribute = [];
+  const exportPolicy = ospfNode.export;
+  if (exportPolicy) {
+    const policyOpts = tree?.['policy-options']?.['policy-statement'];
+    const exportList = typeof exportPolicy === 'string' ? [exportPolicy] :
+      (Array.isArray(exportPolicy) ? exportPolicy : Object.keys(exportPolicy).filter(k => !k.startsWith('_')));
+    for (const policyName of exportList) {
+      if (policyOpts?.[policyName]) {
+        const stmt = policyOpts[policyName];
+        const terms = stmt?.term;
+        if (terms && typeof terms === 'object') {
+          for (const [tName, tData] of Object.entries(terms)) {
+            if (tName.startsWith('_') || typeof tData !== 'object') continue;
+            const proto = tData?.from?.protocol;
+            if (proto) {
+              const protoName = extractStringValue(proto);
+              if (protoName && !redistribute.find(r => r.protocol === protoName)) {
+                const metricType = tData?.then?.['external']?.type
+                  ? extractStringValue(tData.then.external.type) : null;
+                redistribute.push({ protocol: protoName, policy: policyName, metric_type: metricType });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (areas.length === 0) return null;
+
+  return {
+    instance,
+    router_id: routerId,
+    reference_bandwidth: refBw,
+    areas,
+    redistribute,
+  };
+}
+
+function parseOspfArea(areaId, areaData) {
+  // Determine area type
+  let areaType = 'normal';
+  if (areaData.stub !== undefined) {
+    areaType = areaData.stub?.['no-summaries'] !== undefined ? 'totally-stub' : 'stub';
+  } else if (areaData.nssa !== undefined) {
+    areaType = areaData.nssa?.['no-summaries'] !== undefined ? 'totally-nssa' : 'nssa';
+  }
+
+  // Parse interfaces
+  const interfaces = [];
+  const ifaceNode = areaData.interface;
+  if (ifaceNode && typeof ifaceNode === 'object') {
+    for (const [ifName, ifData] of Object.entries(ifaceNode)) {
+      if (ifName.startsWith('_')) continue;
+      const ifObj = typeof ifData === 'object' ? ifData : {};
+      interfaces.push({
+        name: ifName,
+        cost: ifObj.metric ? parseInt(extractStringValue(ifObj.metric)) || null : null,
+        hello_interval: ifObj['hello-interval'] ? parseInt(extractStringValue(ifObj['hello-interval'])) || null : null,
+        dead_interval: ifObj['dead-interval'] ? parseInt(extractStringValue(ifObj['dead-interval'])) || null : null,
+        authentication: parseOspfAuth(ifObj),
+        passive: ifObj.passive !== undefined,
+        network_type: ifObj['interface-type'] ? extractStringValue(ifObj['interface-type']) : null,
+      });
+    }
+  }
+
+  return {
+    area_id: areaId,
+    area_type: areaType,
+    interfaces,
+    networks: [],
+  };
+}
+
+function parseOspfAuth(ifData) {
+  const authNode = ifData?.authentication;
+  if (!authNode || typeof authNode !== 'object') return null;
+  if (authNode.md5) {
+    // md5 keys are under authentication > md5 > <key-id> > key
+    const md5Node = authNode.md5;
+    if (typeof md5Node === 'object') {
+      for (const [keyId, keyData] of Object.entries(md5Node)) {
+        if (keyId.startsWith('_')) continue;
+        const key = typeof keyData === 'object' && keyData.key
+          ? extractStringValue(keyData.key) : '';
+        return { type: 'md5', key_id: parseInt(keyId) || 1, key };
+      }
+    }
+    return { type: 'md5', key_id: 1, key: '' };
+  }
+  if (authNode['simple-password']) {
+    return { type: 'simple', key: extractStringValue(authNode['simple-password']) };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

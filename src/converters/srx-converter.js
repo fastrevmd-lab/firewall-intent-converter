@@ -42,6 +42,10 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     policies_converted: 0,
     nat_rules_converted: 0,
     static_routes_converted: 0,
+    bgp_groups_converted: 0,
+    bgp_neighbors_converted: 0,
+    ospf_areas_converted: 0,
+    ospf_interfaces_converted: 0,
     total_warnings: 0,
     unsupported_items: 0,
   };
@@ -88,6 +92,8 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor);
   convertNatRules(config.nat_rules, commands, warnings, summary);
   convertStaticRoutes(config.static_routes, commands, warnings, summary);
+  convertBgpConfig(config.bgp_config, commands, warnings, summary);
+  convertOspfConfig(config.ospf_config, commands, warnings, summary);
   convertHaConfig(config.ha_config, commands, warnings, summary);
   convertScreenConfig(config.screen_config, commands, warnings, summary);
   convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary);
@@ -1413,6 +1419,195 @@ function convertStaticRoutes(routes, commands, warnings, summary) {
     }
 
     summary.static_routes_converted++;
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// BGP Configuration
+// ---------------------------------------------------------------------------
+
+function convertBgpConfig(bgpConfig, commands, warnings, summary) {
+  if (!bgpConfig || bgpConfig.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# BGP Configuration');
+  commands.push('# =============================================');
+
+  for (const bgp of bgpConfig) {
+    const prefix = bgp.instance
+      ? `set routing-instances ${sanitizeJunosName(bgp.instance)} `
+      : 'set ';
+
+    // Autonomous system and router-id
+    if (bgp.local_as) {
+      commands.push(`${prefix}routing-options autonomous-system ${bgp.local_as}`);
+    }
+    if (bgp.router_id) {
+      commands.push(`${prefix}routing-options router-id ${bgp.router_id}`);
+    }
+
+    // Peer groups and neighbors
+    for (const group of bgp.peer_groups || []) {
+      const gName = sanitizeJunosName(group.name);
+      commands.push(`${prefix}protocols bgp group ${gName} type ${group.type || 'external'}`);
+
+      for (const neighbor of group.neighbors || []) {
+        const nBase = `${prefix}protocols bgp group ${gName} neighbor ${neighbor.address}`;
+        if (neighbor.peer_as) {
+          commands.push(`${nBase} peer-as ${neighbor.peer_as}`);
+        }
+        if (neighbor.description) {
+          commands.push(`${nBase} description "${neighbor.description}"`);
+        }
+        if (neighbor.local_address) {
+          commands.push(`${nBase} local-address ${neighbor.local_address}`);
+        }
+        if (neighbor.import_policy) {
+          commands.push(`${nBase} import ${neighbor.import_policy}`);
+        }
+        if (neighbor.export_policy) {
+          commands.push(`${nBase} export ${neighbor.export_policy}`);
+        }
+        if (neighbor.authentication_key) {
+          commands.push(`${nBase} authentication-key "${neighbor.authentication_key}"`);
+        }
+        if (neighbor.enabled === false) {
+          warnings.push(createWarning(
+            'info',
+            `BGP neighbor ${neighbor.address} in group ${gName} is disabled — deactivate command not generated (requires manual config)`,
+            neighbor.address,
+            'bgp_neighbor_disabled'
+          ));
+        }
+        summary.bgp_neighbors_converted = (summary.bgp_neighbors_converted || 0) + 1;
+      }
+      summary.bgp_groups_converted = (summary.bgp_groups_converted || 0) + 1;
+    }
+
+    // Network advertisements via policy-options
+    if (bgp.networks && bgp.networks.length > 0) {
+      for (const net of bgp.networks) {
+        if (net.policy) {
+          // Reference existing policy
+          commands.push(`${prefix}protocols bgp group ${bgp.peer_groups?.[0]?.name ? sanitizeJunosName(bgp.peer_groups[0].name) : 'BGP-PEERS'} export ${net.policy}`);
+        }
+      }
+    }
+
+    // Redistribution via policy-options
+    for (const redist of bgp.redistribute || []) {
+      const stmtName = `BGP-REDIST-${redist.protocol.toUpperCase()}`;
+      commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 from protocol ${redist.protocol}`);
+      commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 then accept`);
+      if (redist.policy) {
+        commands.push(`# Source policy reference: ${redist.policy}`);
+      }
+    }
+  }
+
+  commands.push('');
+}
+
+// ---------------------------------------------------------------------------
+// OSPF Configuration
+// ---------------------------------------------------------------------------
+
+function convertOspfConfig(ospfConfig, commands, warnings, summary) {
+  if (!ospfConfig || ospfConfig.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# OSPF Configuration');
+  commands.push('# =============================================');
+
+  for (const ospf of ospfConfig) {
+    const prefix = ospf.instance
+      ? `set routing-instances ${sanitizeJunosName(ospf.instance)} `
+      : 'set ';
+
+    // Router-id (may overlap with BGP — SRX uses routing-options router-id for both)
+    if (ospf.router_id) {
+      commands.push(`${prefix}routing-options router-id ${ospf.router_id}`);
+    }
+
+    // Reference bandwidth
+    if (ospf.reference_bandwidth) {
+      commands.push(`${prefix}protocols ospf reference-bandwidth ${ospf.reference_bandwidth}`);
+    }
+
+    // Areas
+    for (const area of ospf.areas || []) {
+      const areaId = area.area_id;
+
+      // Area type
+      if (area.area_type === 'stub') {
+        commands.push(`${prefix}protocols ospf area ${areaId} stub`);
+      } else if (area.area_type === 'totally-stub') {
+        commands.push(`${prefix}protocols ospf area ${areaId} stub no-summaries`);
+      } else if (area.area_type === 'nssa') {
+        commands.push(`${prefix}protocols ospf area ${areaId} nssa`);
+      } else if (area.area_type === 'totally-nssa') {
+        commands.push(`${prefix}protocols ospf area ${areaId} nssa no-summaries`);
+      }
+
+      // Interfaces
+      for (const iface of area.interfaces || []) {
+        const ifBase = `${prefix}protocols ospf area ${areaId} interface ${iface.name}`;
+        commands.push(ifBase);
+
+        if (iface.cost != null) {
+          commands.push(`${ifBase} metric ${iface.cost}`);
+        }
+        if (iface.hello_interval != null) {
+          commands.push(`${ifBase} hello-interval ${iface.hello_interval}`);
+        }
+        if (iface.dead_interval != null) {
+          commands.push(`${ifBase} dead-interval ${iface.dead_interval}`);
+        }
+        if (iface.passive) {
+          commands.push(`${ifBase} passive`);
+        }
+        if (iface.network_type) {
+          commands.push(`${ifBase} interface-type ${iface.network_type}`);
+        }
+
+        // Authentication
+        if (iface.authentication) {
+          if (iface.authentication.type === 'md5') {
+            const keyId = iface.authentication.key_id || 1;
+            commands.push(`${ifBase} authentication md5 ${keyId} key "${iface.authentication.key || ''}"`);
+          } else if (iface.authentication.type === 'simple') {
+            commands.push(`${ifBase} authentication simple-password "${iface.authentication.key || ''}"`);
+          }
+        }
+
+        summary.ospf_interfaces_converted = (summary.ospf_interfaces_converted || 0) + 1;
+      }
+
+      // Network statements (from Cisco/Huawei — converted to interface references with warning)
+      for (const net of area.networks || []) {
+        warnings.push(createWarning(
+          'info',
+          `OSPF network statement ${net.prefix} in area ${areaId} — SRX uses per-interface OSPF config. Add the appropriate interface to area ${areaId} manually.`,
+          net.prefix,
+          'ospf_network_to_interface'
+        ));
+      }
+
+      summary.ospf_areas_converted = (summary.ospf_areas_converted || 0) + 1;
+    }
+
+    // Redistribution via export policy
+    for (const redist of ospf.redistribute || []) {
+      const stmtName = `OSPF-REDIST-${redist.protocol.toUpperCase()}`;
+      commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 from protocol ${redist.protocol}`);
+      if (redist.metric_type) {
+        commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 then external type ${redist.metric_type}`);
+      }
+      commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 then accept`);
+      commands.push(`${prefix}protocols ospf export ${stmtName}`);
+    }
   }
 
   commands.push('');

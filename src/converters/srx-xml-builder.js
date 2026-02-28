@@ -91,8 +91,8 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
 
   lines.push(`${indent}</security>`);
 
-  // Static Routes
-  buildStaticRoutesXml(config.static_routes, lines);
+  // Routing (static routes, BGP, OSPF)
+  buildRoutingXml(config, lines);
 
   // Chassis Cluster / HA
   buildHaXml(config.ha_config, lines);
@@ -1035,8 +1035,10 @@ function resolveApps(applications, services, warnings, policyName, appGroups = [
 // Static Routes XML Builder
 // ---------------------------------------------------------------------------
 
-function buildStaticRoutesXml(routes, lines) {
-  if (!routes || routes.length === 0) return;
+function buildRoutingXml(config, lines) {
+  const routes = config.static_routes || [];
+  const bgpConfigs = config.bgp_config || [];
+  const ospfConfigs = config.ospf_config || [];
 
   const globalRoutes = routes.filter(r => !r.vrf);
   const vrfGroups = {};
@@ -1045,51 +1047,237 @@ function buildStaticRoutesXml(routes, lines) {
     vrfGroups[r.vrf].push(r);
   }
 
-  // Global routing-options
-  if (globalRoutes.length > 0) {
+  // Find global BGP/OSPF (instance === '')
+  const globalBgp = bgpConfigs.find(b => !b.instance);
+  const globalOspf = ospfConfigs.find(o => !o.instance);
+
+  const hasGlobalRoutingOpts = globalRoutes.length > 0 || globalBgp;
+  const hasGlobalProtocols = globalBgp || globalOspf;
+
+  // Global routing-options (static routes + BGP AS/router-id)
+  if (hasGlobalRoutingOpts) {
     lines.push('  <routing-options>');
-    lines.push('    <static>');
-    for (const route of globalRoutes) {
-      lines.push('      <route>');
-      lines.push(`        <name>${escapeXml(route.destination)}</name>`);
-      if (route.next_hop_type === 'discard') {
-        lines.push('        <discard/>');
-      } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
-        lines.push(`        <next-table>${escapeXml(route.next_hop)}.inet.0</next-table>`);
-      } else if (route.next_hop) {
-        lines.push(`        <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+
+    // Autonomous system and router-id from BGP
+    if (globalBgp) {
+      if (globalBgp.local_as) {
+        lines.push('    <autonomous-system>');
+        lines.push(`      <as-number>${globalBgp.local_as}</as-number>`);
+        lines.push('    </autonomous-system>');
       }
-      if (route.metric && route.metric !== 10) {
-        lines.push(`        <metric>${route.metric}</metric>`);
+      if (globalBgp.router_id) {
+        lines.push(`    <router-id>${escapeXml(globalBgp.router_id)}</router-id>`);
       }
-      lines.push('      </route>');
+    } else if (globalOspf?.router_id) {
+      lines.push(`    <router-id>${escapeXml(globalOspf.router_id)}</router-id>`);
     }
-    lines.push('    </static>');
+
+    // Static routes
+    if (globalRoutes.length > 0) {
+      lines.push('    <static>');
+      for (const route of globalRoutes) {
+        lines.push('      <route>');
+        lines.push(`        <name>${escapeXml(route.destination)}</name>`);
+        if (route.next_hop_type === 'discard') {
+          lines.push('        <discard/>');
+        } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
+          lines.push(`        <next-table>${escapeXml(route.next_hop)}.inet.0</next-table>`);
+        } else if (route.next_hop) {
+          lines.push(`        <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+        }
+        if (route.metric && route.metric !== 10) {
+          lines.push(`        <metric>${route.metric}</metric>`);
+        }
+        lines.push('      </route>');
+      }
+      lines.push('    </static>');
+    }
+
     lines.push('  </routing-options>');
   }
 
-  // Routing instances (VRFs)
-  if (Object.keys(vrfGroups).length > 0) {
+  // Global protocols (BGP + OSPF)
+  if (hasGlobalProtocols) {
+    lines.push('  <protocols>');
+
+    // BGP
+    if (globalBgp) {
+      lines.push('    <bgp>');
+      for (const group of globalBgp.peer_groups || []) {
+        lines.push('      <group>');
+        lines.push(`        <name>${escapeXml(group.name)}</name>`);
+        lines.push(`        <type>${escapeXml(group.type || 'external')}</type>`);
+        for (const neighbor of group.neighbors || []) {
+          lines.push('        <neighbor>');
+          lines.push(`          <name>${escapeXml(neighbor.address)}</name>`);
+          if (neighbor.peer_as) {
+            lines.push(`          <peer-as>${neighbor.peer_as}</peer-as>`);
+          }
+          if (neighbor.description) {
+            lines.push(`          <description>${escapeXml(neighbor.description)}</description>`);
+          }
+          if (neighbor.local_address) {
+            lines.push(`          <local-address>${escapeXml(neighbor.local_address)}</local-address>`);
+          }
+          if (neighbor.import_policy) {
+            lines.push(`          <import>${escapeXml(neighbor.import_policy)}</import>`);
+          }
+          if (neighbor.export_policy) {
+            lines.push(`          <export>${escapeXml(neighbor.export_policy)}</export>`);
+          }
+          if (neighbor.authentication_key) {
+            lines.push(`          <authentication-key>${escapeXml(neighbor.authentication_key)}</authentication-key>`);
+          }
+          lines.push('        </neighbor>');
+        }
+        lines.push('      </group>');
+      }
+      lines.push('    </bgp>');
+    }
+
+    // OSPF
+    if (globalOspf) {
+      lines.push('    <ospf>');
+      if (globalOspf.reference_bandwidth) {
+        lines.push(`      <reference-bandwidth>${escapeXml(String(globalOspf.reference_bandwidth))}</reference-bandwidth>`);
+      }
+      for (const area of globalOspf.areas || []) {
+        lines.push('      <area>');
+        lines.push(`        <name>${escapeXml(area.area_id)}</name>`);
+        if (area.area_type === 'stub' || area.area_type === 'totally-stub') {
+          lines.push('        <stub>');
+          if (area.area_type === 'totally-stub') lines.push('          <no-summaries/>');
+          lines.push('        </stub>');
+        } else if (area.area_type === 'nssa' || area.area_type === 'totally-nssa') {
+          lines.push('        <nssa>');
+          if (area.area_type === 'totally-nssa') lines.push('          <no-summaries/>');
+          lines.push('        </nssa>');
+        }
+        for (const iface of area.interfaces || []) {
+          lines.push('        <interface>');
+          lines.push(`          <name>${escapeXml(iface.name)}</name>`);
+          if (iface.cost != null) lines.push(`          <metric>${iface.cost}</metric>`);
+          if (iface.hello_interval != null) lines.push(`          <hello-interval>${iface.hello_interval}</hello-interval>`);
+          if (iface.dead_interval != null) lines.push(`          <dead-interval>${iface.dead_interval}</dead-interval>`);
+          if (iface.passive) lines.push('          <passive/>');
+          if (iface.network_type) lines.push(`          <interface-type>${escapeXml(iface.network_type)}</interface-type>`);
+          if (iface.authentication) {
+            lines.push('          <authentication>');
+            if (iface.authentication.type === 'md5') {
+              lines.push('            <md5>');
+              lines.push(`              <name>${iface.authentication.key_id || 1}</name>`);
+              lines.push(`              <key>${escapeXml(iface.authentication.key || '')}</key>`);
+              lines.push('            </md5>');
+            } else if (iface.authentication.type === 'simple') {
+              lines.push(`            <simple-password>${escapeXml(iface.authentication.key || '')}</simple-password>`);
+            }
+            lines.push('          </authentication>');
+          }
+          lines.push('        </interface>');
+        }
+        lines.push('      </area>');
+      }
+      for (const redist of globalOspf.redistribute || []) {
+        const stmtName = `OSPF-REDIST-${redist.protocol.toUpperCase()}`;
+        lines.push(`      <export>${escapeXml(stmtName)}</export>`);
+      }
+      lines.push('    </ospf>');
+    }
+
+    lines.push('  </protocols>');
+  }
+
+  // Routing instances (VRFs — static routes + per-instance BGP/OSPF)
+  const instBgpMap = {};
+  const instOspfMap = {};
+  for (const b of bgpConfigs.filter(b => b.instance)) instBgpMap[b.instance] = b;
+  for (const o of ospfConfigs.filter(o => o.instance)) instOspfMap[o.instance] = o;
+
+  const allInstNames = new Set([
+    ...Object.keys(vrfGroups),
+    ...Object.keys(instBgpMap),
+    ...Object.keys(instOspfMap),
+  ]);
+
+  if (allInstNames.size > 0) {
     lines.push('  <routing-instances>');
-    for (const [vrfName, vrfRoutes] of Object.entries(vrfGroups)) {
-      const name = sanitizeJunosName(vrfName);
+    for (const instName of allInstNames) {
+      const name = sanitizeJunosName(instName);
+      const instRoutes = vrfGroups[instName] || [];
+      const instBgp = instBgpMap[instName];
+      const instOspf = instOspfMap[instName];
+
       lines.push('    <instance>');
       lines.push(`      <name>${escapeXml(name)}</name>`);
       lines.push('      <instance-type>virtual-router</instance-type>');
-      lines.push('      <routing-options>');
-      lines.push('        <static>');
-      for (const route of vrfRoutes) {
-        lines.push('          <route>');
-        lines.push(`            <name>${escapeXml(route.destination)}</name>`);
-        if (route.next_hop_type === 'discard') {
-          lines.push('            <discard/>');
-        } else if (route.next_hop) {
-          lines.push(`            <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+
+      // Routing-options (static + BGP AS/router-id)
+      if (instRoutes.length > 0 || instBgp) {
+        lines.push('      <routing-options>');
+        if (instBgp?.local_as) {
+          lines.push('        <autonomous-system>');
+          lines.push(`          <as-number>${instBgp.local_as}</as-number>`);
+          lines.push('        </autonomous-system>');
         }
-        lines.push('          </route>');
+        if (instBgp?.router_id || instOspf?.router_id) {
+          lines.push(`        <router-id>${escapeXml(instBgp?.router_id || instOspf?.router_id)}</router-id>`);
+        }
+        if (instRoutes.length > 0) {
+          lines.push('        <static>');
+          for (const route of instRoutes) {
+            lines.push('          <route>');
+            lines.push(`            <name>${escapeXml(route.destination)}</name>`);
+            if (route.next_hop_type === 'discard') {
+              lines.push('            <discard/>');
+            } else if (route.next_hop) {
+              lines.push(`            <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+            }
+            lines.push('          </route>');
+          }
+          lines.push('        </static>');
+        }
+        lines.push('      </routing-options>');
       }
-      lines.push('        </static>');
-      lines.push('      </routing-options>');
+
+      // Protocols (BGP + OSPF)
+      if (instBgp || instOspf) {
+        lines.push('      <protocols>');
+        if (instBgp) {
+          lines.push('        <bgp>');
+          for (const group of instBgp.peer_groups || []) {
+            lines.push('          <group>');
+            lines.push(`            <name>${escapeXml(group.name)}</name>`);
+            lines.push(`            <type>${escapeXml(group.type || 'external')}</type>`);
+            for (const neighbor of group.neighbors || []) {
+              lines.push('            <neighbor>');
+              lines.push(`              <name>${escapeXml(neighbor.address)}</name>`);
+              if (neighbor.peer_as) lines.push(`              <peer-as>${neighbor.peer_as}</peer-as>`);
+              if (neighbor.description) lines.push(`              <description>${escapeXml(neighbor.description)}</description>`);
+              lines.push('            </neighbor>');
+            }
+            lines.push('          </group>');
+          }
+          lines.push('        </bgp>');
+        }
+        if (instOspf) {
+          lines.push('        <ospf>');
+          for (const area of instOspf.areas || []) {
+            lines.push('          <area>');
+            lines.push(`            <name>${escapeXml(area.area_id)}</name>`);
+            for (const iface of area.interfaces || []) {
+              lines.push('            <interface>');
+              lines.push(`              <name>${escapeXml(iface.name)}</name>`);
+              if (iface.cost != null) lines.push(`              <metric>${iface.cost}</metric>`);
+              if (iface.passive) lines.push('              <passive/>');
+              lines.push('            </interface>');
+            }
+            lines.push('          </area>');
+          }
+          lines.push('        </ospf>');
+        }
+        lines.push('      </protocols>');
+      }
+
       lines.push('    </instance>');
     }
     lines.push('  </routing-instances>');
