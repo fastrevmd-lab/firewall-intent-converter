@@ -14,6 +14,9 @@ import {
   loadVendorTranslatePrompt,
 } from '../utils/llm-client.js';
 import { safeJsonParse } from '../utils/safe-json.js';
+import { useUIContext } from '../contexts/UIContext.jsx';
+
+const CLOUD_PROVIDER_IDS = ['claude', 'openai'];
 
 const VENDOR_LABELS = {
   '': 'Default (Generic)',
@@ -48,8 +51,14 @@ const PROVIDERS = [
 ];
 
 export default function LLMSettings({ onClose, initialTab }) {
+  const { state: ui, dispatch: uiDispatch } = useUIContext();
+  const localOnly = ui.llmRiskAcceptance === 'local-only';
+  const availableProviders = localOnly
+    ? PROVIDERS.filter(p => !CLOUD_PROVIDER_IDS.includes(p.id))
+    : PROVIDERS;
+
   const [activeTab, setActiveTab] = useState(initialTab || 'llm');
-  const [provider, setProvider] = useState('claude');
+  const [provider, setProvider] = useState(localOnly ? 'ollama' : 'claude');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('claude-sonnet-4-6');
   const [baseUrl, setBaseUrl] = useState('');
@@ -73,9 +82,17 @@ export default function LLMSettings({ onClose, initialTab }) {
       const saved = localStorage.getItem('llm-settings');
       if (saved) {
         const settings = safeJsonParse(saved);
-        setProvider(settings.provider || 'claude');
+        const savedProvider = settings.provider || 'claude';
+        // If local-only mode and saved provider is cloud, switch to ollama
+        if (localOnly && CLOUD_PROVIDER_IDS.includes(savedProvider)) {
+          setProvider('ollama');
+          setModel('llama3');
+          setBaseUrl('http://localhost:11434');
+        } else {
+          setProvider(savedProvider);
+          setModel(settings.model || 'claude-sonnet-4-6');
+        }
         setApiKey(settings.apiKey || '');
-        setModel(settings.model || 'claude-sonnet-4-6');
         setBaseUrl(settings.baseUrl || '');
         setTemperature(settings.temperature ?? 0.2);
         setFullReviewSystemPrompt(settings.fullReviewSystemPrompt || DEFAULT_FULL_REVIEW_SYSTEM_PROMPT);
@@ -288,10 +305,15 @@ export default function LLMSettings({ onClose, initialTab }) {
             onChange={(e) => handleProviderChange(e.target.value)}
             style={selectStyle}
           >
-            {PROVIDERS.map(p => (
+            {availableProviders.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
+          {localOnly && (
+            <div style={{ fontSize: '10px', color: 'var(--warning)', marginTop: '4px' }}>
+              Cloud LLM providers disabled per your risk acceptance choice.
+            </div>
+          )}
         </SettingsField>
 
         {/* API Key (not shown for local providers) */}
@@ -460,7 +482,17 @@ export default function LLMSettings({ onClose, initialTab }) {
         )}
 
         {/* Buttons */}
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '20px' }}>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '20px', alignItems: 'center' }}>
+          {activeTab === 'llm' && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => { onClose(); uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: null }); }}
+              style={{ marginRight: 'auto', fontSize: 11, color: 'var(--warning)' }}
+              title="Re-evaluate your LLM risk acceptance choice"
+            >
+              Reconsider Risk
+            </button>
+          )}
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSave}>Save Settings</button>
         </div>

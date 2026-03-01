@@ -13,6 +13,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { mapActionToSrx, buildApplicationServices } from '../utils/srx-view-transforms.js';
 import useVirtualScroll from '../hooks/useVirtualScroll.js';
+import AutocompleteInput from './shared/AutocompleteInput.jsx';
 
 export default function PolicyTable({
   policies,
@@ -31,6 +32,7 @@ export default function PolicyTable({
   onUpdateGroups,
   onGroupWithAI,
   groupingInProgress = false,
+  suggestionsData,
 }) {
   const [sortField, setSortField] = useState('_rule_index');
   const [sortDir, setSortDir] = useState('asc');
@@ -291,6 +293,8 @@ export default function PolicyTable({
     setEditValue(Array.isArray(currentValue) ? currentValue.join(', ') : String(currentValue || ''));
   };
 
+  const arrayFields = ['src_zones', 'dst_zones', 'src_addresses', 'dst_addresses', 'applications', 'services', 'source_users'];
+
   /** Commit edit */
   const commitEdit = () => {
     if (!editingCell) return;
@@ -298,8 +302,6 @@ export default function PolicyTable({
     const rule = policies[index];
     let value = editValue;
 
-    // Convert comma-separated strings back to arrays for array fields
-    const arrayFields = ['src_zones', 'dst_zones', 'src_addresses', 'dst_addresses', 'applications', 'services', 'source_users'];
     if (arrayFields.includes(field)) {
       value = editValue.split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -595,6 +597,24 @@ export default function PolicyTable({
     const isEditing = editingCell?.index === realIndex && editingCell?.field === field;
 
     if (isEditing) {
+      const fieldSuggestions = suggestionsData?.[field] || [];
+      const isArrayField = arrayFields.includes(field);
+
+      if (fieldSuggestions.length > 0) {
+        return (
+          <AutocompleteInput
+            value={editValue}
+            onChange={setEditValue}
+            onCommit={commitEdit}
+            onCancel={cancelEdit}
+            suggestions={fieldSuggestions}
+            multiToken={isArrayField}
+            className="cell-edit-input"
+            autoFocus
+            onBlur={commitEdit}
+          />
+        );
+      }
       return (
         <input
           className="cell-edit-input"

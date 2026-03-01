@@ -230,6 +230,7 @@
 - [x] **Default to Import** — App opens on Import/Config view instead of empty Policies tab
 - [x] **app.jsx reduced from 2382 to ~450 lines** — Layout shell with context hooks, remaining greenfield/merge handlers, modal rendering
 - [x] **Virtualized tables** — `useVirtualScroll` hook with spacer-based table windowing. Renders only ~60-80 visible rows regardless of total count. RAF-batched scroll handler, ResizeObserver-driven container measurement, per-row height caching with measurement fallback for variable-height SRX rows. Flat virtual list model unifies grouped mode, SRX zone-pair headers, and flat mode into a single scroll container. Auto-scroll on keyboard navigation (j/k), height cache reset on vendor view switch. Zero external dependencies
+- [x] **Context-aware autocomplete** — Shared `AutocompleteInput` component providing filtered suggestion dropdowns when editing policy fields. Suggestions sourced from parsed `intermediateConfig` (zones, address objects/groups, service objects, applications/groups). Integrated into PolicyTable inline cell editing (double-click) and InterviewPanel chip fields. Keyboard navigation (Arrow Up/Down, Enter, Tab, Escape), multi-token support for comma-separated values, case-insensitive prefix matching. Zero external dependencies
 
 ### Blocked — Waiting on Vendor APIs
 - [ ] **Push to SDC / SD On-Prem / Mist** — Direct deployment to Juniper management platforms. Requires HPE Juniper public REST APIs. UI placeholder already present ("Push via MCP" button)
