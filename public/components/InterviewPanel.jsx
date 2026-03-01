@@ -5,7 +5,7 @@
  * When a rule is selected, all fields are editable inline.
  * "Accept Rule" marks the rule as accepted in the review workflow.
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   mapActionToSrx,
   mapActionToPanos,
@@ -14,6 +14,7 @@ import {
   getLicenseGaps,
   SRX_LICENSE_TIERS,
 } from '../utils/srx-view-transforms.js';
+import AutocompleteInput from './shared/AutocompleteInput.jsx';
 
 export default function InterviewPanel({
   selectedRule,
@@ -59,6 +60,20 @@ export default function InterviewPanel({
 
   const isAccepted = selectedRule?._review_status === 'accepted';
   const zoneNames = (intermediateConfig?.zones || []).map(z => z.name);
+
+  const addressNames = useMemo(() => [
+    ...(intermediateConfig?.address_objects || []).map(a => a.name),
+    ...(intermediateConfig?.address_groups || []).map(g => g.name),
+  ], [intermediateConfig]);
+
+  const serviceNames = useMemo(() =>
+    (intermediateConfig?.service_objects || []).map(s => s.name),
+  [intermediateConfig]);
+
+  const applicationNames = useMemo(() => [
+    ...(intermediateConfig?.applications || []).map(a => a.name),
+    ...(intermediateConfig?.application_groups || []).map(g => g.name),
+  ], [intermediateConfig]);
 
   // --- Live elapsed timer for translation ---
   const [elapsedSecs, setElapsedSecs] = useState(0);
@@ -308,6 +323,7 @@ export default function InterviewPanel({
             label="Source"
             values={selectedRule.src_addresses}
             onChange={(v) => handleFieldChange('src_addresses', v)}
+            suggestions={addressNames}
           />
           {isSrx ? (
             <div className="srx-toggle-row" style={{ padding: '2px 0' }}>
@@ -333,6 +349,7 @@ export default function InterviewPanel({
             label="Destination"
             values={selectedRule.dst_addresses}
             onChange={(v) => handleFieldChange('dst_addresses', v)}
+            suggestions={addressNames}
           />
           {isSrx ? (
             <div className="srx-toggle-row" style={{ padding: '2px 0' }}>
@@ -380,11 +397,13 @@ export default function InterviewPanel({
             label="Applications"
             values={selectedRule.applications}
             onChange={(v) => handleFieldChange('applications', v)}
+            suggestions={applicationNames}
           />
           <EditableChipsField
             label={isSrx ? 'Ports' : 'Services'}
             values={selectedRule.services}
             onChange={(v) => handleFieldChange('services', v)}
+            suggestions={serviceNames}
           />
         </div>
 
@@ -627,7 +646,7 @@ function EditableField({ label, value, onChange, placeholder }) {
 }
 
 /** Editable chips field for arrays */
-function EditableChipsField({ label, values, onChange }) {
+function EditableChipsField({ label, values, onChange, suggestions }) {
   const [inputValue, setInputValue] = useState('');
 
   const handleAdd = () => {
@@ -648,6 +667,11 @@ function EditableChipsField({ label, values, onChange }) {
     }
   };
 
+  // Filter out already-selected values from suggestions
+  const filteredSuggestions = suggestions && suggestions.length > 0
+    ? suggestions.filter(s => !(values || []).includes(s))
+    : null;
+
   return (
     <div className="detail-field" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
       <span className="field-label">{label}</span>
@@ -661,14 +685,26 @@ function EditableChipsField({ label, values, onChange }) {
             <button className="chip-remove" onClick={() => handleRemove(v)}>x</button>
           </span>
         ))}
-        <input
-          className="chip-input"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Add..."
-          style={{ minWidth: 60, flex: 1 }}
-        />
+        {filteredSuggestions && filteredSuggestions.length > 0 ? (
+          <AutocompleteInput
+            value={inputValue}
+            onChange={setInputValue}
+            onCommit={handleAdd}
+            suggestions={filteredSuggestions}
+            multiToken={false}
+            className="chip-input"
+            placeholder="Add..."
+          />
+        ) : (
+          <input
+            className="chip-input"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Add..."
+            style={{ minWidth: 60, flex: 1 }}
+          />
+        )}
       </div>
     </div>
   );

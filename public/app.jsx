@@ -28,6 +28,7 @@ import FeedbackModal from './components/FeedbackModal.jsx';
 import SaveProjectModal from './components/SaveProjectModal.jsx';
 import ReportModal from './components/ReportModal.jsx';
 import GuidedTour from './components/GuidedTour.jsx';
+import LLMRiskDisclaimer, { RejectedScreen } from './components/LLMRiskDisclaimer.jsx';
 
 // Contexts
 import { useConfigContext } from './contexts/ConfigContext.jsx';
@@ -378,6 +379,22 @@ export default function App() {
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
+
+  // LLM risk disclaimer — block app until acknowledged
+  if (ui.llmRiskAcceptance === 'rejected') {
+    return <RejectedScreen onReconsider={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: null })} />;
+  }
+
+  if (!ui.llmRiskAcceptance) {
+    return (
+      <LLMRiskDisclaimer
+        onAcceptAll={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'all' })}
+        onAcceptLocalOnly={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'local-only' })}
+        onReject={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'rejected' })}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <TopBar />

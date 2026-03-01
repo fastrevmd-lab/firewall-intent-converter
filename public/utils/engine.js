@@ -112,7 +112,7 @@ export function sanitizeConfig(configText) {
   }
 
   const replacements = [];
-  let counter = { hash: 0, key: 0, user: 0, ip: 0, community: 0 };
+  let counter = { hash: 0, key: 0, user: 0, ip: 0, community: 0, cert: 0, host: 0, bgp: 0 };
   let sanitized = configText;
 
   // --- 1. Password hashes (phash, $1$, $5$, $6$, $sha1$, etc.) ---
@@ -195,7 +195,116 @@ export function sanitizeConfig(configText) {
     }
   );
 
-  // --- 5. Public IP addresses ---
+  // --- 5. Certificate private keys ---
+  // PEM-encoded private key blocks
+  sanitized = sanitized.replace(
+    /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/g,
+    (match) => {
+      const idx = counter.cert++;
+      const placeholder = `SANITIZED_CERT_${idx}`;
+      replacements.push({ type: 'certificate', placeholder, original: match });
+      return placeholder;
+    }
+  );
+
+  // XML private key tags
+  sanitized = sanitized.replace(
+    /(<(?:private-key|certificate-key|ssl-key)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('SANITIZED_')) return match;
+      const idx = counter.cert++;
+      const placeholder = `SANITIZED_CERT_${idx}`;
+      replacements.push({ type: 'certificate', placeholder, original: value.trim() });
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // --- 6. Server hostnames/FQDNs (LDAP, RADIUS, TACACS, NTP, DNS) ---
+  sanitized = sanitized.replace(
+    /(<(?:ldap-server-address|radius-server-ip|tacplus-server-ip|ntp-server-address|dns-server-address|server-address|server-name|server-host)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('SANITIZED_') || value.trim().startsWith('PUBLIC_IP_')) return match;
+      const idx = counter.host++;
+      const placeholder = `SANITIZED_HOST_${idx}`;
+      replacements.push({ type: 'hostname', placeholder, original: value.trim() });
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Set-format server hostnames: set system radius-server <host>, set system name-server <host>, etc.
+  sanitized = sanitized.replace(
+    /(set\s+system\s+(?:radius-server|tacplus-server|name-server|ntp\s+server)\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('SANITIZED_') || value.startsWith('PUBLIC_IP_')) return match;
+      // Skip if it's an IP address (already handled by public IP pattern)
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
+      const idx = counter.host++;
+      const placeholder = `SANITIZED_HOST_${idx}`;
+      replacements.push({ type: 'hostname', placeholder, original: value });
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // --- 7. BGP AS numbers ---
+  sanitized = sanitized.replace(
+    /(<(?:local-as|peer-as|autonomous-system|local-as-number|remote-as)>)(\d+)(<\/)/gi,
+    (match, open, value, close) => {
+      const idx = counter.bgp++;
+      const placeholder = `SANITIZED_BGP_AS_${idx}`;
+      replacements.push({ type: 'bgp', placeholder, original: value });
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Set-format: set routing-options autonomous-system <number>
+  sanitized = sanitized.replace(
+    /(autonomous-system\s+)(\d+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('SANITIZED_')) return match;
+      const idx = counter.bgp++;
+      const placeholder = `SANITIZED_BGP_AS_${idx}`;
+      replacements.push({ type: 'bgp', placeholder, original: value });
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // --- 8. Plaintext secrets in set-command format (FortiGate / SRX) ---
+  sanitized = sanitized.replace(
+    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password)\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('SANITIZED_')) return match;
+      const idx = counter.key++;
+      const placeholder = `SANITIZED_KEY_${idx}`;
+      replacements.push({ type: 'key', placeholder, original: value });
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // Unquoted set-format secrets
+  sanitized = sanitized.replace(
+    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password)\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('SANITIZED_') || value === '"') return match;
+      const idx = counter.key++;
+      const placeholder = `SANITIZED_KEY_${idx}`;
+      replacements.push({ type: 'key', placeholder, original: value });
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // RADIUS/TACACS server secrets in set format
+  sanitized = sanitized.replace(
+    /((?:radius-server|tacplus-server|tacacs-server)\s+\S+\s+secret\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('SANITIZED_')) return match;
+      const idx = counter.key++;
+      const placeholder = `SANITIZED_KEY_${idx}`;
+      replacements.push({ type: 'key', placeholder, original: value });
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // --- 9. Public IP addresses ---
   const ipRegex = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
   const isPrivateOrReserved = (ip) => {
     const [a, b] = ip.split('.').map(Number);
@@ -233,6 +342,9 @@ export function sanitizeConfig(configText) {
       communities: counter.community,
       usernames: counter.user,
       publicIPs: counter.ip,
+      certificates: counter.cert,
+      hostnames: counter.host,
+      bgpAS: counter.bgp,
       total: replacements.length,
     },
   };

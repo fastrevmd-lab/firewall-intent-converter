@@ -31,6 +31,7 @@ import useLLM from '../../hooks/useLLM.js';
 /* ── Sanitization helpers ──────────────────────────────────────── */
 const SANITIZE_TYPE_LABELS = {
   hash: 'Hash', key: 'Key', community: 'SNMP', username: 'User', public_ip: 'Public IP',
+  certificate: 'Certificate', hostname: 'Hostname', bgp: 'BGP AS',
 };
 
 function maskSensitiveValue(entry) {
@@ -90,6 +91,27 @@ export default function ContentRouter({
     : 'panos';
 
   const allWarnings = useMemo(() => [...(parseWarnings || []), ...(convertWarnings || [])], [parseWarnings, convertWarnings]);
+
+  const suggestionsData = useMemo(() => {
+    if (!activeConfig) return null;
+    return {
+      src_zones: (activeConfig.zones || []).map(z => z.name),
+      dst_zones: (activeConfig.zones || []).map(z => z.name),
+      src_addresses: [
+        ...(activeConfig.address_objects || []).map(a => a.name),
+        ...(activeConfig.address_groups || []).map(g => g.name),
+      ],
+      dst_addresses: [
+        ...(activeConfig.address_objects || []).map(a => a.name),
+        ...(activeConfig.address_groups || []).map(g => g.name),
+      ],
+      services: (activeConfig.service_objects || []).map(s => s.name),
+      applications: [
+        ...(activeConfig.applications || []).map(a => a.name),
+        ...(activeConfig.application_groups || []).map(g => g.name),
+      ],
+    };
+  }, [activeConfig]);
 
   const handleWarningAction = useCallback((index, action) => {
     cfgDispatch({
@@ -358,6 +380,7 @@ export default function ContentRouter({
           onUpdateGroups={(groups) => cfgDispatch({ type: 'SET_RULE_GROUPS', groups })}
           onGroupWithAI={llm.handleGroupWithAI}
           groupingInProgress={ui.groupingInProgress}
+          suggestionsData={suggestionsData}
         />
         <BulkActionBar
           selectedCount={cfg.selectedRuleKeys.size}

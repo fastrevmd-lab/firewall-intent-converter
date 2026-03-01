@@ -51,6 +51,9 @@ const initialState = {
 
   // Command palette
   commandPaletteOpen: false,
+
+  // LLM risk disclaimer acceptance: null | 'all' | 'local-only' | 'rejected'
+  llmRiskAcceptance: localStorage.getItem('llm-risk-acceptance') || null,
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +126,10 @@ function uiReducer(state, action) {
       }
       return state;
     }
+
+    case 'SET_LLM_RISK_ACCEPTANCE':
+      localStorage.setItem('llm-risk-acceptance', action.value);
+      return { ...state, llmRiskAcceptance: action.value };
 
     default:
       console.warn(`UIContext: unhandled action "${action.type}"`);
