@@ -1307,16 +1307,6 @@ function parseSecurityRules(vsys, warnings) {
       }
     }
 
-    // Flag application-default service usage
-    if (services.includes('application-default')) {
-      warnings.push(createWarning(
-        'warning',
-        `security-rule/${name}`,
-        `Rule "${name}" uses "application-default" service — SRX will use the application's default ports`,
-        'Verify the application mapping includes correct port definitions'
-      ));
-    }
-
     // Flag any/any zone combinations
     if (srcZones.includes('any') && dstZones.includes('any')) {
       warnings.push(createWarning(
