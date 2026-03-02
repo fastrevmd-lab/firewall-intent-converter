@@ -84,8 +84,29 @@ export default function useLLM() {
     });
 
     try {
+      // Pre-filter unused objects to reduce token usage
+      let configForLLM = intermediateConfig;
+      try {
+        const { AnalysisEngine } = await import('../../src/analysis/config-analyzer.js');
+        const findings = await AnalysisEngine.run(intermediateConfig);
+        const unusedFinding = findings.find(f => f.id === 'unused_objects');
+        if (unusedFinding && unusedFinding.items?.length > 0) {
+          const unusedNames = new Set(unusedFinding.items.map(i => i.key));
+          configForLLM = {
+            ...intermediateConfig,
+            addresses: (intermediateConfig.addresses || []).filter(a => !unusedNames.has(a.name)),
+            address_groups: (intermediateConfig.address_groups || []).filter(g => !unusedNames.has(g.name)),
+            services: (intermediateConfig.services || []).filter(s => !unusedNames.has(s.name)),
+            service_groups: (intermediateConfig.service_groups || []).filter(g => !unusedNames.has(g.name)),
+          };
+          if (import.meta.env.DEV) {
+            console.log(`[translate] Pre-filtered ${unusedFinding.items.length} unused objects to save tokens`);
+          }
+        }
+      } catch (_) { /* non-fatal — use unfiltered config */ }
+
       const translated = await translatePolicies(
-        intermediateConfig,
+        configForLLM,
         configState.targetModel || '',
         configState.srxLicense || '',
         (progress) => {

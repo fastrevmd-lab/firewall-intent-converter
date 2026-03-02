@@ -32,7 +32,7 @@ const RISK_SECTIONS = [
   },
 ];
 
-export default function LLMRiskDisclaimer({ onAcceptAll, onAcceptLocalOnly, onReject }) {
+export default function LLMRiskDisclaimer({ onAcceptAll, onAcceptLocalOnly, onDeterministicMode, onReject }) {
   return (
     <div className="risk-disclaimer-overlay">
       <div className="risk-disclaimer-content">
@@ -88,12 +88,29 @@ export default function LLMRiskDisclaimer({ onAcceptAll, onAcceptLocalOnly, onRe
           </p>
         </div>
 
+        <div className="deterministic-info-box" style={{
+          margin: '16px 0', padding: '12px 16px', borderRadius: 8,
+          border: '1px solid var(--success)', background: 'var(--bg-secondary)',
+        }}>
+          <h4 style={{ margin: '0 0 6px', color: 'var(--success)' }}>No AI Mode Available</h4>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>
+            If your security policy prohibits sending firewall data to any LLM provider,
+            you can use <strong>Deterministic Mode</strong>. This disables ALL AI features and uses
+            built-in mapping tables and analysis algorithms instead. No data leaves your browser.
+          </p>
+        </div>
+
         <div className="risk-disclaimer-actions">
           <button className="btn risk-btn-accept" onClick={onAcceptAll}>
             Accept this Risk
           </button>
           <button className="btn risk-btn-local" onClick={onAcceptLocalOnly}>
             Accept only for Local LLM
+          </button>
+          <button className="btn risk-btn-deterministic" onClick={onDeterministicMode} style={{
+            background: 'var(--success)', color: '#fff', border: 'none',
+          }}>
+            No AI Mode (Deterministic Only)
           </button>
           <button className="btn risk-btn-reject" onClick={onReject}>
             Reject due to Risk

@@ -1,0 +1,469 @@
+/**
+ * Config Analyzer — Pre-conversion analysis engine.
+ *
+ * Adapted from fatcat/converter's analysis-engine.js to work with our
+ * intermediate config schema. Runs 7 categories of checks.
+ *
+ * Key schema differences from fatcat IR:
+ *   fatcat p.src_zone (string)    → ours p.src_zones (array)
+ *   fatcat p.src_addr (array)     → ours p.src_addresses (array)
+ *   fatcat p.dst_addr (array)     → ours p.dst_addresses (array)
+ *   fatcat p.service (array)      → ours p.services (array)
+ *   fatcat p.enabled (bool)       → ours p.disabled (bool, inverted)
+ *   fatcat p.log (bool)           → ours p.log_end (bool)
+ *   fatcat p.id (number)          → ours p._rule_index (number) or p.name
+ *   fatcat r.orig_src             → ours r.src_addresses (array)
+ */
+
+export const AnalysisEngine = {
+  _yield() { return new Promise(r => setTimeout(r, 0)); },
+
+  async run(config, onProgress) {
+    const step = async (label, fn) => {
+      if (onProgress) onProgress(label);
+      await this._yield();
+      return fn();
+    };
+
+    this._markUsed(config);
+
+    return [
+      await step('Checking for unused objects...', () => this._unusedObjects(config)),
+      await step('Detecting shadowed policies...', () => this._shadowedPolicies(config)),
+      await step('Detecting duplicate objects...', () => this._duplicateObjects(config)),
+      await step('Checking for disabled policies...', () => this._disabledPolicies(config)),
+      await step('Checking logging coverage...', () => this._loggingOff(config)),
+      await step('Checking for permissive rules...', () => this._permissivePolicies(config)),
+      await step('Checking for empty groups...', () => this._emptyGroups(config)),
+    ];
+  },
+
+  // ── Mark used/unused ──────────────────────────────────────────────────────
+  _markUsed(config) {
+    const addrObjs = config.address_objects || [];
+    const addrGrps = config.address_groups || [];
+    const svcObjs = config.service_objects || [];
+    const svcGrps = config.service_groups || [];
+    const appGrps = config.application_groups || [];
+
+    addrObjs.forEach(o => { o._used = false; });
+    addrGrps.forEach(g => { g._used = false; });
+    svcObjs.forEach(o => { o._used = false; });
+    svcGrps.forEach(g => { g._used = false; });
+    appGrps.forEach(g => { g._used = false; });
+
+    const markAddr = (name) => {
+      if (!name || name === 'any') return;
+      const o = addrObjs.find(x => x.name === name);
+      if (o) o._used = true;
+      const g = addrGrps.find(x => x.name === name);
+      if (g) g._used = true;
+    };
+    const markSvc = (name) => {
+      if (!name || name === 'any' || name === 'application-default') return;
+      const o = svcObjs.find(x => x.name === name);
+      if (o) o._used = true;
+      const g = svcGrps.find(x => x.name === name);
+      if (g) g._used = true;
+    };
+    const markAppGrp = (name) => {
+      if (!name) return;
+      const g = appGrps.find(x => x.name === name);
+      if (g) g._used = true;
+    };
+
+    // OUR SCHEMA: src_addresses, dst_addresses, services, applications
+    for (const p of (config.security_policies || [])) {
+      (p.src_addresses || []).forEach(markAddr);
+      (p.dst_addresses || []).forEach(markAddr);
+      (p.services || []).forEach(markSvc);
+      (p.applications || []).forEach(markAppGrp);
+    }
+
+    // NAT rules: OUR SCHEMA uses src_addresses/dst_addresses arrays
+    for (const r of (config.nat_rules || [])) {
+      (r.src_addresses || []).forEach(markAddr);
+      (r.dst_addresses || []).forEach(markAddr);
+    }
+
+    // Cascade: members of used groups are also "used"
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const g of addrGrps.filter(x => x._used)) {
+        for (const m of (g.members || [])) {
+          const o = addrObjs.find(x => x.name === m);
+          if (o && !o._used) { o._used = true; changed = true; }
+          const sg = addrGrps.find(x => x.name === m);
+          if (sg && !sg._used) { sg._used = true; changed = true; }
+        }
+      }
+      for (const g of svcGrps.filter(x => x._used)) {
+        for (const m of (g.members || [])) {
+          const o = svcObjs.find(x => x.name === m);
+          if (o && !o._used) { o._used = true; changed = true; }
+          const sg = svcGrps.find(x => x.name === m);
+          if (sg && !sg._used) { sg._used = true; changed = true; }
+        }
+      }
+    }
+  },
+
+  // ── Unused objects ────────────────────────────────────────────────────────
+  _unusedObjects(config) {
+    const items = [
+      ...(config.address_objects || []).filter(o => !o._used).map(o => ({ key: o.name, label: o.name, kind: 'address object' })),
+      ...(config.address_groups || []).filter(g => !g._used).map(g => ({ key: g.name, label: g.name, kind: 'address group' })),
+      ...(config.service_objects || []).filter(o => !o._used).map(o => ({ key: o.name, label: o.name, kind: 'service object' })),
+      ...(config.service_groups || []).filter(g => !g._used).map(g => ({ key: g.name, label: g.name, kind: 'service group' })),
+      ...(config.application_groups || []).filter(g => !g._used).map(g => ({ key: g.name, label: g.name, kind: 'application group' })),
+    ];
+    const count = items.length;
+    if (!count) return { id: 'unused_objects', count: 0, items: [], description: 'No unused objects found.' };
+    const names = items.map(i => i.key);
+    return {
+      id: 'unused_objects', count, items,
+      description: `${count} object${count !== 1 ? 's' : ''} not referenced by any security policy, NAT rule, or group: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` + ${names.length - 5} more` : ''}.`,
+    };
+  },
+
+  // ── Shadowed policies ─────────────────────────────────────────────────────
+  _shadowedPolicies(config) {
+    const policies = config.security_policies || [];
+    const enabled = policies.filter(p => !p.disabled);
+    // Skip shadow detection for very large rulesets (O(n^2))
+    if (enabled.length > 2000) {
+      return { id: 'shadowed', count: 0, items: [], description: 'Shadow detection skipped for configs with over 2000 enabled rules.' };
+    }
+    const shadowed = [];
+    for (let i = 1; i < enabled.length; i++) {
+      for (let j = 0; j < i; j++) {
+        if (this._shadows(enabled[j], enabled[i])) {
+          shadowed.push({ policy: enabled[i], shadowedBy: enabled[j] });
+          break;
+        }
+      }
+    }
+    const count = shadowed.length;
+    if (!count) return { id: 'shadowed', count: 0, items: [], description: 'No shadowed policies found.' };
+    const pKey = (p) => p._rule_index != null ? String(p._rule_index) : p.name;
+    const pLabel = (p) => p._rule_index != null ? `#${p._rule_index} ${p.name}` : p.name;
+    const items = shadowed.map(s => ({
+      key: pKey(s.policy),
+      label: `${pLabel(s.policy)} — shadowed by ${pLabel(s.shadowedBy)}`,
+    }));
+    const desc = shadowed.slice(0, 3)
+      .map(s => `${pLabel(s.policy)} shadowed by ${pLabel(s.shadowedBy)}`)
+      .join('; ');
+    return {
+      id: 'shadowed', count, items,
+      description: `${count} polic${count !== 1 ? 'ies are' : 'y is'} fully shadowed by an earlier, broader rule. ${desc}.`,
+    };
+  },
+
+  _shadows(earlier, later) {
+    // OUR SCHEMA: src_zones/dst_zones are arrays
+    const eZones = earlier.src_zones?.length ? earlier.src_zones : ['any'];
+    const lZones = later.src_zones?.length ? later.src_zones : ['any'];
+    const eDZones = earlier.dst_zones?.length ? earlier.dst_zones : ['any'];
+    const lDZones = later.dst_zones?.length ? later.dst_zones : ['any'];
+
+    const srcZoneOk = eZones.includes('any') || lZones.every(z => eZones.includes(z));
+    const dstZoneOk = eDZones.includes('any') || lDZones.every(z => eDZones.includes(z));
+
+    // OUR SCHEMA: src_addresses, dst_addresses, services
+    const srcAddrOk = (earlier.src_addresses || []).includes('any');
+    const dstAddrOk = (earlier.dst_addresses || []).includes('any');
+    const svcOk = (earlier.services || []).includes('any');
+
+    return srcZoneOk && dstZoneOk && srcAddrOk && dstAddrOk && svcOk;
+  },
+
+  // ── Duplicate objects ─────────────────────────────────────────────────────
+  _duplicateObjects(config) {
+    const pairs = [];
+    const addrObjs = config.address_objects || [];
+    const svcObjs = config.service_objects || [];
+
+    for (let i = 0; i < addrObjs.length; i++) {
+      for (let j = i + 1; j < addrObjs.length; j++) {
+        const a = addrObjs[i], b = addrObjs[j];
+        if (a.type === b.type && a.value && a.value === b.value) {
+          pairs.push({ names: [a.name, b.name], value: a.value, type: 'address' });
+        }
+      }
+    }
+
+    for (let i = 0; i < svcObjs.length; i++) {
+      for (let j = i + 1; j < svcObjs.length; j++) {
+        const a = svcObjs[i], b = svcObjs[j];
+        const aPort = a.port_min != null ? `${a.port_min}-${a.port_max || a.port_min}` : (a.ports || '');
+        const bPort = b.port_min != null ? `${b.port_min}-${b.port_max || b.port_min}` : (b.ports || '');
+        if (a.protocol === b.protocol && aPort && aPort === bPort && a.protocol !== 'ANY') {
+          pairs.push({ names: [a.name, b.name], value: `${a.protocol}:${aPort}`, type: 'service' });
+        }
+      }
+    }
+
+    const count = pairs.length;
+    if (!count) return { id: 'duplicates', count: 0, items: [], description: 'No duplicate objects found.' };
+    const items = pairs.map(p => ({
+      key: p.names.join('\x00'),
+      label: `${p.names.join(' / ')} [${p.type}: ${p.value}]`,
+      names: p.names,
+      type: p.type,
+    }));
+    const examples = pairs.slice(0, 3).map(p => `${p.names.join(' / ')} (${p.value})`).join('; ');
+    return {
+      id: 'duplicates', count, items,
+      description: `${count} pair${count !== 1 ? 's' : ''} of objects share identical values. ${examples}.`,
+    };
+  },
+
+  // ── Disabled policies ─────────────────────────────────────────────────────
+  _disabledPolicies(config) {
+    const policies = config.security_policies || [];
+    const disabled = policies.filter(p => p.disabled);
+    const count = disabled.length;
+    if (!count) return { id: 'disabled', count: 0, items: [], description: 'No disabled policies found.' };
+    const pKey = (p) => p._rule_index != null ? String(p._rule_index) : p.name;
+    const pLabel = (p) => p._rule_index != null ? `#${p._rule_index} ${p.name}` : p.name;
+    const items = disabled.map(p => ({ key: pKey(p), label: pLabel(p) }));
+    const names = disabled.map(p => pLabel(p));
+    return {
+      id: 'disabled', count, items,
+      description: `${count} polic${count !== 1 ? 'ies are' : 'y is'} disabled/inactive: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` + ${names.length - 5} more` : ''}.`,
+    };
+  },
+
+  // ── Logging disabled ──────────────────────────────────────────────────────
+  _loggingOff(config) {
+    const policies = config.security_policies || [];
+    // OUR SCHEMA: p.disabled (inverted), p.log_end / p.log_start
+    const noLog = policies.filter(p => !p.disabled && !p.log_end && !p.log_start);
+    const count = noLog.length;
+    if (!count) return { id: 'logging_off', count: 0, items: [], description: 'All enabled policies have logging enabled.' };
+    const pKey = (p) => p._rule_index != null ? String(p._rule_index) : p.name;
+    const pLabel = (p) => p._rule_index != null ? `#${p._rule_index} ${p.name}` : p.name;
+    const items = noLog.map(p => ({ key: pKey(p), label: pLabel(p) }));
+    const names = noLog.map(p => pLabel(p));
+    return {
+      id: 'logging_off', count, items,
+      description: `${count} enabled polic${count !== 1 ? 'ies have' : 'y has'} logging disabled: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` + ${names.length - 5} more` : ''}.`,
+    };
+  },
+
+  // ── Overly permissive ─────────────────────────────────────────────────────
+  _permissivePolicies(config) {
+    const policies = config.security_policies || [];
+    // OUR SCHEMA: p.disabled, p.action ('allow'|'deny'|'reject'), p.src_addresses, p.dst_addresses
+    const permissive = policies.filter(p => {
+      if (p.disabled || p.action !== 'allow') return false;
+      const srcAny = (p.src_addresses || []).some(a => a === 'any' || a === 'all');
+      const dstAny = (p.dst_addresses || []).some(a => a === 'any' || a === 'all');
+      return srcAny && dstAny;
+    });
+    const count = permissive.length;
+    if (!count) return { id: 'permissive', count: 0, items: [], description: 'No overly permissive permit rules found.' };
+    const pKey = (p) => p._rule_index != null ? String(p._rule_index) : p.name;
+    const pLabel = (p) => p._rule_index != null ? `#${p._rule_index} ${p.name}` : p.name;
+    const items = permissive.map(p => ({ key: pKey(p), label: pLabel(p) }));
+    const names = permissive.map(p => pLabel(p));
+    return {
+      id: 'permissive', count, items,
+      description: `${count} permit polic${count !== 1 ? 'ies match' : 'y matches'} any source and any destination: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` + ${names.length - 5} more` : ''}.`,
+    };
+  },
+
+  // ── Empty groups ──────────────────────────────────────────────────────────
+  _emptyGroups(config) {
+    const empty = [
+      ...(config.address_groups || []).filter(g => !g.members || g.members.length === 0),
+      ...(config.service_groups || []).filter(g => !g.members || g.members.length === 0),
+      ...(config.application_groups || []).filter(g => !g.members || g.members.length === 0),
+    ];
+    const count = empty.length;
+    if (!count) return { id: 'empty_groups', count: 0, items: [], description: 'No empty groups found.' };
+    const items = empty.map(g => ({ key: g.name, label: g.name }));
+    return {
+      id: 'empty_groups', count, items,
+      description: `${count} group${count !== 1 ? 's contain' : ' contains'} no members: ${empty.map(g => g.name).join(', ')}.`,
+    };
+  },
+};
+
+// ── Analysis Applicator ──────────────────────────────────────────────────────
+export const AnalysisApplicator = {
+  _getItemAction(finding, itemKey) {
+    const overrides = finding.itemOverrides || {};
+    if (overrides[itemKey] !== undefined) return overrides[itemKey];
+    return finding.selected === 'exclude' ? 'exclude' : 'include';
+  },
+
+  apply(config, findings) {
+    for (const f of findings) {
+      if (!f.count) continue;
+      const act = (key) => this._getItemAction(f, key);
+
+      switch (f.id) {
+        case 'unused_objects': {
+          config.address_objects = (config.address_objects || []).filter(o => o._used || act(o.name) !== 'exclude');
+          config.address_groups = (config.address_groups || []).filter(g => g._used || act(g.name) !== 'exclude');
+          config.service_objects = (config.service_objects || []).filter(o => o._used || act(o.name) !== 'exclude');
+          config.service_groups = (config.service_groups || []).filter(g => g._used || act(g.name) !== 'exclude');
+          config.application_groups = (config.application_groups || []).filter(g => g._used || act(g.name) !== 'exclude');
+          // Annotate remaining unused objects
+          [...(config.address_objects || []), ...(config.address_groups || []),
+           ...(config.service_objects || []), ...(config.service_groups || []),
+           ...(config.application_groups || [])]
+            .filter(o => !o._used)
+            .forEach(o => { o._note = 'Unused — not referenced by any security policy, NAT rule, or group'; });
+          break;
+        }
+
+        case 'shadowed': {
+          const shadowedKeys = new Set(f.items.map(i => i.key));
+          config.security_policies = (config.security_policies || []).filter(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            return !shadowedKeys.has(key) || act(key) !== 'exclude';
+          });
+          // Annotate remaining
+          (config.security_policies || [])
+            .filter(p => {
+              const key = p._rule_index != null ? String(p._rule_index) : p.name;
+              return shadowedKeys.has(key);
+            })
+            .forEach(p => { p._note = (p._note || '') + '[shadowed by earlier rule] '; });
+          break;
+        }
+
+        case 'duplicates': {
+          if (f.selected === 'consolidate') {
+            const toConsolidate = f.items.filter(i => act(i.key) !== 'include');
+            if (toConsolidate.length) this._consolidateDuplicates(config, toConsolidate);
+            const kept = f.items.filter(i => act(i.key) === 'include');
+            for (const item of kept) {
+              if (!item.names) continue;
+              const list = item.type === 'address' ? (config.address_objects || []) : (config.service_objects || []);
+              list.filter(o => item.names.includes(o.name)).forEach(o => {
+                const others = item.names.filter(n => n !== o.name);
+                o._note = (o._note || '') + `Duplicate of: ${others.join(', ')} `;
+              });
+            }
+          } else {
+            const toRemove = f.items.filter(i => act(i.key) === 'exclude');
+            if (toRemove.length) this._consolidateDuplicates(config, toRemove);
+            for (const item of f.items.filter(i => act(i.key) !== 'exclude')) {
+              if (!item.names) continue;
+              const list = item.type === 'address' ? (config.address_objects || []) : (config.service_objects || []);
+              list.filter(o => item.names.includes(o.name)).forEach(o => {
+                const others = item.names.filter(n => n !== o.name);
+                o._note = (o._note || '') + `Duplicate of: ${others.join(', ')} `;
+              });
+            }
+          }
+          break;
+        }
+
+        case 'disabled': {
+          const disabledKeys = new Set(f.items.map(i => i.key));
+          const overrides = f.itemOverrides || {};
+          config.security_policies = (config.security_policies || []).filter(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            if (!disabledKeys.has(key)) return true;
+            const action = overrides[key] || f.selected;
+            return action !== 'exclude';
+          });
+          (config.security_policies || []).filter(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            return p.disabled && disabledKeys.has(key);
+          }).forEach(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            const action = overrides[key] || f.selected;
+            if (action === 'include_enabled') {
+              p.disabled = false;
+              p._note = (p._note || '') + '[was disabled — re-enabled by analysis] ';
+            }
+          });
+          break;
+        }
+
+        case 'logging_off': {
+          const noLogKeys = new Set(f.items.map(i => i.key));
+          const overrides = f.itemOverrides || {};
+          for (const p of (config.security_policies || [])) {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            if (!noLogKeys.has(key)) continue;
+            const ov = overrides[key];
+            const enable = ov === 'exclude' || (!ov && f.selected === 'enable_all');
+            if (enable) {
+              // OUR SCHEMA: use log_end for permit, log_start for deny
+              if (p.action === 'allow') {
+                p.log_end = true;
+              } else {
+                p.log_start = true;
+              }
+              p._note = (p._note || '') + '[logging enabled by analysis] ';
+            }
+          }
+          break;
+        }
+
+        case 'permissive': {
+          const permKeys = new Set(f.items.map(i => i.key));
+          const overrides = f.itemOverrides || {};
+          config.security_policies = (config.security_policies || []).filter(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            if (!permKeys.has(key)) return true;
+            const ov = overrides[key];
+            const action = ov || (f.selected === 'remove_all' ? 'exclude' : 'include');
+            return action !== 'exclude';
+          });
+          break;
+        }
+
+        case 'empty_groups': {
+          const isEmpty = g => !g.members || g.members.length === 0;
+          config.address_groups = (config.address_groups || []).filter(g => !isEmpty(g) || act(g.name) !== 'exclude');
+          config.service_groups = (config.service_groups || []).filter(g => !isEmpty(g) || act(g.name) !== 'exclude');
+          config.application_groups = (config.application_groups || []).filter(g => !isEmpty(g) || act(g.name) !== 'exclude');
+          [...(config.address_groups || []), ...(config.service_groups || []), ...(config.application_groups || [])]
+            .filter(isEmpty)
+            .forEach(g => { g._note = 'Empty group'; });
+          break;
+        }
+      }
+    }
+
+    config._analysis_applied = { at: new Date().toISOString() };
+  },
+
+  _consolidateDuplicates(config, pairs) {
+    const remap = {};
+    const remove = new Set();
+    for (const pair of pairs) {
+      if (!pair.names || pair.names.length < 2) continue;
+      remap[pair.names[1]] = pair.names[0];
+      remove.add(pair.names[1]);
+    }
+
+    config.address_objects = (config.address_objects || []).filter(o => !remove.has(o.name));
+    config.service_objects = (config.service_objects || []).filter(o => !remove.has(o.name));
+
+    // OUR SCHEMA: src_addresses, dst_addresses, services
+    for (const p of (config.security_policies || [])) {
+      p.src_addresses = (p.src_addresses || []).map(a => remap[a] || a);
+      p.dst_addresses = (p.dst_addresses || []).map(a => remap[a] || a);
+      p.services = (p.services || []).map(s => remap[s] || s);
+    }
+
+    for (const g of [...(config.address_groups || []), ...(config.service_groups || [])]) {
+      g.members = (g.members || []).map(m => remap[m] || m);
+    }
+
+    for (const r of (config.nat_rules || [])) {
+      r.src_addresses = (r.src_addresses || []).map(a => remap[a] || a);
+      r.dst_addresses = (r.dst_addresses || []).map(a => remap[a] || a);
+    }
+  },
+};

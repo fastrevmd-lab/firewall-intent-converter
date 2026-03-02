@@ -259,6 +259,30 @@ export default function useConfig() {
   }, [updateConfig]);
 
   // -----------------------------------------------------------------------
+  // Analysis engine
+  // -----------------------------------------------------------------------
+  const handleRunAnalysis = useCallback(async () => {
+    const activeConfig = mergeState.mergeMode
+      ? mergeState.configSlots?.[mergeState.activeSlotIndex]?.intermediateConfig
+      : configState.intermediateConfig;
+    if (!activeConfig) return;
+
+    uiDispatch({ type: 'SET_LOADING', isLoading: true, message: 'Running analysis...' });
+    try {
+      const { AnalysisEngine } = await import('../../src/analysis/config-analyzer.js');
+      const findings = await AnalysisEngine.run(activeConfig, (label) => {
+        uiDispatch({ type: 'SET_LOADING', isLoading: true, message: label });
+      });
+      updateConfig(prev => ({ ...prev, _analysisFindings: findings }));
+      uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'analysis' });
+    } catch (err) {
+      uiDispatch({ type: 'SET_FIELD', field: 'error', value: `Analysis error: ${err.message}` });
+    } finally {
+      uiDispatch({ type: 'SET_LOADING', isLoading: false });
+    }
+  }, [configState.intermediateConfig, mergeState, updateConfig, uiDispatch]);
+
+  // -----------------------------------------------------------------------
   // Return public API
   // -----------------------------------------------------------------------
   return {
@@ -282,6 +306,7 @@ export default function useConfig() {
     handleDHCPUpdate,
     handleQoSUpdate,
     handleConfigUpdate,
+    handleRunAnalysis,
     makeRuleKey,
   };
 }
