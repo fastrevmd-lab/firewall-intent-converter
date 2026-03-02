@@ -236,8 +236,14 @@
 - [x] **Strict Content Security Policy** — Production-only CSP via Vite `transformIndexHtml` plugin. No `'unsafe-inline'` — all scripts and CSS are external hashed bundles. Directives: `script-src 'self'`, `style-src 'self'`, `connect-src` allows LLM APIs + localhost, `object-src 'none'`, `base-uri 'self'`. Dev mode skips CSP for HMR compatibility
 - [x] **Code splitting** — Dynamic `import()` for all 7 vendor parsers, 2 converters, validator, and shadow detector in `engine.js` (loaded on demand per user action). `React.lazy()` for 17 editor tab components in ContentRouter and 7 modal components in app.jsx with `Suspense` boundaries. Initial bundle reduced from 1,192 KB to 358 KB (70% reduction, 40 lazy-loaded chunks). No Vite config changes — Vite auto-splits on dynamic imports
 
+### Rev14 — PyEZ Bridge Push-to-Device
+- [x] **PyEZ Bridge service** — Lightweight Python Flask service (`tools/pyez-bridge/`) wrapping Juniper PyEZ for NETCONF device management. REST API on localhost:8830 with 12 endpoints: health, device CRUD, config load, diff, commit-check, commit (with confirm timer), confirm, rollback. Device credentials stored server-side in `devices.yaml`
+- [x] **Push to SRX workflow** — Multi-step PushModal component with 4-step wizard: device selection, config load + diff preview, commit check validation, and commit with optional commit-confirm timer and auto-rollback countdown. usePush hook manages push state and bridge API calls. Sanitized IPs automatically restored before push
+- [x] **SRX Device Connection settings** — Renamed MCP Connection tab to SRX Device Connection. PyEZ Bridge URL configuration with connection testing. Device add/remove management via bridge API. localStorage migration from old mcp-settings key
+- [x] **Push to SRX button** — Renamed "Push MCP" to "Push to SRX" with smart routing: opens PushModal when bridge is configured, Settings tab when not. Disabled when no SRX output exists
+
 ### Blocked — Waiting on Vendor APIs
-- [ ] **Push to SDC / SD On-Prem / Mist** — Direct deployment to Juniper management platforms. Requires HPE Juniper public REST APIs. UI placeholder already present ("Push via MCP" button)
+- [ ] **Push to SDC / SD On-Prem / Mist** — Direct deployment to Juniper management platforms. Requires HPE Juniper public REST APIs
 
 ---
 

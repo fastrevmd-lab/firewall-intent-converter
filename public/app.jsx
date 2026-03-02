@@ -28,6 +28,7 @@ const FeedbackModal = React.lazy(() => import('./components/FeedbackModal.jsx'))
 const SaveProjectModal = React.lazy(() => import('./components/SaveProjectModal.jsx'));
 const ReportModal = React.lazy(() => import('./components/ReportModal.jsx'));
 const GuidedTour = React.lazy(() => import('./components/GuidedTour.jsx'));
+const PushModal = React.lazy(() => import('./components/PushModal.jsx'));
 // LLMRiskDisclaimer stays static — renders before app shell on first visit
 import LLMRiskDisclaimer, { RejectedScreen } from './components/LLMRiskDisclaimer.jsx';
 
@@ -591,6 +592,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Push to SRX modal */}
+      {ui.showPushModal && (
+        <PushModal onClose={() => uiDispatch({ type: 'HIDE_MODAL', name: 'pushModal' })} />
       )}
 
       {/* Auto-split prompt */}

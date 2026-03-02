@@ -958,6 +958,13 @@ function convertSecIntel(externalLists, policies, warnings) {
 // Schedule Converter → SRX Schedulers
 // ---------------------------------------------------------------------------
 
+const DAY_NAME_MAP = {
+  sun: 'sunday', mon: 'monday', tue: 'tuesday', wed: 'wednesday',
+  thu: 'thursday', fri: 'friday', sat: 'saturday',
+  sunday: 'sunday', monday: 'monday', tuesday: 'tuesday', wednesday: 'wednesday',
+  thursday: 'thursday', friday: 'friday', saturday: 'saturday',
+};
+
 function convertSchedules(schedules, commands, warnings) {
   if (!schedules || schedules.length === 0) return;
 
@@ -969,7 +976,8 @@ function convertSchedules(schedules, commands, warnings) {
     const name = sanitizeJunosName(sched.name);
     if (sched.type === 'recurring' && sched.days && sched.days.length > 0) {
       for (const day of sched.days) {
-        commands.push(`set schedulers scheduler ${name} ${day.toLowerCase()} start-time ${sched.start} stop-time ${sched.end}`);
+        const junosDay = DAY_NAME_MAP[day.toLowerCase()] || day.toLowerCase();
+        commands.push(`set schedulers scheduler ${name} ${junosDay} start-time ${sched.start} stop-time ${sched.end}`);
       }
     } else if (sched.type === 'onetime') {
       commands.push(`set schedulers scheduler ${name} start-date "${sched.start}" stop-date "${sched.end}"`);
