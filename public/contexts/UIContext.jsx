@@ -167,4 +167,13 @@ function useUIContext() {
   return ctx;
 }
 
-export { UIContext, UIProvider, useUIContext };
+// Helper functions for conversion mode detection
+function isLLMEnabled(acceptance) {
+  return acceptance === 'all' || acceptance === 'local-only';
+}
+
+function isDeterministicMode(acceptance) {
+  return acceptance === 'deterministic';
+}
+
+export { UIContext, UIProvider, useUIContext, isLLMEnabled, isDeterministicMode };
