@@ -17,7 +17,7 @@ const MNHA_SUPPORTED_MODELS = new Set([
   'SRX4100', 'SRX4120', 'SRX4200', 'SRX4300', 'SRX4600',
   'SRX4700', 'SRX4700-700',
   'SRX5400', 'SRX5600', 'SRX5800',
-  'vSRX3.0',
+  'vSRX-2C', 'vSRX-5C', 'vSRX-9C', 'vSRX-17C',
 ]);
 
 export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }) {
