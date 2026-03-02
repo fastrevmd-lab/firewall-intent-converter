@@ -1,7 +1,7 @@
 import React, { Suspense, useMemo, useCallback } from 'react';
 import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
-import { useUIContext } from '../../contexts/UIContext.jsx';
+import { useUIContext, isDeterministicMode } from '../../contexts/UIContext.jsx';
 import { useMergeContext } from '../../contexts/MergeContext.jsx';
 
 // Editor components — lazy-loaded per tab (only one visible at a time)
@@ -19,6 +19,7 @@ const SyslogEditor = React.lazy(() => import('../SyslogEditor.jsx'));
 const DHCPEditor = React.lazy(() => import('../DHCPEditor.jsx'));
 const QoSEditor = React.lazy(() => import('../QoSEditor.jsx'));
 const FlowMonitoringEditor = React.lazy(() => import('../FlowMonitoringEditor.jsx'));
+const AnalysisPanel = React.lazy(() => import('../AnalysisPanel.jsx'));
 const GreenfieldChat = React.lazy(() => import('../GreenfieldChat.jsx'));
 const SRXOutput = React.lazy(() => import('../SRXOutput.jsx'));
 const WarningsPanel = React.lazy(() => import('../WarningsPanel.jsx'));
@@ -269,17 +270,29 @@ export default function ContentRouter({
           : `from ${sourceModel || ({ panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA', checkpoint: 'Check Point', sonicwall: 'SonicWall', huawei_usg: 'Huawei USG' }[sourceVendor] || 'PAN-OS')}`
         }
       </button>
-      <button
-        className="btn btn-translate"
-        onClick={llm.handleTranslateWithLLM}
-        disabled={isTranslating || !intermediateConfig?.security_policies?.length}
-        title={isHealthCheckMode ? 'Check best practices using LLM' : 'Translate source policies to SRX format using LLM'}
-      >
-        {isTranslating
-          ? <><span className="spinner" /> {isHealthCheckMode ? 'Checking...' : greenfieldMode ? 'Importing...' : 'Translating...'}</>
-          : (isHealthCheckMode ? 'Check Best Practice w/LLM' : greenfieldMode ? 'Import LLM Config' : 'Translate with LLM')
-        }
-      </button>
+      {isDeterministicMode(ui.llmRiskAcceptance) ? (
+        <button
+          className="btn btn-analysis"
+          onClick={config.handleRunAnalysis}
+          disabled={ui.isLoading || !intermediateConfig?.security_policies?.length}
+          title="Run deterministic pre-conversion analysis"
+          style={{ background: 'var(--success)', color: '#fff', border: 'none' }}
+        >
+          {ui.isLoading ? <><span className="spinner" /> Analyzing...</> : 'Run Analysis'}
+        </button>
+      ) : (
+        <button
+          className="btn btn-translate"
+          onClick={llm.handleTranslateWithLLM}
+          disabled={isTranslating || !intermediateConfig?.security_policies?.length}
+          title={isHealthCheckMode ? 'Check best practices using LLM' : 'Translate source policies to SRX format using LLM'}
+        >
+          {isTranslating
+            ? <><span className="spinner" /> {isHealthCheckMode ? 'Checking...' : greenfieldMode ? 'Importing...' : 'Translating...'}</>
+            : (isHealthCheckMode ? 'Check Best Practice w/LLM' : greenfieldMode ? 'Import LLM Config' : 'Translate with LLM')
+          }
+        </button>
+      )}
       <button
         className={`platform-view-btn ${platformView === 'srx' ? 'active' : ''}`}
         onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'srx' })}
@@ -338,6 +351,19 @@ export default function ContentRouter({
   // --- Security Policies ---
   if (editTab === 'rules') {
     if (greenfieldMode && platformView === 'panos') {
+      if (isDeterministicMode(ui.llmRiskAcceptance)) {
+        return (
+          <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+            {renderPlatformBar()}
+            <div className="panel-body">
+              <div className="empty-state">
+                <h3>Greenfield mode requires AI</h3>
+                <p>In deterministic mode, use Import to paste an existing config, then run Analysis and Convert to SRX.</p>
+              </div>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
           {renderPlatformBar()}
@@ -352,7 +378,7 @@ export default function ContentRouter({
       );
     }
 
-    if (platformView === 'srx' && !srxTranslatedPolicies) {
+    if (platformView === 'srx' && !srxTranslatedPolicies && !isDeterministicMode(ui.llmRiskAcceptance)) {
       return (
         <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
           {renderPlatformBar()}
@@ -473,6 +499,27 @@ export default function ContentRouter({
             </tbody>
           </table>
         </div>
+      </div>
+    );
+  }
+
+  if (editTab === 'analysis') {
+    return (
+      <div className="center-content" style={{ flex: 1, overflow: 'auto' }}>
+        <AnalysisPanel
+          findings={activeConfig?._analysisFindings || []}
+          onApply={(findings) => {
+            import('../../../src/analysis/config-analyzer.js').then(({ AnalysisApplicator }) => {
+              const cloned = structuredClone(activeConfig);
+              AnalysisApplicator.apply(cloned, findings);
+              config.updateConfig(() => cloned);
+            });
+          }}
+          onRunAnalysis={config.handleRunAnalysis}
+          isLoading={ui.isLoading}
+          progressLabel={ui.loadingMessage}
+          hasConfig={!!activeConfig}
+        />
       </div>
     );
   }

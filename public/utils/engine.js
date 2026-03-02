@@ -62,12 +62,20 @@ export async function convertConfig(intermediateConfig, format = 'set', interfac
     throw new Error("format must be 'set' or 'xml'");
   }
 
-  const [converterMod, xmlMod, validatorMod, shadowMod] = await Promise.all([
+  const [converterMod, xmlMod, validatorMod, shadowMod, appMappingsMod, parserUtilsMod] = await Promise.all([
     import('../../src/converters/srx-converter.js'),
     import('../../src/converters/srx-xml-builder.js'),
     import('../../src/validators/srx-validator.js'),
     import('../../src/analysis/shadow-detector.js'),
+    import('../../src/utils/app-mappings.js'),
+    import('../../src/parsers/parser-utils.js'),
   ]);
+
+  // Preload app mappings and inject into parser-utils for enhanced app resolution
+  try {
+    await appMappingsMod.loadAppMappings();
+    parserUtilsMod.setMapVendorApp(appMappingsMod.mapVendorApp);
+  } catch (_) { /* app mappings load failure is non-fatal */ }
 
   let output;
   if (format === 'xml') {

@@ -56,6 +56,7 @@ const NAV_STRUCTURE = [
     { id: 'screen', label: 'Screens', countKey: 'screen_config' },
     { id: 'decryption', label: 'SSL B&I', countKey: 'decryption_rules' },
     { id: 'pbf', label: 'PBF', countKey: 'pbf_rules' },
+    { id: 'analysis', label: 'Analysis', countFn: (ic) => ic?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0 },
   ]},
   { id: 'objects', label: 'Objects', icon: 'box', children: [
     { id: 'objects', label: 'Addr/Svc/App', countFn: (ic) =>

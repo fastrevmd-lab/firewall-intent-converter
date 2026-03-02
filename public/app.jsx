@@ -418,6 +418,7 @@ export default function App() {
       <LLMRiskDisclaimer
         onAcceptAll={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'all' })}
         onAcceptLocalOnly={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'local-only' })}
+        onDeterministicMode={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'deterministic' })}
         onReject={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: 'rejected' })}
       />
     );
