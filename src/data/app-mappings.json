@@ -1,0 +1,3078 @@
+{
+  "meta": {
+    "description": "Multi-vendor L7 application mapping table",
+    "version": "1.0",
+    "generated": "2025-03-01"
+  },
+  "apps": [
+    {
+      "canonical": "https",
+      "description": "Hypertext Transfer Protocol Secure — encrypted web traffic",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:HTTPS", "confidence": 1.0 },
+        "fortios": { "name": "HTTPS", "confidence": 1.0 },
+        "panos": { "name": "ssl", "confidence": 1.0 },
+        "ftd": { "name": "HTTPS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "http",
+      "description": "Hypertext Transfer Protocol — unencrypted web traffic",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["80"],
+      "vendors": {
+        "junos": { "name": "junos:HTTP", "confidence": 1.0 },
+        "fortios": { "name": "HTTP", "confidence": 1.0 },
+        "panos": { "name": "web-browsing", "confidence": 1.0 },
+        "ftd": { "name": "HTTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "dns",
+      "description": "Domain Name System",
+      "category": "network-mgmt",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["53"],
+      "vendors": {
+        "junos": { "name": "junos:DNS", "confidence": 1.0 },
+        "fortios": { "name": "DNS", "confidence": 1.0 },
+        "panos": { "name": "dns", "confidence": 1.0 },
+        "ftd": { "name": "DNS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ms-office365",
+      "description": "Microsoft Office 365 cloud productivity suite",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:OFFICE365", "confidence": 0.9 },
+        "fortios": { "name": "Office365", "confidence": 1.0 },
+        "panos": { "name": "ms-office365", "confidence": 1.0 },
+        "ftd": { "name": "Microsoft-Office-365", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ms-teams",
+      "description": "Microsoft Teams unified communications",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:MS-TEAMS", "confidence": 0.9 },
+        "fortios": { "name": "MS.Teams", "confidence": 1.0 },
+        "panos": { "name": "ms-teams", "confidence": 1.0 },
+        "ftd": { "name": "Microsoft-Teams", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "smtp",
+      "description": "Simple Mail Transfer Protocol",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["25"],
+      "vendors": {
+        "junos": { "name": "junos:SMTP", "confidence": 1.0 },
+        "fortios": { "name": "SMTP", "confidence": 1.0 },
+        "panos": { "name": "smtp", "confidence": 1.0 },
+        "ftd": { "name": "SMTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ssh",
+      "description": "Secure Shell remote administration",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["22"],
+      "vendors": {
+        "junos": { "name": "junos:SSH", "confidence": 1.0 },
+        "fortios": { "name": "SSH", "confidence": 1.0 },
+        "panos": { "name": "ssh", "confidence": 1.0 },
+        "ftd": { "name": "SSH", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "rdp",
+      "description": "Remote Desktop Protocol",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["3389"],
+      "vendors": {
+        "junos": { "name": "junos:RDP", "confidence": 1.0 },
+        "fortios": { "name": "RDP", "confidence": 1.0 },
+        "panos": { "name": "ms-rdp", "confidence": 1.0 },
+        "ftd": { "name": "RDP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zoom",
+      "description": "Zoom video conferencing",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443", "8801"],
+      "vendors": {
+        "junos": { "name": "junos:ZOOM", "confidence": 0.9 },
+        "fortios": { "name": "Zoom", "confidence": 1.0 },
+        "panos": { "name": "zoom", "confidence": 1.0 },
+        "ftd": { "name": "Zoom", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "webex",
+      "description": "Cisco Webex collaboration",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:WEBEX", "confidence": 0.9 },
+        "fortios": { "name": "Webex", "confidence": 1.0 },
+        "panos": { "name": "webex", "confidence": 1.0 },
+        "ftd": { "name": "Webex", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ms-onedrive",
+      "description": "Microsoft OneDrive cloud storage",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ONEDRIVE", "confidence": 0.9 },
+        "fortios": { "name": "OneDrive", "confidence": 1.0 },
+        "panos": { "name": "ms-onedrive", "confidence": 1.0 },
+        "ftd": { "name": "Microsoft-OneDrive", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ms-sharepoint",
+      "description": "Microsoft SharePoint collaboration",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SHAREPOINT", "confidence": 0.9 },
+        "fortios": { "name": "MS.Sharepoint", "confidence": 1.0 },
+        "panos": { "name": "ms-sharepoint", "confidence": 1.0 },
+        "ftd": { "name": "Microsoft-SharePoint", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "gmail",
+      "description": "Google Gmail web email",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GMAIL", "confidence": 0.9 },
+        "fortios": { "name": "Gmail", "confidence": 1.0 },
+        "panos": { "name": "gmail", "confidence": 1.0 },
+        "ftd": { "name": "Gmail", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "google-drive",
+      "description": "Google Drive cloud storage",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GOOGLE-DRIVE", "confidence": 0.9 },
+        "fortios": { "name": "Google.Drive", "confidence": 1.0 },
+        "panos": { "name": "google-drive", "confidence": 1.0 },
+        "ftd": { "name": "Google-Drive", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "google-meet",
+      "description": "Google Meet video conferencing",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GOOGLE-MEET", "confidence": 0.9 },
+        "fortios": { "name": "Google.Meet", "confidence": 1.0 },
+        "panos": { "name": "google-meet", "confidence": 1.0 },
+        "ftd": { "name": "Google-Meet", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "google-docs",
+      "description": "Google Docs online document editing",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GOOGLE-DOCS", "confidence": 0.9 },
+        "fortios": { "name": "Google.Docs", "confidence": 1.0 },
+        "panos": { "name": "google-docs", "confidence": 1.0 },
+        "ftd": { "name": "Google-Docs", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "outlook-web-app",
+      "description": "Outlook Web Access email interface",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:OUTLOOK-WEB-APP", "confidence": 0.9 },
+        "fortios": { "name": "Outlook.Web.Access", "confidence": 1.0 },
+        "panos": { "name": "outlook-web-app", "confidence": 1.0 },
+        "ftd": { "name": "Outlook-Web-Access", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "exchange-online",
+      "description": "Microsoft Exchange Online email",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["443", "587", "993", "995"],
+      "vendors": {
+        "junos": { "name": "junos:EXCHANGE-ONLINE", "confidence": 0.9 },
+        "fortios": { "name": "Exchange.Online", "confidence": 1.0 },
+        "panos": { "name": "exchange-online", "confidence": 1.0 },
+        "ftd": { "name": "Exchange-Online", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ntp",
+      "description": "Network Time Protocol",
+      "category": "network-mgmt",
+      "protocols": ["UDP"],
+      "ports": ["123"],
+      "vendors": {
+        "junos": { "name": "junos:NTP", "confidence": 1.0 },
+        "fortios": { "name": "NTP", "confidence": 1.0 },
+        "panos": { "name": "ntp", "confidence": 1.0 },
+        "ftd": { "name": "NTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ftp",
+      "description": "File Transfer Protocol",
+      "category": "file-transfer",
+      "protocols": ["TCP"],
+      "ports": ["21"],
+      "vendors": {
+        "junos": { "name": "junos:FTP", "confidence": 1.0 },
+        "fortios": { "name": "FTP", "confidence": 1.0 },
+        "panos": { "name": "ftp", "confidence": 1.0 },
+        "ftd": { "name": "FTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "smb",
+      "description": "Server Message Block file sharing",
+      "category": "file-transfer",
+      "protocols": ["TCP"],
+      "ports": ["445"],
+      "vendors": {
+        "junos": { "name": "junos:SMB", "confidence": 1.0 },
+        "fortios": { "name": "SMB", "confidence": 1.0 },
+        "panos": { "name": "smb", "confidence": 1.0 },
+        "ftd": { "name": "SMB", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "sip",
+      "description": "Session Initiation Protocol for VoIP",
+      "category": "voip",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["5060"],
+      "vendors": {
+        "junos": { "name": "junos:SIP", "confidence": 1.0 },
+        "fortios": { "name": "SIP", "confidence": 1.0 },
+        "panos": { "name": "sip", "confidence": 1.0 },
+        "ftd": { "name": "SIP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "snmp",
+      "description": "Simple Network Management Protocol",
+      "category": "network-mgmt",
+      "protocols": ["UDP"],
+      "ports": ["161"],
+      "vendors": {
+        "junos": { "name": "junos:SNMP", "confidence": 1.0 },
+        "fortios": { "name": "SNMP", "confidence": 1.0 },
+        "panos": { "name": "snmp", "confidence": 1.0 },
+        "ftd": { "name": "SNMP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ldap",
+      "description": "Lightweight Directory Access Protocol",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["389"],
+      "vendors": {
+        "junos": { "name": "junos:LDAP", "confidence": 1.0 },
+        "fortios": { "name": "LDAP", "confidence": 1.0 },
+        "panos": { "name": "ldap", "confidence": 1.0 },
+        "ftd": { "name": "LDAP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ping",
+      "description": "ICMP Echo Request/Reply",
+      "category": "network-mgmt",
+      "protocols": ["ICMP"],
+      "ports": [],
+      "vendors": {
+        "junos": { "name": "junos:PING", "confidence": 1.0 },
+        "fortios": { "name": "PING", "confidence": 1.0 },
+        "panos": { "name": "ping", "confidence": 1.0 },
+        "ftd": { "name": "ICMP", "confidence": 0.9 }
+      }
+    },
+    {
+      "canonical": "ms-ad",
+      "description": "Microsoft Active Directory services",
+      "category": "auth",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["88", "389", "636", "3268"],
+      "vendors": {
+        "junos": { "name": "junos:MS-AD", "confidence": 0.9 },
+        "fortios": { "name": "MS-AD", "confidence": 1.0 },
+        "panos": { "name": "ms-ad", "confidence": 1.0 },
+        "ftd": { "name": "Active-Directory", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "imap",
+      "description": "Internet Message Access Protocol",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["143"],
+      "vendors": {
+        "junos": { "name": "junos:IMAP", "confidence": 1.0 },
+        "fortios": { "name": "IMAP", "confidence": 1.0 },
+        "panos": { "name": "imap", "confidence": 1.0 },
+        "ftd": { "name": "IMAP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pop3",
+      "description": "Post Office Protocol version 3",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["110"],
+      "vendors": {
+        "junos": { "name": "junos:POP3", "confidence": 1.0 },
+        "fortios": { "name": "POP3", "confidence": 1.0 },
+        "panos": { "name": "pop3", "confidence": 1.0 },
+        "ftd": { "name": "POP3", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "dhcp",
+      "description": "Dynamic Host Configuration Protocol",
+      "category": "network-mgmt",
+      "protocols": ["UDP"],
+      "ports": ["67", "68"],
+      "vendors": {
+        "junos": { "name": "junos:DHCP", "confidence": 1.0 },
+        "fortios": { "name": "DHCP", "confidence": 1.0 },
+        "panos": { "name": "dhcp", "confidence": 1.0 },
+        "ftd": { "name": "DHCP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "telnet",
+      "description": "Telnet remote terminal protocol",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["23"],
+      "vendors": {
+        "junos": { "name": "junos:TELNET", "confidence": 1.0 },
+        "fortios": { "name": "TELNET", "confidence": 1.0 },
+        "panos": { "name": "telnet", "confidence": 1.0 },
+        "ftd": { "name": "Telnet", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mysql",
+      "description": "MySQL database protocol",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["3306"],
+      "vendors": {
+        "junos": { "name": "junos:MYSQL", "confidence": 1.0 },
+        "fortios": { "name": "MySQL", "confidence": 1.0 },
+        "panos": { "name": "mysql", "confidence": 1.0 },
+        "ftd": { "name": "MySQL", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mssql",
+      "description": "Microsoft SQL Server database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["1433"],
+      "vendors": {
+        "junos": { "name": "junos:MS-SQL", "confidence": 1.0 },
+        "fortios": { "name": "MS-SQL", "confidence": 1.0 },
+        "panos": { "name": "ms-sql", "confidence": 1.0 },
+        "ftd": { "name": "MS-SQL", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "slack",
+      "description": "Slack team collaboration",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SLACK", "confidence": 0.9 },
+        "fortios": { "name": "Slack", "confidence": 1.0 },
+        "panos": { "name": "slack", "confidence": 1.0 },
+        "ftd": { "name": "Slack", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "dropbox",
+      "description": "Dropbox cloud storage",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DROPBOX", "confidence": 0.9 },
+        "fortios": { "name": "Dropbox", "confidence": 1.0 },
+        "panos": { "name": "dropbox", "confidence": 1.0 },
+        "ftd": { "name": "Dropbox", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "salesforce",
+      "description": "Salesforce CRM platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SALESFORCE", "confidence": 0.9 },
+        "fortios": { "name": "Salesforce", "confidence": 1.0 },
+        "panos": { "name": "salesforce", "confidence": 1.0 },
+        "ftd": { "name": "Salesforce", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "kerberos",
+      "description": "Kerberos authentication protocol",
+      "category": "auth",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["88"],
+      "vendors": {
+        "junos": { "name": "junos:KERBEROS", "confidence": 1.0 },
+        "fortios": { "name": "Kerberos", "confidence": 1.0 },
+        "panos": { "name": "kerberos", "confidence": 1.0 },
+        "ftd": { "name": "Kerberos", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "radius",
+      "description": "Remote Authentication Dial-In User Service",
+      "category": "auth",
+      "protocols": ["UDP"],
+      "ports": ["1812", "1813"],
+      "vendors": {
+        "junos": { "name": "junos:RADIUS", "confidence": 1.0 },
+        "fortios": { "name": "RADIUS", "confidence": 1.0 },
+        "panos": { "name": "radius", "confidence": 1.0 },
+        "ftd": { "name": "RADIUS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tacacs",
+      "description": "Terminal Access Controller Access-Control System",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["49"],
+      "vendors": {
+        "junos": { "name": "junos:TACACS", "confidence": 1.0 },
+        "fortios": { "name": "TACACS", "confidence": 1.0 },
+        "panos": { "name": "tacacs", "confidence": 1.0 },
+        "ftd": { "name": "TACACS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "syslog",
+      "description": "System logging protocol",
+      "category": "network-mgmt",
+      "protocols": ["UDP", "TCP"],
+      "ports": ["514"],
+      "vendors": {
+        "junos": { "name": "junos:SYSLOG", "confidence": 1.0 },
+        "fortios": { "name": "SYSLOG", "confidence": 1.0 },
+        "panos": { "name": "syslog", "confidence": 1.0 },
+        "ftd": { "name": "Syslog", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tftp",
+      "description": "Trivial File Transfer Protocol",
+      "category": "file-transfer",
+      "protocols": ["UDP"],
+      "ports": ["69"],
+      "vendors": {
+        "junos": { "name": "junos:TFTP", "confidence": 1.0 },
+        "fortios": { "name": "TFTP", "confidence": 1.0 },
+        "panos": { "name": "tftp", "confidence": 1.0 },
+        "ftd": { "name": "TFTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "sftp",
+      "description": "SSH File Transfer Protocol",
+      "category": "file-transfer",
+      "protocols": ["TCP"],
+      "ports": ["22"],
+      "vendors": {
+        "junos": { "name": "junos:SSH", "confidence": 0.9 },
+        "fortios": { "name": "SFTP", "confidence": 1.0 },
+        "panos": { "name": "ssh", "confidence": 0.9 },
+        "ftd": { "name": "SFTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "vnc",
+      "description": "Virtual Network Computing remote desktop",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["5900"],
+      "vendors": {
+        "junos": { "name": "junos:VNC", "confidence": 1.0 },
+        "fortios": { "name": "VNC", "confidence": 1.0 },
+        "panos": { "name": "vnc", "confidence": 1.0 },
+        "ftd": { "name": "VNC", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "h323",
+      "description": "H.323 video conferencing protocol",
+      "category": "voip",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["1720"],
+      "vendors": {
+        "junos": { "name": "junos:H323", "confidence": 1.0 },
+        "fortios": { "name": "H323", "confidence": 1.0 },
+        "panos": { "name": "h323", "confidence": 1.0 },
+        "ftd": { "name": "H323", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "rtp",
+      "description": "Real-time Transport Protocol for media streaming",
+      "category": "streaming",
+      "protocols": ["UDP"],
+      "ports": ["16384-32767"],
+      "vendors": {
+        "junos": { "name": "junos:RTP", "confidence": 1.0 },
+        "fortios": { "name": "RTP", "confidence": 1.0 },
+        "panos": { "name": "rtp", "confidence": 1.0 },
+        "ftd": { "name": "RTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "rtsp",
+      "description": "Real Time Streaming Protocol",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["554"],
+      "vendors": {
+        "junos": { "name": "junos:RTSP", "confidence": 1.0 },
+        "fortios": { "name": "RTSP", "confidence": 1.0 },
+        "panos": { "name": "rtsp", "confidence": 1.0 },
+        "ftd": { "name": "RTSP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ipsec",
+      "description": "IPsec VPN protocol suite",
+      "category": "tunnel",
+      "protocols": ["IP"],
+      "ports": ["500", "4500"],
+      "vendors": {
+        "junos": { "name": "junos:IKE", "confidence": 0.9 },
+        "fortios": { "name": "IPsec", "confidence": 1.0 },
+        "panos": { "name": "ipsec", "confidence": 1.0 },
+        "ftd": { "name": "IPsec", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "openvpn",
+      "description": "OpenVPN tunneling protocol",
+      "category": "tunnel",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["1194"],
+      "vendors": {
+        "junos": { "name": "junos:OPENVPN", "confidence": 0.9 },
+        "fortios": { "name": "OpenVPN", "confidence": 1.0 },
+        "panos": { "name": "openvpn", "confidence": 1.0 },
+        "ftd": { "name": "OpenVPN", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "oracle-db",
+      "description": "Oracle Database protocol",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["1521"],
+      "vendors": {
+        "junos": { "name": "junos:ORACLE", "confidence": 1.0 },
+        "fortios": { "name": "Oracle", "confidence": 1.0 },
+        "panos": { "name": "oracle", "confidence": 1.0 },
+        "ftd": { "name": "Oracle", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "postgresql",
+      "description": "PostgreSQL database protocol",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["5432"],
+      "vendors": {
+        "junos": { "name": "junos:POSTGRESQL", "confidence": 1.0 },
+        "fortios": { "name": "PostgreSQL", "confidence": 1.0 },
+        "panos": { "name": "postgresql", "confidence": 1.0 },
+        "ftd": { "name": "PostgreSQL", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mongodb",
+      "description": "MongoDB NoSQL database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["27017"],
+      "vendors": {
+        "junos": { "name": "junos:MONGODB", "confidence": 0.9 },
+        "fortios": { "name": "MongoDB", "confidence": 1.0 },
+        "panos": { "name": "mongodb", "confidence": 1.0 },
+        "ftd": { "name": "MongoDB", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "redis",
+      "description": "Redis in-memory data store",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["6379"],
+      "vendors": {
+        "junos": { "name": "junos:REDIS", "confidence": 0.9 },
+        "fortios": { "name": "Redis", "confidence": 1.0 },
+        "panos": { "name": "redis", "confidence": 1.0 },
+        "ftd": { "name": "Redis", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "youtube",
+      "description": "YouTube video streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:YOUTUBE", "confidence": 0.9 },
+        "fortios": { "name": "YouTube", "confidence": 1.0 },
+        "panos": { "name": "youtube-base", "confidence": 0.9 },
+        "ftd": { "name": "YouTube", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "netflix",
+      "description": "Netflix streaming service",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:NETFLIX", "confidence": 0.9 },
+        "fortios": { "name": "Netflix", "confidence": 1.0 },
+        "panos": { "name": "netflix", "confidence": 1.0 },
+        "ftd": { "name": "Netflix", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "facebook",
+      "description": "Facebook social network",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:FACEBOOK", "confidence": 0.9 },
+        "fortios": { "name": "Facebook", "confidence": 1.0 },
+        "panos": { "name": "facebook-base", "confidence": 0.9 },
+        "ftd": { "name": "Facebook", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "twitter",
+      "description": "Twitter social network",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TWITTER", "confidence": 0.9 },
+        "fortios": { "name": "Twitter", "confidence": 1.0 },
+        "panos": { "name": "twitter", "confidence": 1.0 },
+        "ftd": { "name": "Twitter", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "linkedin",
+      "description": "LinkedIn professional network",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:LINKEDIN", "confidence": 0.9 },
+        "fortios": { "name": "LinkedIn", "confidence": 1.0 },
+        "panos": { "name": "linkedin", "confidence": 1.0 },
+        "ftd": { "name": "LinkedIn", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "instagram",
+      "description": "Instagram social media",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:INSTAGRAM", "confidence": 0.9 },
+        "fortios": { "name": "Instagram", "confidence": 1.0 },
+        "panos": { "name": "instagram", "confidence": 1.0 },
+        "ftd": { "name": "Instagram", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "whatsapp",
+      "description": "WhatsApp messaging",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:WHATSAPP", "confidence": 0.9 },
+        "fortios": { "name": "WhatsApp", "confidence": 1.0 },
+        "panos": { "name": "whatsapp", "confidence": 1.0 },
+        "ftd": { "name": "WhatsApp", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "skype",
+      "description": "Skype voice and video calling",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SKYPE", "confidence": 0.9 },
+        "fortios": { "name": "Skype", "confidence": 1.0 },
+        "panos": { "name": "skype", "confidence": 1.0 },
+        "ftd": { "name": "Skype", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "citrix-ica",
+      "description": "Citrix Independent Computing Architecture",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["1494", "2598"],
+      "vendors": {
+        "junos": { "name": "junos:CITRIX", "confidence": 0.9 },
+        "fortios": { "name": "Citrix", "confidence": 1.0 },
+        "panos": { "name": "citrix", "confidence": 1.0 },
+        "ftd": { "name": "Citrix-ICA", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "vmware-horizon",
+      "description": "VMware Horizon VDI",
+      "category": "remote-access",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443", "8443"],
+      "vendors": {
+        "junos": { "name": "junos:VMWARE", "confidence": 0.8 },
+        "fortios": { "name": "VMware.Horizon", "confidence": 1.0 },
+        "panos": { "name": "vmware-view", "confidence": 0.9 },
+        "ftd": { "name": "VMware-Horizon", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "aws",
+      "description": "Amazon Web Services cloud platform",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:AWS", "confidence": 0.9 },
+        "fortios": { "name": "AWS", "confidence": 1.0 },
+        "panos": { "name": "amazon-aws", "confidence": 1.0 },
+        "ftd": { "name": "Amazon-AWS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "azure",
+      "description": "Microsoft Azure cloud platform",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:AZURE", "confidence": 0.9 },
+        "fortios": { "name": "Microsoft.Azure", "confidence": 1.0 },
+        "panos": { "name": "ms-azure", "confidence": 1.0 },
+        "ftd": { "name": "Microsoft-Azure", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "gcp",
+      "description": "Google Cloud Platform",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GCP", "confidence": 0.9 },
+        "fortios": { "name": "Google.Cloud", "confidence": 1.0 },
+        "panos": { "name": "google-cloud", "confidence": 1.0 },
+        "ftd": { "name": "Google-Cloud", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "github",
+      "description": "GitHub code repository service",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GITHUB", "confidence": 0.9 },
+        "fortios": { "name": "Github", "confidence": 1.0 },
+        "panos": { "name": "github", "confidence": 1.0 },
+        "ftd": { "name": "GitHub", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "gitlab",
+      "description": "GitLab code repository and DevOps platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GITLAB", "confidence": 0.9 },
+        "fortios": { "name": "GitLab", "confidence": 1.0 },
+        "panos": { "name": "gitlab", "confidence": 1.0 },
+        "ftd": { "name": "GitLab", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "bitbucket",
+      "description": "Bitbucket code repository",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:BITBUCKET", "confidence": 0.9 },
+        "fortios": { "name": "Bitbucket", "confidence": 1.0 },
+        "panos": { "name": "bitbucket", "confidence": 1.0 },
+        "ftd": { "name": "Bitbucket", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "jira",
+      "description": "Atlassian Jira project management",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:JIRA", "confidence": 0.9 },
+        "fortios": { "name": "JIRA", "confidence": 1.0 },
+        "panos": { "name": "jira", "confidence": 1.0 },
+        "ftd": { "name": "Jira", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "confluence",
+      "description": "Atlassian Confluence wiki",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CONFLUENCE", "confidence": 0.9 },
+        "fortios": { "name": "Confluence", "confidence": 1.0 },
+        "panos": { "name": "confluence", "confidence": 1.0 },
+        "ftd": { "name": "Confluence", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "servicenow",
+      "description": "ServiceNow IT service management platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SERVICENOW", "confidence": 0.9 },
+        "fortios": { "name": "ServiceNow", "confidence": 1.0 },
+        "panos": { "name": "servicenow", "confidence": 1.0 },
+        "ftd": { "name": "ServiceNow", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "box",
+      "description": "Box cloud storage and collaboration",
+      "category": "cloud-storage",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:BOX", "confidence": 0.9 },
+        "fortios": { "name": "Box", "confidence": 1.0 },
+        "panos": { "name": "box-net", "confidence": 1.0 },
+        "ftd": { "name": "Box", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "quic",
+      "description": "QUIC transport protocol (HTTP/3)",
+      "category": "web",
+      "protocols": ["UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:QUIC", "confidence": 0.9 },
+        "fortios": { "name": "QUIC", "confidence": 1.0 },
+        "panos": { "name": "quic", "confidence": 1.0 },
+        "ftd": { "name": "QUIC", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "wireguard",
+      "description": "WireGuard VPN protocol",
+      "category": "tunnel",
+      "protocols": ["UDP"],
+      "ports": ["51820"],
+      "vendors": {
+        "junos": { "name": "junos:WIREGUARD", "confidence": 0.9 },
+        "fortios": { "name": "WireGuard", "confidence": 1.0 },
+        "panos": { "name": "wireguard", "confidence": 1.0 },
+        "ftd": { "name": "WireGuard", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tor",
+      "description": "Tor anonymity network",
+      "category": "tunnel",
+      "protocols": ["TCP"],
+      "ports": ["9001", "9030"],
+      "vendors": {
+        "junos": { "name": "junos:TOR", "confidence": 0.9 },
+        "fortios": { "name": "Tor", "confidence": 1.0 },
+        "panos": { "name": "tor", "confidence": 1.0 },
+        "ftd": { "name": "Tor", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "bittorrent",
+      "description": "BitTorrent peer-to-peer file sharing",
+      "category": "file-transfer",
+      "protocols": ["TCP", "UDP"],
+      "ports": [],
+      "vendors": {
+        "junos": { "name": "junos:BITTORRENT", "confidence": 0.9 },
+        "fortios": { "name": "BitTorrent", "confidence": 1.0 },
+        "panos": { "name": "bittorrent", "confidence": 1.0 },
+        "ftd": { "name": "BitTorrent", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "snmp-trap",
+      "description": "SNMP trap notifications",
+      "category": "network-mgmt",
+      "protocols": ["UDP"],
+      "ports": ["162"],
+      "vendors": {
+        "junos": { "name": "junos:SNMP-TRAP", "confidence": 1.0 },
+        "fortios": { "name": "SNMP-TRAP", "confidence": 1.0 },
+        "panos": { "name": "snmptrap", "confidence": 1.0 },
+        "ftd": { "name": "SNMP-Trap", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "netflow",
+      "description": "NetFlow traffic monitoring",
+      "category": "network-mgmt",
+      "protocols": ["UDP"],
+      "ports": ["2055", "9996"],
+      "vendors": {
+        "junos": { "name": "junos:NETFLOW", "confidence": 1.0 },
+        "fortios": { "name": "NetFlow", "confidence": 1.0 },
+        "panos": { "name": "netflow", "confidence": 1.0 },
+        "ftd": { "name": "NetFlow", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "nfs",
+      "description": "Network File System",
+      "category": "file-transfer",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["2049"],
+      "vendors": {
+        "junos": { "name": "junos:NFS", "confidence": 1.0 },
+        "fortios": { "name": "NFS", "confidence": 1.0 },
+        "panos": { "name": "nfs", "confidence": 1.0 },
+        "ftd": { "name": "NFS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "cifs",
+      "description": "Common Internet File System (SMB/CIFS)",
+      "category": "file-transfer",
+      "protocols": ["TCP"],
+      "ports": ["445"],
+      "vendors": {
+        "junos": { "name": "junos:SMB", "confidence": 0.9 },
+        "fortios": { "name": "CIFS", "confidence": 1.0 },
+        "panos": { "name": "smb", "confidence": 0.9 },
+        "ftd": { "name": "CIFS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "rsync",
+      "description": "Rsync file synchronization",
+      "category": "file-transfer",
+      "protocols": ["TCP"],
+      "ports": ["873"],
+      "vendors": {
+        "junos": { "name": "junos:RSYNC", "confidence": 1.0 },
+        "fortios": { "name": "Rsync", "confidence": 1.0 },
+        "panos": { "name": "rsync", "confidence": 1.0 },
+        "ftd": { "name": "Rsync", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "bgp",
+      "description": "Border Gateway Protocol",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["179"],
+      "vendors": {
+        "junos": { "name": "junos:BGP", "confidence": 1.0 },
+        "fortios": { "name": "BGP", "confidence": 1.0 },
+        "panos": { "name": "bgp", "confidence": 1.0 },
+        "ftd": { "name": "BGP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ospf",
+      "description": "Open Shortest Path First routing protocol",
+      "category": "network-mgmt",
+      "protocols": ["IP"],
+      "ports": [],
+      "vendors": {
+        "junos": { "name": "junos:OSPF", "confidence": 1.0 },
+        "fortios": { "name": "OSPF", "confidence": 1.0 },
+        "panos": { "name": "ospf", "confidence": 1.0 },
+        "ftd": { "name": "OSPF", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "eigrp",
+      "description": "Enhanced Interior Gateway Routing Protocol",
+      "category": "network-mgmt",
+      "protocols": ["IP"],
+      "ports": [],
+      "vendors": {
+        "junos": { "name": "junos:EIGRP", "confidence": 1.0 },
+        "fortios": { "name": "EIGRP", "confidence": 1.0 },
+        "panos": { "name": "eigrp", "confidence": 1.0 },
+        "ftd": { "name": "EIGRP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "gre",
+      "description": "Generic Routing Encapsulation tunneling",
+      "category": "tunnel",
+      "protocols": ["IP"],
+      "ports": [],
+      "vendors": {
+        "junos": { "name": "junos:GRE", "confidence": 1.0 },
+        "fortios": { "name": "GRE", "confidence": 1.0 },
+        "panos": { "name": "gre", "confidence": 1.0 },
+        "ftd": { "name": "GRE", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "l2tp",
+      "description": "Layer 2 Tunneling Protocol",
+      "category": "tunnel",
+      "protocols": ["UDP"],
+      "ports": ["1701"],
+      "vendors": {
+        "junos": { "name": "junos:L2TP", "confidence": 1.0 },
+        "fortios": { "name": "L2TP", "confidence": 1.0 },
+        "panos": { "name": "l2tp", "confidence": 1.0 },
+        "ftd": { "name": "L2TP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pptp",
+      "description": "Point-to-Point Tunneling Protocol",
+      "category": "tunnel",
+      "protocols": ["TCP"],
+      "ports": ["1723"],
+      "vendors": {
+        "junos": { "name": "junos:PPTP", "confidence": 1.0 },
+        "fortios": { "name": "PPTP", "confidence": 1.0 },
+        "panos": { "name": "pptp", "confidence": 1.0 },
+        "ftd": { "name": "PPTP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ipsec-nat-t",
+      "description": "IPsec NAT Traversal",
+      "category": "tunnel",
+      "protocols": ["UDP"],
+      "ports": ["4500"],
+      "vendors": {
+        "junos": { "name": "junos:IKE-NAT", "confidence": 0.9 },
+        "fortios": { "name": "IPsec-NAT-T", "confidence": 1.0 },
+        "panos": { "name": "ipsec-esp", "confidence": 0.9 },
+        "ftd": { "name": "IPsec-NAT-T", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mgcp",
+      "description": "Media Gateway Control Protocol",
+      "category": "voip",
+      "protocols": ["UDP"],
+      "ports": ["2427", "2727"],
+      "vendors": {
+        "junos": { "name": "junos:MGCP", "confidence": 1.0 },
+        "fortios": { "name": "MGCP", "confidence": 1.0 },
+        "panos": { "name": "mgcp", "confidence": 1.0 },
+        "ftd": { "name": "MGCP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "sccp",
+      "description": "Skinny Client Control Protocol (Cisco VoIP)",
+      "category": "voip",
+      "protocols": ["TCP"],
+      "ports": ["2000"],
+      "vendors": {
+        "junos": { "name": "junos:SCCP", "confidence": 1.0 },
+        "fortios": { "name": "SCCP", "confidence": 1.0 },
+        "panos": { "name": "sccp", "confidence": 1.0 },
+        "ftd": { "name": "SCCP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "docker",
+      "description": "Docker container management",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["2375", "2376"],
+      "vendors": {
+        "junos": { "name": "junos:DOCKER", "confidence": 0.9 },
+        "fortios": { "name": "Docker", "confidence": 1.0 },
+        "panos": { "name": "docker", "confidence": 1.0 },
+        "ftd": { "name": "Docker", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "kubernetes",
+      "description": "Kubernetes container orchestration",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["443", "6443"],
+      "vendors": {
+        "junos": { "name": "junos:KUBERNETES", "confidence": 0.9 },
+        "fortios": { "name": "Kubernetes", "confidence": 1.0 },
+        "panos": { "name": "kubernetes", "confidence": 1.0 },
+        "ftd": { "name": "Kubernetes", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "elasticsearch",
+      "description": "Elasticsearch distributed search engine",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["9200", "9300"],
+      "vendors": {
+        "junos": { "name": "junos:ELASTICSEARCH", "confidence": 0.9 },
+        "fortios": { "name": "Elasticsearch", "confidence": 1.0 },
+        "panos": { "name": "elasticsearch", "confidence": 1.0 },
+        "ftd": { "name": "Elasticsearch", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "kafka",
+      "description": "Apache Kafka message streaming",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["9092"],
+      "vendors": {
+        "junos": { "name": "junos:KAFKA", "confidence": 0.9 },
+        "fortios": { "name": "Kafka", "confidence": 1.0 },
+        "panos": { "name": "kafka", "confidence": 1.0 },
+        "ftd": { "name": "Kafka", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "rabbitmq",
+      "description": "RabbitMQ message broker",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["5672"],
+      "vendors": {
+        "junos": { "name": "junos:RABBITMQ", "confidence": 0.9 },
+        "fortios": { "name": "RabbitMQ", "confidence": 1.0 },
+        "panos": { "name": "rabbitmq", "confidence": 1.0 },
+        "ftd": { "name": "RabbitMQ", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "splunk",
+      "description": "Splunk data analytics platform",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["8089", "9997"],
+      "vendors": {
+        "junos": { "name": "junos:SPLUNK", "confidence": 0.9 },
+        "fortios": { "name": "Splunk", "confidence": 1.0 },
+        "panos": { "name": "splunk", "confidence": 1.0 },
+        "ftd": { "name": "Splunk", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "grafana",
+      "description": "Grafana monitoring and visualization",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["3000"],
+      "vendors": {
+        "junos": { "name": "junos:GRAFANA", "confidence": 0.9 },
+        "fortios": { "name": "Grafana", "confidence": 1.0 },
+        "panos": { "name": "grafana", "confidence": 1.0 },
+        "ftd": { "name": "Grafana", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "prometheus",
+      "description": "Prometheus monitoring system",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["9090"],
+      "vendors": {
+        "junos": { "name": "junos:PROMETHEUS", "confidence": 0.9 },
+        "fortios": { "name": "Prometheus", "confidence": 1.0 },
+        "panos": { "name": "prometheus", "confidence": 1.0 },
+        "ftd": { "name": "Prometheus", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "jenkins",
+      "description": "Jenkins automation server",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["8080"],
+      "vendors": {
+        "junos": { "name": "junos:JENKINS", "confidence": 0.9 },
+        "fortios": { "name": "Jenkins", "confidence": 1.0 },
+        "panos": { "name": "jenkins", "confidence": 1.0 },
+        "ftd": { "name": "Jenkins", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "teamviewer",
+      "description": "TeamViewer remote support",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["5938"],
+      "vendors": {
+        "junos": { "name": "junos:TEAMVIEWER", "confidence": 0.9 },
+        "fortios": { "name": "TeamViewer", "confidence": 1.0 },
+        "panos": { "name": "teamviewer", "confidence": 1.0 },
+        "ftd": { "name": "TeamViewer", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "anydesk",
+      "description": "AnyDesk remote desktop",
+      "category": "remote-access",
+      "protocols": ["TCP"],
+      "ports": ["6568"],
+      "vendors": {
+        "junos": { "name": "junos:ANYDESK", "confidence": 0.9 },
+        "fortios": { "name": "AnyDesk", "confidence": 1.0 },
+        "panos": { "name": "anydesk", "confidence": 1.0 },
+        "ftd": { "name": "AnyDesk", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "smtps",
+      "description": "SMTP over TLS/SSL",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["465", "587"],
+      "vendors": {
+        "junos": { "name": "junos:SMTPS", "confidence": 1.0 },
+        "fortios": { "name": "SMTPS", "confidence": 1.0 },
+        "panos": { "name": "smtp", "confidence": 0.9 },
+        "ftd": { "name": "SMTPS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "imaps",
+      "description": "IMAP over TLS/SSL",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["993"],
+      "vendors": {
+        "junos": { "name": "junos:IMAPS", "confidence": 1.0 },
+        "fortios": { "name": "IMAPS", "confidence": 1.0 },
+        "panos": { "name": "imap", "confidence": 0.9 },
+        "ftd": { "name": "IMAPS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pop3s",
+      "description": "POP3 over TLS/SSL",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["995"],
+      "vendors": {
+        "junos": { "name": "junos:POP3S", "confidence": 1.0 },
+        "fortios": { "name": "POP3S", "confidence": 1.0 },
+        "panos": { "name": "pop3", "confidence": 0.9 },
+        "ftd": { "name": "POP3S", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ldaps",
+      "description": "LDAP over TLS/SSL",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["636"],
+      "vendors": {
+        "junos": { "name": "junos:LDAPS", "confidence": 1.0 },
+        "fortios": { "name": "LDAPS", "confidence": 1.0 },
+        "panos": { "name": "ldap", "confidence": 0.9 },
+        "ftd": { "name": "LDAPS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ssl-vpn",
+      "description": "SSL VPN tunneling",
+      "category": "tunnel",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SSL-VPN", "confidence": 0.9 },
+        "fortios": { "name": "SSL-VPN", "confidence": 1.0 },
+        "panos": { "name": "ssl-vpn", "confidence": 1.0 },
+        "ftd": { "name": "SSL-VPN", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "hulu",
+      "description": "Hulu streaming service",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:HULU", "confidence": 0.9 },
+        "fortios": { "name": "Hulu", "confidence": 1.0 },
+        "panos": { "name": "hulu", "confidence": 1.0 },
+        "ftd": { "name": "Hulu", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "amazon-video",
+      "description": "Amazon Prime Video streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:AMAZON-VIDEO", "confidence": 0.9 },
+        "fortios": { "name": "Amazon.Video", "confidence": 1.0 },
+        "panos": { "name": "amazon-video", "confidence": 1.0 },
+        "ftd": { "name": "Amazon-Video", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "discord",
+      "description": "Discord voice and text chat",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DISCORD", "confidence": 0.9 },
+        "fortios": { "name": "Discord", "confidence": 1.0 },
+        "panos": { "name": "discord", "confidence": 1.0 },
+        "ftd": { "name": "Discord", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "telegram",
+      "description": "Telegram messaging",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TELEGRAM", "confidence": 0.9 },
+        "fortios": { "name": "Telegram", "confidence": 1.0 },
+        "panos": { "name": "telegram", "confidence": 1.0 },
+        "ftd": { "name": "Telegram", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "signal",
+      "description": "Signal encrypted messaging",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SIGNAL", "confidence": 0.9 },
+        "fortios": { "name": "Signal", "confidence": 1.0 },
+        "panos": { "name": "signal", "confidence": 1.0 },
+        "ftd": { "name": "Signal", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "google-workspace",
+      "description": "Google Workspace suite",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GOOGLE-WORKSPACE", "confidence": 0.9 },
+        "fortios": { "name": "Google.Workspace", "confidence": 1.0 },
+        "panos": { "name": "google-workspace", "confidence": 1.0 },
+        "ftd": { "name": "Google-Workspace", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "google-calendar",
+      "description": "Google Calendar",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GOOGLE-CALENDAR", "confidence": 0.9 },
+        "fortios": { "name": "Google.Calendar", "confidence": 1.0 },
+        "panos": { "name": "google-calendar", "confidence": 1.0 },
+        "ftd": { "name": "Google-Calendar", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ms-exchange",
+      "description": "Microsoft Exchange on-premises",
+      "category": "email",
+      "protocols": ["TCP"],
+      "ports": ["443", "587", "993", "995"],
+      "vendors": {
+        "junos": { "name": "junos:MS-EXCHANGE", "confidence": 0.9 },
+        "fortios": { "name": "MS-Exchange", "confidence": 1.0 },
+        "panos": { "name": "ms-exchange", "confidence": 1.0 },
+        "ftd": { "name": "Microsoft-Exchange", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "office-online",
+      "description": "Microsoft Office Online",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:OFFICE-WEB-APPS", "confidence": 0.9 },
+        "fortios": { "name": "Office.Online", "confidence": 1.0 },
+        "panos": { "name": "office-online", "confidence": 1.0 },
+        "ftd": { "name": "Office-Online", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "trello",
+      "description": "Trello project management",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TRELLO", "confidence": 0.9 },
+        "fortios": { "name": "Trello", "confidence": 1.0 },
+        "panos": { "name": "trello", "confidence": 1.0 },
+        "ftd": { "name": "Trello", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "asana",
+      "description": "Asana project management",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ASANA", "confidence": 0.9 },
+        "fortios": { "name": "Asana", "confidence": 1.0 },
+        "panos": { "name": "asana", "confidence": 1.0 },
+        "ftd": { "name": "Asana", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "monday",
+      "description": "Monday.com work management",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:MONDAY", "confidence": 0.9 },
+        "fortios": { "name": "Monday.com", "confidence": 1.0 },
+        "panos": { "name": "monday", "confidence": 1.0 },
+        "ftd": { "name": "Monday", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "notion",
+      "description": "Notion workspace",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:NOTION", "confidence": 0.9 },
+        "fortios": { "name": "Notion", "confidence": 1.0 },
+        "panos": { "name": "notion", "confidence": 1.0 },
+        "ftd": { "name": "Notion", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "airtable",
+      "description": "Airtable database platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:AIRTABLE", "confidence": 0.9 },
+        "fortios": { "name": "Airtable", "confidence": 1.0 },
+        "panos": { "name": "airtable", "confidence": 1.0 },
+        "ftd": { "name": "Airtable", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "miro",
+      "description": "Miro collaborative whiteboard",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:MIRO", "confidence": 0.9 },
+        "fortios": { "name": "Miro", "confidence": 1.0 },
+        "panos": { "name": "miro", "confidence": 1.0 },
+        "ftd": { "name": "Miro", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "figma",
+      "description": "Figma design collaboration",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:FIGMA", "confidence": 0.9 },
+        "fortios": { "name": "Figma", "confidence": 1.0 },
+        "panos": { "name": "figma", "confidence": 1.0 },
+        "ftd": { "name": "Figma", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "canva",
+      "description": "Canva design platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CANVA", "confidence": 0.9 },
+        "fortios": { "name": "Canva", "confidence": 1.0 },
+        "panos": { "name": "canva", "confidence": 1.0 },
+        "ftd": { "name": "Canva", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "docusign",
+      "description": "DocuSign electronic signature",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DOCUSIGN", "confidence": 0.9 },
+        "fortios": { "name": "DocuSign", "confidence": 1.0 },
+        "panos": { "name": "docusign", "confidence": 1.0 },
+        "ftd": { "name": "DocuSign", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "adobe-creative-cloud",
+      "description": "Adobe Creative Cloud",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ADOBE-CREATIVE-CLOUD", "confidence": 0.9 },
+        "fortios": { "name": "Adobe.Creative.Cloud", "confidence": 1.0 },
+        "panos": { "name": "adobe-creative-cloud", "confidence": 1.0 },
+        "ftd": { "name": "Adobe-Creative-Cloud", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zendesk",
+      "description": "Zendesk customer support",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ZENDESK", "confidence": 0.9 },
+        "fortios": { "name": "Zendesk", "confidence": 1.0 },
+        "panos": { "name": "zendesk", "confidence": 1.0 },
+        "ftd": { "name": "Zendesk", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "intercom",
+      "description": "Intercom customer messaging",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:INTERCOM", "confidence": 0.9 },
+        "fortios": { "name": "Intercom", "confidence": 1.0 },
+        "panos": { "name": "intercom", "confidence": 1.0 },
+        "ftd": { "name": "Intercom", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "hubspot",
+      "description": "HubSpot CRM and marketing",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:HUBSPOT", "confidence": 0.9 },
+        "fortios": { "name": "HubSpot", "confidence": 1.0 },
+        "panos": { "name": "hubspot", "confidence": 1.0 },
+        "ftd": { "name": "HubSpot", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "shopify",
+      "description": "Shopify e-commerce platform",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SHOPIFY", "confidence": 0.9 },
+        "fortios": { "name": "Shopify", "confidence": 1.0 },
+        "panos": { "name": "shopify", "confidence": 1.0 },
+        "ftd": { "name": "Shopify", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "wordpress",
+      "description": "WordPress content management",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443", "80"],
+      "vendors": {
+        "junos": { "name": "junos:WORDPRESS", "confidence": 0.9 },
+        "fortios": { "name": "WordPress", "confidence": 1.0 },
+        "panos": { "name": "wordpress", "confidence": 1.0 },
+        "ftd": { "name": "WordPress", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "wix",
+      "description": "Wix website builder",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:WIX", "confidence": 0.9 },
+        "fortios": { "name": "Wix", "confidence": 1.0 },
+        "panos": { "name": "wix", "confidence": 1.0 },
+        "ftd": { "name": "Wix", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "squarespace",
+      "description": "Squarespace website platform",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SQUARESPACE", "confidence": 0.9 },
+        "fortios": { "name": "Squarespace", "confidence": 1.0 },
+        "panos": { "name": "squarespace", "confidence": 1.0 },
+        "ftd": { "name": "Squarespace", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "cloudflare",
+      "description": "Cloudflare CDN and security",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443", "80"],
+      "vendors": {
+        "junos": { "name": "junos:CLOUDFLARE", "confidence": 0.9 },
+        "fortios": { "name": "Cloudflare", "confidence": 1.0 },
+        "panos": { "name": "cloudflare", "confidence": 1.0 },
+        "ftd": { "name": "Cloudflare", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "akamai",
+      "description": "Akamai CDN",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443", "80"],
+      "vendors": {
+        "junos": { "name": "junos:AKAMAI", "confidence": 0.9 },
+        "fortios": { "name": "Akamai", "confidence": 1.0 },
+        "panos": { "name": "akamai", "confidence": 1.0 },
+        "ftd": { "name": "Akamai", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "fastly",
+      "description": "Fastly CDN",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443", "80"],
+      "vendors": {
+        "junos": { "name": "junos:FASTLY", "confidence": 0.9 },
+        "fortios": { "name": "Fastly", "confidence": 1.0 },
+        "panos": { "name": "fastly", "confidence": 1.0 },
+        "ftd": { "name": "Fastly", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zoom-phone",
+      "description": "Zoom Phone VoIP service",
+      "category": "voip",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ZOOM", "confidence": 0.8 },
+        "fortios": { "name": "Zoom.Phone", "confidence": 1.0 },
+        "panos": { "name": "zoom-phone", "confidence": 1.0 },
+        "ftd": { "name": "Zoom-Phone", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ringcentral",
+      "description": "RingCentral cloud communications",
+      "category": "voip",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:RINGCENTRAL", "confidence": 0.9 },
+        "fortios": { "name": "RingCentral", "confidence": 1.0 },
+        "panos": { "name": "ringcentral", "confidence": 1.0 },
+        "ftd": { "name": "RingCentral", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "8x8",
+      "description": "8x8 cloud communications",
+      "category": "voip",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:8X8", "confidence": 0.9 },
+        "fortios": { "name": "8x8", "confidence": 1.0 },
+        "panos": { "name": "8x8", "confidence": 1.0 },
+        "ftd": { "name": "8x8", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "goto-meeting",
+      "description": "GoToMeeting web conferencing",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:GOTOMEETING", "confidence": 0.9 },
+        "fortios": { "name": "GoToMeeting", "confidence": 1.0 },
+        "panos": { "name": "goto-meeting", "confidence": 1.0 },
+        "ftd": { "name": "GoToMeeting", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "bluejeans",
+      "description": "BlueJeans video conferencing",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:BLUEJEANS", "confidence": 0.9 },
+        "fortios": { "name": "BlueJeans", "confidence": 1.0 },
+        "panos": { "name": "bluejeans", "confidence": 1.0 },
+        "ftd": { "name": "BlueJeans", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "chime",
+      "description": "Amazon Chime communications",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CHIME", "confidence": 0.9 },
+        "fortios": { "name": "Amazon.Chime", "confidence": 1.0 },
+        "panos": { "name": "amazon-chime", "confidence": 1.0 },
+        "ftd": { "name": "Amazon-Chime", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "lifesize",
+      "description": "Lifesize video conferencing",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:LIFESIZE", "confidence": 0.9 },
+        "fortios": { "name": "Lifesize", "confidence": 1.0 },
+        "panos": { "name": "lifesize", "confidence": 1.0 },
+        "ftd": { "name": "Lifesize", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pexip",
+      "description": "Pexip video platform",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PEXIP", "confidence": 0.9 },
+        "fortios": { "name": "Pexip", "confidence": 1.0 },
+        "panos": { "name": "pexip", "confidence": 1.0 },
+        "ftd": { "name": "Pexip", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "whereby",
+      "description": "Whereby video meetings",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:WHEREBY", "confidence": 0.9 },
+        "fortios": { "name": "Whereby", "confidence": 1.0 },
+        "panos": { "name": "whereby", "confidence": 1.0 },
+        "ftd": { "name": "Whereby", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "jitsi",
+      "description": "Jitsi open-source video conferencing",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:JITSI", "confidence": 0.9 },
+        "fortios": { "name": "Jitsi", "confidence": 1.0 },
+        "panos": { "name": "jitsi", "confidence": 1.0 },
+        "ftd": { "name": "Jitsi", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "spotify",
+      "description": "Spotify music streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SPOTIFY", "confidence": 0.9 },
+        "fortios": { "name": "Spotify", "confidence": 1.0 },
+        "panos": { "name": "spotify", "confidence": 1.0 },
+        "ftd": { "name": "Spotify", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "apple-music",
+      "description": "Apple Music streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:APPLE-MUSIC", "confidence": 0.9 },
+        "fortios": { "name": "Apple.Music", "confidence": 1.0 },
+        "panos": { "name": "apple-music", "confidence": 1.0 },
+        "ftd": { "name": "Apple-Music", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pandora",
+      "description": "Pandora music streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PANDORA", "confidence": 0.9 },
+        "fortios": { "name": "Pandora", "confidence": 1.0 },
+        "panos": { "name": "pandora", "confidence": 1.0 },
+        "ftd": { "name": "Pandora", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "soundcloud",
+      "description": "SoundCloud audio streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SOUNDCLOUD", "confidence": 0.9 },
+        "fortios": { "name": "SoundCloud", "confidence": 1.0 },
+        "panos": { "name": "soundcloud", "confidence": 1.0 },
+        "ftd": { "name": "SoundCloud", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "twitch",
+      "description": "Twitch live streaming",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TWITCH", "confidence": 0.9 },
+        "fortios": { "name": "Twitch", "confidence": 1.0 },
+        "panos": { "name": "twitch", "confidence": 1.0 },
+        "ftd": { "name": "Twitch", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "vimeo",
+      "description": "Vimeo video hosting",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:VIMEO", "confidence": 0.9 },
+        "fortios": { "name": "Vimeo", "confidence": 1.0 },
+        "panos": { "name": "vimeo", "confidence": 1.0 },
+        "ftd": { "name": "Vimeo", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "dailymotion",
+      "description": "Dailymotion video sharing",
+      "category": "streaming",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DAILYMOTION", "confidence": 0.9 },
+        "fortios": { "name": "Dailymotion", "confidence": 1.0 },
+        "panos": { "name": "dailymotion", "confidence": 1.0 },
+        "ftd": { "name": "Dailymotion", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tiktok",
+      "description": "TikTok short video platform",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TIKTOK", "confidence": 0.9 },
+        "fortios": { "name": "TikTok", "confidence": 1.0 },
+        "panos": { "name": "tiktok", "confidence": 1.0 },
+        "ftd": { "name": "TikTok", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "snapchat",
+      "description": "Snapchat messaging and social",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SNAPCHAT", "confidence": 0.9 },
+        "fortios": { "name": "Snapchat", "confidence": 1.0 },
+        "panos": { "name": "snapchat", "confidence": 1.0 },
+        "ftd": { "name": "Snapchat", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pinterest",
+      "description": "Pinterest image sharing",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PINTEREST", "confidence": 0.9 },
+        "fortios": { "name": "Pinterest", "confidence": 1.0 },
+        "panos": { "name": "pinterest", "confidence": 1.0 },
+        "ftd": { "name": "Pinterest", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "reddit",
+      "description": "Reddit social news aggregation",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:REDDIT", "confidence": 0.9 },
+        "fortios": { "name": "Reddit", "confidence": 1.0 },
+        "panos": { "name": "reddit", "confidence": 1.0 },
+        "ftd": { "name": "Reddit", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "quora",
+      "description": "Quora question and answer",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:QUORA", "confidence": 0.9 },
+        "fortios": { "name": "Quora", "confidence": 1.0 },
+        "panos": { "name": "quora", "confidence": 1.0 },
+        "ftd": { "name": "Quora", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "medium",
+      "description": "Medium publishing platform",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:MEDIUM", "confidence": 0.9 },
+        "fortios": { "name": "Medium", "confidence": 1.0 },
+        "panos": { "name": "medium", "confidence": 1.0 },
+        "ftd": { "name": "Medium", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "imgur",
+      "description": "Imgur image hosting",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:IMGUR", "confidence": 0.9 },
+        "fortios": { "name": "Imgur", "confidence": 1.0 },
+        "panos": { "name": "imgur", "confidence": 1.0 },
+        "ftd": { "name": "Imgur", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "flickr",
+      "description": "Flickr photo sharing",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:FLICKR", "confidence": 0.9 },
+        "fortios": { "name": "Flickr", "confidence": 1.0 },
+        "panos": { "name": "flickr", "confidence": 1.0 },
+        "ftd": { "name": "Flickr", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tumblr",
+      "description": "Tumblr microblogging",
+      "category": "social",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TUMBLR", "confidence": 0.9 },
+        "fortios": { "name": "Tumblr", "confidence": 1.0 },
+        "panos": { "name": "tumblr", "confidence": 1.0 },
+        "ftd": { "name": "Tumblr", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ebay",
+      "description": "eBay online marketplace",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:EBAY", "confidence": 0.9 },
+        "fortios": { "name": "eBay", "confidence": 1.0 },
+        "panos": { "name": "ebay", "confidence": 1.0 },
+        "ftd": { "name": "eBay", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "amazon",
+      "description": "Amazon e-commerce",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:AMAZON", "confidence": 0.9 },
+        "fortios": { "name": "Amazon", "confidence": 1.0 },
+        "panos": { "name": "amazon", "confidence": 1.0 },
+        "ftd": { "name": "Amazon", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "paypal",
+      "description": "PayPal payment processing",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PAYPAL", "confidence": 0.9 },
+        "fortios": { "name": "PayPal", "confidence": 1.0 },
+        "panos": { "name": "paypal", "confidence": 1.0 },
+        "ftd": { "name": "PayPal", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "stripe",
+      "description": "Stripe payment processing",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:STRIPE", "confidence": 0.9 },
+        "fortios": { "name": "Stripe", "confidence": 1.0 },
+        "panos": { "name": "stripe", "confidence": 1.0 },
+        "ftd": { "name": "Stripe", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "square",
+      "description": "Square payment services",
+      "category": "web",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SQUARE", "confidence": 0.9 },
+        "fortios": { "name": "Square", "confidence": 1.0 },
+        "panos": { "name": "square", "confidence": 1.0 },
+        "ftd": { "name": "Square", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zoom-webinar",
+      "description": "Zoom Webinar platform",
+      "category": "collaboration",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ZOOM", "confidence": 0.8 },
+        "fortios": { "name": "Zoom.Webinar", "confidence": 1.0 },
+        "panos": { "name": "zoom", "confidence": 0.9 },
+        "ftd": { "name": "Zoom", "confidence": 0.9 }
+      }
+    },
+    {
+      "canonical": "okta",
+      "description": "Okta identity and access management",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:OKTA", "confidence": 0.9 },
+        "fortios": { "name": "Okta", "confidence": 1.0 },
+        "panos": { "name": "okta", "confidence": 1.0 },
+        "ftd": { "name": "Okta", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "duo",
+      "description": "Duo Security multi-factor authentication",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DUO", "confidence": 0.9 },
+        "fortios": { "name": "Duo", "confidence": 1.0 },
+        "panos": { "name": "duo", "confidence": 1.0 },
+        "ftd": { "name": "Duo", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "onelogin",
+      "description": "OneLogin identity management",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ONELOGIN", "confidence": 0.9 },
+        "fortios": { "name": "OneLogin", "confidence": 1.0 },
+        "panos": { "name": "onelogin", "confidence": 1.0 },
+        "ftd": { "name": "OneLogin", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ping-identity",
+      "description": "Ping Identity SSO",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PING-IDENTITY", "confidence": 0.9 },
+        "fortios": { "name": "Ping.Identity", "confidence": 1.0 },
+        "panos": { "name": "ping-identity", "confidence": 1.0 },
+        "ftd": { "name": "Ping-Identity", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "auth0",
+      "description": "Auth0 authentication platform",
+      "category": "auth",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:AUTH0", "confidence": 0.9 },
+        "fortios": { "name": "Auth0", "confidence": 1.0 },
+        "panos": { "name": "auth0", "confidence": 1.0 },
+        "ftd": { "name": "Auth0", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "lastpass",
+      "description": "LastPass password manager",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:LASTPASS", "confidence": 0.9 },
+        "fortios": { "name": "LastPass", "confidence": 1.0 },
+        "panos": { "name": "lastpass", "confidence": 1.0 },
+        "ftd": { "name": "LastPass", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "1password",
+      "description": "1Password password manager",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:1PASSWORD", "confidence": 0.9 },
+        "fortios": { "name": "1Password", "confidence": 1.0 },
+        "panos": { "name": "1password", "confidence": 1.0 },
+        "ftd": { "name": "1Password", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "bitwarden",
+      "description": "Bitwarden password manager",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:BITWARDEN", "confidence": 0.9 },
+        "fortios": { "name": "Bitwarden", "confidence": 1.0 },
+        "panos": { "name": "bitwarden", "confidence": 1.0 },
+        "ftd": { "name": "Bitwarden", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "dashlane",
+      "description": "Dashlane password manager",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DASHLANE", "confidence": 0.9 },
+        "fortios": { "name": "Dashlane", "confidence": 1.0 },
+        "panos": { "name": "dashlane", "confidence": 1.0 },
+        "ftd": { "name": "Dashlane", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "crowdstrike",
+      "description": "CrowdStrike endpoint protection",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CROWDSTRIKE", "confidence": 0.9 },
+        "fortios": { "name": "CrowdStrike", "confidence": 1.0 },
+        "panos": { "name": "crowdstrike", "confidence": 1.0 },
+        "ftd": { "name": "CrowdStrike", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "carbon-black",
+      "description": "VMware Carbon Black endpoint security",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CARBON-BLACK", "confidence": 0.9 },
+        "fortios": { "name": "Carbon.Black", "confidence": 1.0 },
+        "panos": { "name": "carbon-black", "confidence": 1.0 },
+        "ftd": { "name": "Carbon-Black", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "sentinelone",
+      "description": "SentinelOne endpoint protection",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SENTINELONE", "confidence": 0.9 },
+        "fortios": { "name": "SentinelOne", "confidence": 1.0 },
+        "panos": { "name": "sentinelone", "confidence": 1.0 },
+        "ftd": { "name": "SentinelOne", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "palo-alto-networks",
+      "description": "Palo Alto Networks security services",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PALO-ALTO-NETWORKS", "confidence": 0.9 },
+        "fortios": { "name": "Palo.Alto.Networks", "confidence": 1.0 },
+        "panos": { "name": "palo-alto-networks-wildfire", "confidence": 0.9 },
+        "ftd": { "name": "Palo-Alto-Networks", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zscaler",
+      "description": "Zscaler cloud security",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ZSCALER", "confidence": 0.9 },
+        "fortios": { "name": "Zscaler", "confidence": 1.0 },
+        "panos": { "name": "zscaler", "confidence": 1.0 },
+        "ftd": { "name": "Zscaler", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "proofpoint",
+      "description": "Proofpoint email security",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PROOFPOINT", "confidence": 0.9 },
+        "fortios": { "name": "Proofpoint", "confidence": 1.0 },
+        "panos": { "name": "proofpoint", "confidence": 1.0 },
+        "ftd": { "name": "Proofpoint", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mimecast",
+      "description": "Mimecast email security",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:MIMECAST", "confidence": 0.9 },
+        "fortios": { "name": "Mimecast", "confidence": 1.0 },
+        "panos": { "name": "mimecast", "confidence": 1.0 },
+        "ftd": { "name": "Mimecast", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "symantec-endpoint",
+      "description": "Symantec Endpoint Protection",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SYMANTEC", "confidence": 0.9 },
+        "fortios": { "name": "Symantec.Endpoint", "confidence": 1.0 },
+        "panos": { "name": "symantec-endpoint-protection", "confidence": 1.0 },
+        "ftd": { "name": "Symantec-Endpoint-Protection", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mcafee-endpoint",
+      "description": "McAfee Endpoint Security",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:MCAFEE", "confidence": 0.9 },
+        "fortios": { "name": "McAfee.Endpoint", "confidence": 1.0 },
+        "panos": { "name": "mcafee-epo", "confidence": 0.9 },
+        "ftd": { "name": "McAfee-Endpoint", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "trend-micro",
+      "description": "Trend Micro security services",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TREND-MICRO", "confidence": 0.9 },
+        "fortios": { "name": "Trend.Micro", "confidence": 1.0 },
+        "panos": { "name": "trend-micro", "confidence": 1.0 },
+        "ftd": { "name": "Trend-Micro", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "sophos",
+      "description": "Sophos security products",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SOPHOS", "confidence": 0.9 },
+        "fortios": { "name": "Sophos", "confidence": 1.0 },
+        "panos": { "name": "sophos", "confidence": 1.0 },
+        "ftd": { "name": "Sophos", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "checkpoint",
+      "description": "Check Point security products",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CHECKPOINT", "confidence": 0.9 },
+        "fortios": { "name": "Check.Point", "confidence": 1.0 },
+        "panos": { "name": "checkpoint", "confidence": 1.0 },
+        "ftd": { "name": "Check-Point", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "fortinet",
+      "description": "Fortinet security products",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:FORTINET", "confidence": 0.9 },
+        "fortios": { "name": "Fortinet", "confidence": 1.0 },
+        "panos": { "name": "fortinet", "confidence": 1.0 },
+        "ftd": { "name": "Fortinet", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "cisco-umbrella",
+      "description": "Cisco Umbrella DNS security",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CISCO-UMBRELLA", "confidence": 0.9 },
+        "fortios": { "name": "Cisco.Umbrella", "confidence": 1.0 },
+        "panos": { "name": "cisco-umbrella", "confidence": 1.0 },
+        "ftd": { "name": "Cisco-Umbrella", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "cloudflare-warp",
+      "description": "Cloudflare WARP VPN",
+      "category": "tunnel",
+      "protocols": ["UDP"],
+      "ports": ["2408"],
+      "vendors": {
+        "junos": { "name": "junos:CLOUDFLARE-WARP", "confidence": 0.9 },
+        "fortios": { "name": "Cloudflare.WARP", "confidence": 1.0 },
+        "panos": { "name": "cloudflare-warp", "confidence": 1.0 },
+        "ftd": { "name": "Cloudflare-WARP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tailscale",
+      "description": "Tailscale mesh VPN",
+      "category": "tunnel",
+      "protocols": ["UDP"],
+      "ports": ["41641"],
+      "vendors": {
+        "junos": { "name": "junos:TAILSCALE", "confidence": 0.9 },
+        "fortios": { "name": "Tailscale", "confidence": 1.0 },
+        "panos": { "name": "tailscale", "confidence": 1.0 },
+        "ftd": { "name": "Tailscale", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zerotier",
+      "description": "ZeroTier software-defined networking",
+      "category": "tunnel",
+      "protocols": ["UDP"],
+      "ports": ["9993"],
+      "vendors": {
+        "junos": { "name": "junos:ZEROTIER", "confidence": 0.9 },
+        "fortios": { "name": "ZeroTier", "confidence": 1.0 },
+        "panos": { "name": "zerotier", "confidence": 1.0 },
+        "ftd": { "name": "ZeroTier", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "nordvpn",
+      "description": "NordVPN service",
+      "category": "tunnel",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443", "1194"],
+      "vendors": {
+        "junos": { "name": "junos:NORDVPN", "confidence": 0.9 },
+        "fortios": { "name": "NordVPN", "confidence": 1.0 },
+        "panos": { "name": "nordvpn", "confidence": 1.0 },
+        "ftd": { "name": "NordVPN", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "expressvpn",
+      "description": "ExpressVPN service",
+      "category": "tunnel",
+      "protocols": ["TCP", "UDP"],
+      "ports": ["443", "1194"],
+      "vendors": {
+        "junos": { "name": "junos:EXPRESSVPN", "confidence": 0.9 },
+        "fortios": { "name": "ExpressVPN", "confidence": 1.0 },
+        "panos": { "name": "expressvpn", "confidence": 1.0 },
+        "ftd": { "name": "ExpressVPN", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "datadog",
+      "description": "Datadog monitoring platform",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DATADOG", "confidence": 0.9 },
+        "fortios": { "name": "Datadog", "confidence": 1.0 },
+        "panos": { "name": "datadog", "confidence": 1.0 },
+        "ftd": { "name": "Datadog", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "new-relic",
+      "description": "New Relic application monitoring",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:NEW-RELIC", "confidence": 0.9 },
+        "fortios": { "name": "New.Relic", "confidence": 1.0 },
+        "panos": { "name": "new-relic", "confidence": 1.0 },
+        "ftd": { "name": "New-Relic", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "pagerduty",
+      "description": "PagerDuty incident response",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:PAGERDUTY", "confidence": 0.9 },
+        "fortios": { "name": "PagerDuty", "confidence": 1.0 },
+        "panos": { "name": "pagerduty", "confidence": 1.0 },
+        "ftd": { "name": "PagerDuty", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "opsgenie",
+      "description": "Opsgenie incident management",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:OPSGENIE", "confidence": 0.9 },
+        "fortios": { "name": "Opsgenie", "confidence": 1.0 },
+        "panos": { "name": "opsgenie", "confidence": 1.0 },
+        "ftd": { "name": "Opsgenie", "confidence": 1.0 }
+        }
+    },
+    {
+      "canonical": "statuspage",
+      "description": "Statuspage incident communication",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:STATUSPAGE", "confidence": 0.9 },
+        "fortios": { "name": "Statuspage", "confidence": 1.0 },
+        "panos": { "name": "statuspage", "confidence": 1.0 },
+        "ftd": { "name": "Statuspage", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "nagios",
+      "description": "Nagios monitoring system",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["80", "443"],
+      "vendors": {
+        "junos": { "name": "junos:NAGIOS", "confidence": 0.9 },
+        "fortios": { "name": "Nagios", "confidence": 1.0 },
+        "panos": { "name": "nagios", "confidence": 1.0 },
+        "ftd": { "name": "Nagios", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "zabbix",
+      "description": "Zabbix monitoring solution",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["10050", "10051"],
+      "vendors": {
+        "junos": { "name": "junos:ZABBIX", "confidence": 0.9 },
+        "fortios": { "name": "Zabbix", "confidence": 1.0 },
+        "panos": { "name": "zabbix", "confidence": 1.0 },
+        "ftd": { "name": "Zabbix", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "icinga",
+      "description": "Icinga monitoring platform",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["5665"],
+      "vendors": {
+        "junos": { "name": "junos:ICINGA", "confidence": 0.9 },
+        "fortios": { "name": "Icinga", "confidence": 1.0 },
+        "panos": { "name": "icinga", "confidence": 1.0 },
+        "ftd": { "name": "Icinga", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "ansible",
+      "description": "Ansible automation platform",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["22"],
+      "vendors": {
+        "junos": { "name": "junos:ANSIBLE", "confidence": 0.9 },
+        "fortios": { "name": "Ansible", "confidence": 1.0 },
+        "panos": { "name": "ansible", "confidence": 1.0 },
+        "ftd": { "name": "Ansible", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "puppet",
+      "description": "Puppet configuration management",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["8140"],
+      "vendors": {
+        "junos": { "name": "junos:PUPPET", "confidence": 0.9 },
+        "fortios": { "name": "Puppet", "confidence": 1.0 },
+        "panos": { "name": "puppet", "confidence": 1.0 },
+        "ftd": { "name": "Puppet", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "chef",
+      "description": "Chef configuration management",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CHEF", "confidence": 0.9 },
+        "fortios": { "name": "Chef", "confidence": 1.0 },
+        "panos": { "name": "chef", "confidence": 1.0 },
+        "ftd": { "name": "Chef", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "terraform",
+      "description": "Terraform infrastructure as code",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TERRAFORM", "confidence": 0.9 },
+        "fortios": { "name": "Terraform", "confidence": 1.0 },
+        "panos": { "name": "terraform", "confidence": 1.0 },
+        "ftd": { "name": "Terraform", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "vault",
+      "description": "HashiCorp Vault secrets management",
+      "category": "security",
+      "protocols": ["TCP"],
+      "ports": ["8200"],
+      "vendors": {
+        "junos": { "name": "junos:VAULT", "confidence": 0.9 },
+        "fortios": { "name": "Vault", "confidence": 1.0 },
+        "panos": { "name": "vault", "confidence": 1.0 },
+        "ftd": { "name": "Vault", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "consul",
+      "description": "HashiCorp Consul service mesh",
+      "category": "network-mgmt",
+      "protocols": ["TCP"],
+      "ports": ["8500", "8600"],
+      "vendors": {
+        "junos": { "name": "junos:CONSUL", "confidence": 0.9 },
+        "fortios": { "name": "Consul", "confidence": 1.0 },
+        "panos": { "name": "consul", "confidence": 1.0 },
+        "ftd": { "name": "Consul", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "etcd",
+      "description": "etcd distributed key-value store",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["2379", "2380"],
+      "vendors": {
+        "junos": { "name": "junos:ETCD", "confidence": 0.9 },
+        "fortios": { "name": "etcd", "confidence": 1.0 },
+        "panos": { "name": "etcd", "confidence": 1.0 },
+        "ftd": { "name": "etcd", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "memcached",
+      "description": "Memcached distributed caching",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["11211"],
+      "vendors": {
+        "junos": { "name": "junos:MEMCACHED", "confidence": 1.0 },
+        "fortios": { "name": "Memcached", "confidence": 1.0 },
+        "panos": { "name": "memcached", "confidence": 1.0 },
+        "ftd": { "name": "Memcached", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "cassandra",
+      "description": "Apache Cassandra NoSQL database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["9042"],
+      "vendors": {
+        "junos": { "name": "junos:CASSANDRA", "confidence": 0.9 },
+        "fortios": { "name": "Cassandra", "confidence": 1.0 },
+        "panos": { "name": "cassandra", "confidence": 1.0 },
+        "ftd": { "name": "Cassandra", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "couchdb",
+      "description": "Apache CouchDB document database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["5984"],
+      "vendors": {
+        "junos": { "name": "junos:COUCHDB", "confidence": 0.9 },
+        "fortios": { "name": "CouchDB", "confidence": 1.0 },
+        "panos": { "name": "couchdb", "confidence": 1.0 },
+        "ftd": { "name": "CouchDB", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "influxdb",
+      "description": "InfluxDB time-series database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["8086"],
+      "vendors": {
+        "junos": { "name": "junos:INFLUXDB", "confidence": 0.9 },
+        "fortios": { "name": "InfluxDB", "confidence": 1.0 },
+        "panos": { "name": "influxdb", "confidence": 1.0 },
+        "ftd": { "name": "InfluxDB", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "neo4j",
+      "description": "Neo4j graph database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["7474", "7687"],
+      "vendors": {
+        "junos": { "name": "junos:NEO4J", "confidence": 0.9 },
+        "fortios": { "name": "Neo4j", "confidence": 1.0 },
+        "panos": { "name": "neo4j", "confidence": 1.0 },
+        "ftd": { "name": "Neo4j", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "mariadb",
+      "description": "MariaDB database server",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["3306"],
+      "vendors": {
+        "junos": { "name": "junos:MYSQL", "confidence": 0.9 },
+        "fortios": { "name": "MariaDB", "confidence": 1.0 },
+        "panos": { "name": "mysql", "confidence": 0.9 },
+        "ftd": { "name": "MariaDB", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "cockroachdb",
+      "description": "CockroachDB distributed SQL",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["26257"],
+      "vendors": {
+        "junos": { "name": "junos:COCKROACHDB", "confidence": 0.9 },
+        "fortios": { "name": "CockroachDB", "confidence": 1.0 },
+        "panos": { "name": "cockroachdb", "confidence": 1.0 },
+        "ftd": { "name": "CockroachDB", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "clickhouse",
+      "description": "ClickHouse analytics database",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["9000", "8123"],
+      "vendors": {
+        "junos": { "name": "junos:CLICKHOUSE", "confidence": 0.9 },
+        "fortios": { "name": "ClickHouse", "confidence": 1.0 },
+        "panos": { "name": "clickhouse", "confidence": 1.0 },
+        "ftd": { "name": "ClickHouse", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "presto",
+      "description": "Presto distributed SQL query engine",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["8080"],
+      "vendors": {
+        "junos": { "name": "junos:PRESTO", "confidence": 0.9 },
+        "fortios": { "name": "Presto", "confidence": 1.0 },
+        "panos": { "name": "presto", "confidence": 1.0 },
+        "ftd": { "name": "Presto", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "apache-spark",
+      "description": "Apache Spark analytics engine",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["7077", "8080"],
+      "vendors": {
+        "junos": { "name": "junos:APACHE-SPARK", "confidence": 0.9 },
+        "fortios": { "name": "Apache.Spark", "confidence": 1.0 },
+        "panos": { "name": "apache-spark", "confidence": 1.0 },
+        "ftd": { "name": "Apache-Spark", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "hadoop",
+      "description": "Apache Hadoop distributed processing",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["9000", "50070"],
+      "vendors": {
+        "junos": { "name": "junos:HADOOP", "confidence": 0.9 },
+        "fortios": { "name": "Hadoop", "confidence": 1.0 },
+        "panos": { "name": "hadoop", "confidence": 1.0 },
+        "ftd": { "name": "Hadoop", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "apache-hive",
+      "description": "Apache Hive data warehouse",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["10000"],
+      "vendors": {
+        "junos": { "name": "junos:APACHE-HIVE", "confidence": 0.9 },
+        "fortios": { "name": "Apache.Hive", "confidence": 1.0 },
+        "panos": { "name": "apache-hive", "confidence": 1.0 },
+        "ftd": { "name": "Apache-Hive", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "snowflake",
+      "description": "Snowflake data warehouse",
+      "category": "database",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:SNOWFLAKE", "confidence": 0.9 },
+        "fortios": { "name": "Snowflake", "confidence": 1.0 },
+        "panos": { "name": "snowflake", "confidence": 1.0 },
+        "ftd": { "name": "Snowflake", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "databricks",
+      "description": "Databricks analytics platform",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:DATABRICKS", "confidence": 0.9 },
+        "fortios": { "name": "Databricks", "confidence": 1.0 },
+        "panos": { "name": "databricks", "confidence": 1.0 },
+        "ftd": { "name": "Databricks", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "tableau",
+      "description": "Tableau business intelligence",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:TABLEAU", "confidence": 0.9 },
+        "fortios": { "name": "Tableau", "confidence": 1.0 },
+        "panos": { "name": "tableau", "confidence": 1.0 },
+        "ftd": { "name": "Tableau", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "power-bi",
+      "description": "Microsoft Power BI analytics",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:POWER-BI", "confidence": 0.9 },
+        "fortios": { "name": "Power.BI", "confidence": 1.0 },
+        "panos": { "name": "power-bi", "confidence": 1.0 },
+        "ftd": { "name": "Power-BI", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "looker",
+      "description": "Looker business intelligence",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:LOOKER", "confidence": 0.9 },
+        "fortios": { "name": "Looker", "confidence": 1.0 },
+        "panos": { "name": "looker", "confidence": 1.0 },
+        "ftd": { "name": "Looker", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "qlik",
+      "description": "Qlik analytics platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:QLIK", "confidence": 0.9 },
+        "fortios": { "name": "Qlik", "confidence": 1.0 },
+        "panos": { "name": "qlik", "confidence": 1.0 },
+        "ftd": { "name": "Qlik", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "alteryx",
+      "description": "Alteryx data analytics",
+      "category": "other",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ALTERYX", "confidence": 0.9 },
+        "fortios": { "name": "Alteryx", "confidence": 1.0 },
+        "panos": { "name": "alteryx", "confidence": 1.0 },
+        "ftd": { "name": "Alteryx", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "sap",
+      "description": "SAP enterprise resource planning",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["3200", "3300"],
+      "vendors": {
+        "junos": { "name": "junos:SAP", "confidence": 0.9 },
+        "fortios": { "name": "SAP", "confidence": 1.0 },
+        "panos": { "name": "sap", "confidence": 1.0 },
+        "ftd": { "name": "SAP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "oracle-ebs",
+      "description": "Oracle E-Business Suite",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ORACLE-EBS", "confidence": 0.9 },
+        "fortios": { "name": "Oracle.EBS", "confidence": 1.0 },
+        "panos": { "name": "oracle-ebs", "confidence": 1.0 },
+        "ftd": { "name": "Oracle-EBS", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "workday",
+      "description": "Workday HR and finance platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:WORKDAY", "confidence": 0.9 },
+        "fortios": { "name": "Workday", "confidence": 1.0 },
+        "panos": { "name": "workday", "confidence": 1.0 },
+        "ftd": { "name": "Workday", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "concur",
+      "description": "SAP Concur expense management",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:CONCUR", "confidence": 0.9 },
+        "fortios": { "name": "Concur", "confidence": 1.0 },
+        "panos": { "name": "concur", "confidence": 1.0 },
+        "ftd": { "name": "Concur", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "adp",
+      "description": "ADP payroll and HR services",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:ADP", "confidence": 0.9 },
+        "fortios": { "name": "ADP", "confidence": 1.0 },
+        "panos": { "name": "adp", "confidence": 1.0 },
+        "ftd": { "name": "ADP", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "quickbooks",
+      "description": "QuickBooks accounting software",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:QUICKBOOKS", "confidence": 0.9 },
+        "fortios": { "name": "QuickBooks", "confidence": 1.0 },
+        "panos": { "name": "quickbooks", "confidence": 1.0 },
+        "ftd": { "name": "QuickBooks", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "xero",
+      "description": "Xero accounting platform",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:XERO", "confidence": 0.9 },
+        "fortios": { "name": "Xero", "confidence": 1.0 },
+        "panos": { "name": "xero", "confidence": 1.0 },
+        "ftd": { "name": "Xero", "confidence": 1.0 }
+      }
+    },
+    {
+      "canonical": "netsuite",
+      "description": "Oracle NetSuite ERP",
+      "category": "collaboration",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "junos": { "name": "junos:NETSUITE", "confidence": 0.9 },
+        "fortios": { "name": "NetSuite", "confidence": 1.0 },
+        "panos": { "name": "netsuite", "confidence": 1.0 },
+        "ftd": { "name": "NetSuite", "confidence": 1.0 }
+      }
+    }
+  ]
+}

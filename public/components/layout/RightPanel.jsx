@@ -49,6 +49,11 @@ export default function RightPanel() {
     [parseWarnings, convertWarnings],
   );
 
+  const analysisFindings = activeConfig?._analysisFindings || null;
+  const analysisTotalCount = analysisFindings
+    ? analysisFindings.reduce((s, f) => s + f.count, 0)
+    : 0;
+
   const isTranslated = platformView === 'srx' && !!srxTranslatedPolicies;
 
   const handleUpdateRule = useCallback((updatedRule) => {
@@ -120,6 +125,33 @@ export default function RightPanel() {
           isTranslating={isTranslating}
           translationProgress={translationProgress}
         />
+        {analysisFindings && analysisTotalCount > 0 && editTab === 'rules' && (
+          <div
+            style={{
+              padding: '10px 12px', margin: '8px 0', borderRadius: 6,
+              background: 'var(--surface-2)', cursor: 'pointer',
+              border: '1px solid var(--border)',
+            }}
+            onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'analysis' })}
+            title="View full analysis"
+          >
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Analysis Findings</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {analysisFindings.filter(f => f.count > 0).map(f => {
+                const isWarn = f.id === 'shadowed' || f.id === 'permissive';
+                return (
+                  <span key={f.id} style={{
+                    fontSize: 11, padding: '2px 6px', borderRadius: 4,
+                    background: isWarn ? 'var(--warning-bg, rgba(255,170,0,0.1))' : 'var(--surface-3)',
+                    color: isWarn ? 'var(--warning)' : 'var(--text-secondary)',
+                  }}>
+                    {f.id.replace(/_/g, ' ')}: {f.count}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
-import { useUIContext } from '../../contexts/UIContext.jsx';
+import { useUIContext, isDeterministicMode } from '../../contexts/UIContext.jsx';
 
 /**
  * TopBar — Top navigation bar.
@@ -215,17 +215,34 @@ export default function TopBar() {
           </svg>
         </button>
 
-        {/* Settings */}
-        <button
-          className="settings-btn"
-          onClick={() => showModal('settings')}
-          title="Settings"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-          </svg>
-        </button>
+        {isDeterministicMode(ui.llmRiskAcceptance) && (
+          <button
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+              background: 'var(--success)', color: '#fff',
+              border: 'none', cursor: 'pointer',
+            }}
+            title="Click to change AI mode"
+            onClick={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: null })}
+          >
+            No AI
+          </button>
+        )}
+
+        {/* Settings — hidden in deterministic mode (no LLM to configure) */}
+        {!isDeterministicMode(ui.llmRiskAcceptance) && (
+          <button
+            className="settings-btn"
+            onClick={() => showModal('settings')}
+            title="Settings"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );

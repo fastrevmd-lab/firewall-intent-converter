@@ -1,4 +1,5 @@
 import { safeJsonParse } from './safe-json.js';
+import { mapVendorApp, isLoaded as appMappingsLoaded } from '../../src/utils/app-mappings.js';
 
 /**
  * Browser-Side LLM API Client
@@ -1164,6 +1165,27 @@ Flag features requiring a higher subscription than ${srxLicense} in _translation
       })))}\n\nFor each security rule whose traffic would match a decryption rule with action="decrypt", set _srx_decrypt: true and note the matching decryption rule in _translation_notes. For "no-decrypt" rules, note that traffic is explicitly excluded from decryption.`
     : '';
 
+  // Build app mapping hints for LLM (deterministic starting points reduce hallucination)
+  let appMappingHints = '';
+  if (appMappingsLoaded() && sourceVendor && sourceVendor !== 'srx_healthcheck') {
+    const uniqueApps = new Set();
+    for (const p of policies) {
+      for (const app of (p.applications || [])) {
+        if (app && app !== 'any') uniqueApps.add(app);
+      }
+    }
+    const hints = [];
+    for (const app of uniqueApps) {
+      const result = mapVendorApp(app, sourceVendor);
+      if (result && result.confidence >= 0.7) {
+        hints.push(`${app} → ${result.junosApp} (${result.confidence})`);
+      }
+    }
+    if (hints.length > 0) {
+      appMappingHints = `\n\nApp mapping hints (vendor → SRX/Junos equivalent, confidence):\n${hints.join('\n')}\nUse these as a starting point for application translation. Override if you know a better mapping.`;
+    }
+  }
+
   const isHealthCheck = (sourceVendor === 'srx_healthcheck');
 
   const licenseUserNote = srxLicense
@@ -1184,7 +1206,7 @@ CRITICAL: Return ONLY a valid JSON array. No markdown fences, no explanation, no
 
 Source vendor: ${vendor}
 Target platform: Juniper SRX ${targetModel || ''}${licenseUserNote}
-Available zones: ${zones.join(', ')}${addressSummary}${groupSummary}${decryptionContext}
+Available zones: ${zones.join(', ')}${addressSummary}${groupSummary}${decryptionContext}${appMappingHints}
 
 Source policies (JSON):
 ${policyJson}

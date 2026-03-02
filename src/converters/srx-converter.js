@@ -35,6 +35,41 @@ function natAnyAddress(rule) {
   return allAddrs.some(a => a && typeof a === 'string' && a.includes(':')) ? '::/0' : '0.0.0.0/0';
 }
 
+/**
+ * Generates a descriptive rule name from policy content when the original
+ * name is generic (e.g., "Rule-1", "policy_23") or missing.
+ * Pattern: {action}-{srcZone}-to-{dstZone}-{primaryApp}-{index}
+ */
+function generateDescriptiveName(policy, pIdx) {
+  const name = policy.name || '';
+
+  // Only generate if name looks generic
+  const isGeneric = !name ||
+    /^(rule|policy|permit|deny)[-_]?\d+$/i.test(name) ||
+    /^\d+$/.test(name);
+
+  if (!isGeneric) return sanitizeJunosName(name);
+
+  const action = (policy.action === 'allow' || policy.action === 'permit') ? 'permit' : 'deny';
+  const srcZ = (policy.src_zones?.[0] || 'any').toLowerCase();
+  const dstZ = (policy.dst_zones?.[0] || 'any').toLowerCase();
+
+  let appHint = '';
+  if (policy.applications?.length > 0 && policy.applications[0] !== 'any') {
+    appHint = policy.applications[0].toLowerCase().replace(/^junos-/, '');
+  } else if (policy.services?.length > 0 && policy.services[0] !== 'any') {
+    appHint = policy.services[0].toLowerCase();
+  }
+
+  const parts = [action, srcZ, 'to', dstZ];
+  if (appHint) parts.push(appHint);
+
+  let generated = parts.join('-');
+  generated = sanitizeJunosName(generated);
+
+  return `${generated}-${pIdx + 1}`;
+}
+
 // ---------------------------------------------------------------------------
 // Main Converter Entry Point
 // ---------------------------------------------------------------------------
@@ -1058,7 +1093,7 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 
   for (let pIdx = 0; pIdx < policies.length; pIdx++) {
     const policy = policies[pIdx];
-    const policyName = sanitizeJunosName(policy.name);
+    const policyName = generateDescriptiveName(policy, pIdx);
 
     // Emit group comment when entering a new group (JUNOS preserves /* */ comments)
     const ruleGroup = groupByIndex[pIdx] || policy._group || null;
@@ -1227,7 +1262,7 @@ function resolveApplications(applications, services, warnings, policyName, appGr
       resolved.push(appName);
       return;
     }
-    const junosApp = mapAppToJunos(appName);
+    const junosApp = mapAppToJunos(appName, sourceVendor);
     if (junosApp) {
       resolved.push(junosApp);
     } else {
@@ -1275,7 +1310,7 @@ function resolveApplications(applications, services, warnings, policyName, appGr
         continue;
       }
       // Try mapping service name (catches FortiGate "HTTP", "HTTPS", etc.)
-      const junosApp = mapAppToJunos(svc);
+      const junosApp = mapAppToJunos(svc, sourceVendor);
       if (junosApp) {
         resolved.push(junosApp);
       } else {

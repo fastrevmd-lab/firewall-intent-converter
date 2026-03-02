@@ -452,13 +452,29 @@ const APP_MAP = {
   'lpd': 'junos-lpr',
 };
 
-export function mapAppToJunos(appName) {
+export function mapAppToJunos(appName, sourceVendor = '') {
   if (!appName) return null;
-  // Try exact match first (preserves case for FortiGate uppercase names)
+
+  // Try enhanced app-mappings.json first (if loaded, confidence >= 0.8)
+  if (sourceVendor) {
+    try {
+      const result = _mapVendorAppFn?.(appName, sourceVendor);
+      if (result && result.confidence >= 0.8) {
+        return result.junosApp;
+      }
+    } catch (_) { /* app mappings not loaded yet, fall through */ }
+  }
+
+  // Fall back to built-in APP_MAP (synchronous, always available)
   if (APP_MAP[appName]) return APP_MAP[appName];
-  // Then try lowercase normalized
   const normalized = appName.toLowerCase().trim();
   return APP_MAP[normalized] || null;
+}
+
+// Injected at runtime by engine.js after loadAppMappings() completes
+let _mapVendorAppFn = null;
+export function setMapVendorApp(fn) {
+  _mapVendorAppFn = fn;
 }
 
 // Backward-compatible alias
