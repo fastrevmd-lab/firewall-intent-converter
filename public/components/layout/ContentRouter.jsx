@@ -314,7 +314,19 @@ export default function ContentRouter({
           >
             {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
           </button>
-          <button className="btn btn-secondary btn-sm push-btn" onClick={() => uiDispatch({ type: 'SHOW_MODAL', name: 'settings', value: 'mcp' })} title="Push config to SRX via MCP">Push MCP</button>
+          <button
+            className="btn btn-secondary btn-sm push-btn"
+            onClick={() => {
+              const bridgeSettings = localStorage.getItem('pyez-bridge-settings') || localStorage.getItem('mcp-settings');
+              if (bridgeSettings) {
+                uiDispatch({ type: 'SHOW_MODAL', name: 'pushModal' });
+              } else {
+                uiDispatch({ type: 'SHOW_MODAL', name: 'settings', value: 'mcp' });
+              }
+            }}
+            title="Push config to SRX device via PyEZ"
+            disabled={!conv.srxOutput}
+          >Push to SRX</button>
           <button className="btn btn-secondary btn-sm push-btn" onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'showPushToast', value: 'SDC' })}>Push SDC</button>
           <button className="btn btn-secondary btn-sm push-btn" onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'showPushToast', value: 'Mist' })}>Push Mist</button>
         </div>

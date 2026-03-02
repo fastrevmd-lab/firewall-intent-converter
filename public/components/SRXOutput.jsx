@@ -10,8 +10,10 @@
  *   - Conversion summary stats
  */
 import React, { useState, useCallback } from 'react';
+import { useUIContext } from '../contexts/UIContext.jsx';
 
 export default function SRXOutput({ output, format, summary, isParsed, sanitizationTable }) {
+  const { dispatch: uiDispatch } = useUIContext();
   const [copied, setCopied] = useState(false);
 
   /** Get the raw output text based on format */
@@ -123,6 +125,23 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
         </button>
         <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
           {copied ? 'Copied!' : 'Copy to Clipboard'}
+        </button>
+        <button
+          className="btn btn-secondary btn-sm push-btn"
+          onClick={() => {
+            const bridgeSettings = localStorage.getItem('pyez-bridge-settings') || localStorage.getItem('mcp-settings');
+            if (bridgeSettings) {
+              uiDispatch({ type: 'SHOW_MODAL', name: 'pushModal' });
+            } else {
+              uiDispatch({ type: 'SHOW_MODAL', name: 'settings', value: 'mcp' });
+            }
+          }}
+          title="Push config to SRX device via PyEZ"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M22 2L11 13" /><path d="M22 2L15 22 11 13 2 9z" />
+          </svg>
+          Push to SRX
         </button>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', alignSelf: 'center', marginLeft: 'auto' }}>
           {outputText.split('\n').length} lines

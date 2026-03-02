@@ -31,6 +31,7 @@ const initialState = {
   showLLMWarning: false,
   showAutoSplitPrompt: null,
   showPushToast: '',
+  showPushModal: false,
   showTour: localStorage.getItem('tour-completed') !== 'true',
 
   llmWarningDismissed: false,
@@ -70,6 +71,7 @@ const MODAL_KEYS = {
   loadConfirm: 'showLoadConfirm',
   llmWarning: 'showLLMWarning',
   autoSplitPrompt: 'showAutoSplitPrompt',
+  pushModal: 'showPushModal',
   tour: 'showTour',
 };
 

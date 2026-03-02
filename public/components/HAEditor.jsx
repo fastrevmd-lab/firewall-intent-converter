@@ -200,6 +200,16 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
           <div className="editor-card-header">
             {/* HA Type Toggle */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                <input
+                  type="radio"
+                  name="haType"
+                  value="off"
+                  checked={false}
+                  onChange={handleDisable}
+                />
+                Off
+              </label>
               {!isSrx4700 && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: haType === 'chassis-cluster' ? 'var(--accent)' : 'var(--text-secondary)' }}>
                   <input

@@ -69,12 +69,15 @@ export default function LLMSettings({ onClose, initialTab }) {
   const [vendorPromptSelection, setVendorPromptSelection] = useState('');
   const [vendorPrompts, setVendorPrompts] = useState({});
 
-  // MCP state
-  const [mcpUrl, setMcpUrl] = useState('');
-  const [mcpConnected, setMcpConnected] = useState(false);
-  const [mcpTesting, setMcpTesting] = useState(false);
-  const [mcpTestResult, setMcpTestResult] = useState('');
-  const [mcpDevices, setMcpDevices] = useState([]);
+  // PyEZ Bridge state
+  const [bridgeUrl, setBridgeUrl] = useState('');
+  const [bridgeConnected, setBridgeConnected] = useState(false);
+  const [bridgeTesting, setBridgeTesting] = useState(false);
+  const [bridgeTestResult, setBridgeTestResult] = useState('');
+  const [bridgeResultOk, setBridgeResultOk] = useState(true);
+  const [bridgeDevices, setBridgeDevices] = useState([]);
+  const [showAddDevice, setShowAddDevice] = useState(false);
+  const [newDevice, setNewDevice] = useState({ name: '', host: '', port: 830, username: '', password: '', ssh_key: '' });
 
   // Load saved settings from localStorage on mount
   useEffect(() => {
@@ -108,13 +111,33 @@ export default function LLMSettings({ onClose, initialTab }) {
     } catch {
       // Ignore parse errors
     }
+    let savedBridgeUrl = '';
     try {
-      const mcpSaved = localStorage.getItem('mcp-settings');
-      if (mcpSaved) {
-        const mcpSettings = safeJsonParse(mcpSaved);
-        setMcpUrl(mcpSettings.url || '');
+      const bridgeSaved = localStorage.getItem('pyez-bridge-settings')
+        || localStorage.getItem('mcp-settings');
+      if (bridgeSaved) {
+        const bridgeSettings = safeJsonParse(bridgeSaved);
+        savedBridgeUrl = bridgeSettings.url || '';
+        setBridgeUrl(savedBridgeUrl);
       }
     } catch { /* ignore */ }
+    // Auto-connect to bridge if URL is saved
+    if (savedBridgeUrl) {
+      const base = normalizeBridgeUrl(savedBridgeUrl);
+      fetch(base + '/health').then(r => r.json()).then(data => {
+        if (data.status === 'ok' && data.service === 'pyez-bridge') {
+          setBridgeConnected(true);
+          // Quick list (no NETCONF probe — instant)
+          fetch(base + '/devices').then(r => r.json()).then(devData => {
+            setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+          }).catch(() => {});
+          // Background probe for live status
+          fetch(base + '/devices?probe=true').then(r => r.json()).then(devData => {
+            setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
   }, []);
 
   /** Save settings to localStorage */
@@ -128,43 +151,134 @@ export default function LLMSettings({ onClose, initialTab }) {
       if (prompt && prompt.trim()) settings[`translateSystemPrompt_${v}`] = prompt;
     }
     localStorage.setItem('llm-settings', JSON.stringify(settings));
-    const mcpSettings = { url: mcpUrl };
-    localStorage.setItem('mcp-settings', JSON.stringify(mcpSettings));
+    localStorage.setItem('pyez-bridge-settings', JSON.stringify({ url: normalizeBridgeUrl(bridgeUrl) }));
     onClose();
   };
 
-  /** Test MCP connection */
-  const handleMcpTest = async () => {
-    if (!mcpUrl.trim()) {
-      setMcpTestResult('Enter an MCP server URL first.');
+  /** Normalize a bridge URL — ensure http:// or https:// prefix. */
+  const normalizeBridgeUrl = (raw) => {
+    let url = (raw || '').trim().replace(/\/+$/, '');
+    if (!url) return '';
+    // Fix missing double-slash: "http:/host" → "http://host"
+    if (/^https?:\/[^/]/.test(url)) url = url.replace(/^(https?:\/)/, '$1/');
+    // Add http:// if no scheme at all
+    if (!/^https?:\/\//.test(url)) url = 'http://' + url;
+    return url;
+  };
+
+  /** Test PyEZ Bridge connection */
+  const handleBridgeTest = async () => {
+    const base = normalizeBridgeUrl(bridgeUrl);
+    if (!base) {
+      setBridgeResultOk(false);
+      setBridgeTestResult('Enter the PyEZ Bridge URL first.');
       return;
     }
-    setMcpTesting(true);
-    setMcpTestResult('');
-    setMcpDevices([]);
+    // Update the input to the normalized URL
+    if (base !== bridgeUrl) setBridgeUrl(base);
+    setBridgeTesting(true);
+    setBridgeTestResult('');
+    setBridgeDevices([]);
     try {
-      const resp = await fetch(mcpUrl.replace(/\/$/, '') + '/health', { method: 'GET' });
-      if (resp.ok) {
-        setMcpConnected(true);
-        setMcpTestResult('Connected successfully.');
-        // Try to list devices
+      const resp = await fetch(base + '/health', { method: 'GET' });
+      if (!resp.ok) {
+        setBridgeConnected(false);
+        setBridgeResultOk(false);
+        setBridgeTestResult(`Connection failed: HTTP ${resp.status}`);
+        return;
+      }
+      // Verify it's actually the PyEZ Bridge (not a Vite SPA fallback)
+      let data;
+      try { data = await resp.json(); } catch {
+        setBridgeConnected(false);
+        setBridgeResultOk(false);
+        setBridgeTestResult('URL responded with non-JSON content. Check the URL and port — it may be pointing at the wrong service.');
+        return;
+      }
+      if (data.status !== 'ok' || data.service !== 'pyez-bridge') {
+        setBridgeConnected(false);
+        setBridgeResultOk(false);
+        setBridgeTestResult('URL responded but is not a PyEZ Bridge service. Check the URL and port.');
+        return;
+      }
+      setBridgeConnected(true);
+      setBridgeResultOk(true);
+      setBridgeTestResult('Connected successfully.');
+      // Quick device list (instant), then background probe for live status
+      try {
+        const devResp = await fetch(base + '/devices', { method: 'GET' });
+        if (devResp.ok) {
+          const devData = await devResp.json();
+          setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+        }
+      } catch { /* devices endpoint optional */ }
+      fetch(base + '/devices?probe=true').then(r => r.json()).then(devData => {
+        setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+      }).catch(() => {});
+    } catch (err) {
+      setBridgeConnected(false);
+      setBridgeResultOk(false);
+      setBridgeTestResult(`Connection failed: ${err.message}`);
+    } finally {
+      setBridgeTesting(false);
+    }
+  };
+
+  /** Add device via PyEZ Bridge */
+  const handleAddDevice = async () => {
+    if (!newDevice.name.trim() || !newDevice.host.trim() || !newDevice.username.trim()) return;
+    if (!bridgeConnected) {
+      setBridgeResultOk(false);
+      setBridgeTestResult('PyEZ Bridge is not connected. Start the bridge service first.');
+      return;
+    }
+    const base = normalizeBridgeUrl(bridgeUrl);
+    const url = base + '/devices';
+    // Strip empty optional fields before sending
+    const payload = { name: newDevice.name.trim(), host: newDevice.host.trim(), port: newDevice.port || 830, username: newDevice.username.trim() };
+    if (newDevice.password) payload.password = newDevice.password;
+    if (newDevice.ssh_key) payload.ssh_key = newDevice.ssh_key.trim();
+    setBridgeResultOk(true);
+    setBridgeTestResult('Adding device...');
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setNewDevice({ name: '', host: '', port: 830, username: '', password: '', ssh_key: '' });
+        setShowAddDevice(false);
+        setBridgeResultOk(true);
+        setBridgeTestResult('Device added successfully.');
+        // Refresh device list
         try {
-          const devResp = await fetch(mcpUrl.replace(/\/$/, '') + '/devices', { method: 'GET' });
+          const devResp = await fetch(base + '/devices');
           if (devResp.ok) {
             const devData = await devResp.json();
-            setMcpDevices(Array.isArray(devData) ? devData : devData.devices || []);
+            setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
           }
-        } catch { /* devices endpoint optional */ }
+        } catch { /* ignore refresh failure */ }
       } else {
-        setMcpConnected(false);
-        setMcpTestResult(`Connection failed: HTTP ${resp.status}`);
+        setBridgeResultOk(false);
+        setBridgeTestResult(data.error || 'Failed to add device.');
       }
     } catch (err) {
-      setMcpConnected(false);
-      setMcpTestResult(`Connection failed: ${err.message}`);
-    } finally {
-      setMcpTesting(false);
+      setBridgeResultOk(false);
+      setBridgeTestResult(`Failed to add device: ${err.message}`);
     }
+  };
+
+  /** Remove device via PyEZ Bridge */
+  const handleRemoveDevice = async (deviceName) => {
+    const base = bridgeUrl.replace(/\/+$/, '');
+    try {
+      const resp = await fetch(base + `/devices/${encodeURIComponent(deviceName)}`, { method: 'DELETE' });
+      if (resp.ok) {
+        setBridgeDevices(prev => prev.filter(d => (d.name || d.hostname) !== deviceName));
+      }
+    } catch { /* ignore */ }
   };
 
   /** Update defaults when provider changes */
@@ -227,48 +341,48 @@ export default function LLMSettings({ onClose, initialTab }) {
               borderBottom: activeTab === 'mcp' ? '2px solid var(--accent)' : '2px solid transparent',
             }}
           >
-            MCP Connection
+            SRX Device Connection
           </button>
         </div>
 
         {activeTab === 'mcp' && (
           <>
-            <SettingsField label="MCP Server URL">
+            <SettingsField label="PyEZ Bridge URL">
               <input
                 type="text"
-                value={mcpUrl}
-                onChange={(e) => setMcpUrl(e.target.value)}
-                placeholder="http://localhost:8080"
+                value={bridgeUrl}
+                onChange={(e) => setBridgeUrl(e.target.value)}
+                placeholder="http://localhost:8830"
                 style={inputStyle}
               />
               <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                URL of the MCP server that connects to your SRX devices.
+                URL of the PyEZ Bridge service. Run <code style={{ fontSize: 10 }}>python tools/pyez-bridge/app.py</code> locally.
               </div>
             </SettingsField>
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
               <button
                 className="btn btn-secondary btn-sm"
-                onClick={handleMcpTest}
-                disabled={mcpTesting}
+                onClick={handleBridgeTest}
+                disabled={bridgeTesting}
               >
-                {mcpTesting ? 'Testing...' : 'Test Connection'}
+                {bridgeTesting ? 'Testing...' : 'Test Connection'}
               </button>
-              {mcpTestResult && (
+              {bridgeTestResult && (
                 <span style={{
                   fontSize: 11,
-                  color: mcpConnected ? 'var(--success)' : 'var(--error)',
+                  color: bridgeResultOk ? 'var(--success)' : 'var(--error)',
                 }}>
-                  {mcpTestResult}
+                  {bridgeTestResult}
                 </span>
               )}
             </div>
 
             {/* Connected SRX devices list */}
-            <SettingsField label="Connected SRX Devices">
-              {mcpDevices.length > 0 ? (
+            <SettingsField label="SRX Devices">
+              {bridgeDevices.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {mcpDevices.map((dev, i) => (
+                  {bridgeDevices.map((dev, i) => (
                     <div key={i} style={{
                       display: 'flex', alignItems: 'center', gap: 8,
                       padding: '6px 10px', background: 'var(--bg-tertiary)',
@@ -278,9 +392,18 @@ export default function LLMSettings({ onClose, initialTab }) {
                         width: 8, height: 8, borderRadius: '50%',
                         background: dev.status === 'connected' ? 'var(--success)' : 'var(--text-muted)',
                       }} />
-                      <span style={{ fontWeight: 500 }}>{dev.hostname || dev.name || dev.ip || `Device ${i + 1}`}</span>
+                      <span style={{ fontWeight: 500 }}>{dev.hostname || dev.name || dev.host || `Device ${i + 1}`}</span>
                       {dev.model && <span style={{ color: 'var(--text-muted)' }}>({dev.model})</span>}
-                      {dev.ip && <span style={{ color: 'var(--text-muted)', marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{dev.ip}</span>}
+                      {dev.version && <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>v{dev.version}</span>}
+                      <span style={{ color: 'var(--text-muted)', marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{dev.host || dev.ip || ''}</span>
+                      <button
+                        onClick={() => handleRemoveDevice(dev.name || dev.hostname)}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: 'var(--text-muted)', fontSize: 14, padding: '0 4px', lineHeight: 1,
+                        }}
+                        title="Remove device"
+                      >x</button>
                     </div>
                   ))}
                 </div>
@@ -289,10 +412,146 @@ export default function LLMSettings({ onClose, initialTab }) {
                   padding: '16px', textAlign: 'center', background: 'var(--bg-tertiary)',
                   borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--text-muted)',
                 }}>
-                  {mcpConnected ? 'No devices reported by MCP server.' : 'Test connection to discover devices.'}
+                  {bridgeConnected ? 'No devices configured. Add one below or edit devices.yaml.' : 'Test connection to discover devices.'}
                 </div>
               )}
             </SettingsField>
+
+            {/* Add Device */}
+            {bridgeConnected && (
+              <div style={{ marginBottom: 16 }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowAddDevice(!showAddDevice)}
+                  style={{ fontSize: 11, marginBottom: showAddDevice ? 8 : 0 }}
+                >
+                  {showAddDevice ? 'Cancel' : '+ Add Device'}
+                </button>
+                {showAddDevice && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+                    padding: 12, background: 'var(--bg-tertiary)',
+                    borderRadius: 'var(--radius)', border: '1px solid var(--border-color)',
+                  }}>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Name *</label>
+                      <input type="text" value={newDevice.name} onChange={e => setNewDevice(p => ({ ...p, name: e.target.value }))} placeholder="srx-lab-01" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Host/IP *</label>
+                      <input type="text" value={newDevice.host} onChange={e => setNewDevice(p => ({ ...p, host: e.target.value }))} placeholder="192.168.1.1" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Port</label>
+                      <input type="number" value={newDevice.port} onChange={e => setNewDevice(p => ({ ...p, port: parseInt(e.target.value) || 830 }))} style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Username *</label>
+                      <input type="text" value={newDevice.username} onChange={e => setNewDevice(p => ({ ...p, username: e.target.value }))} placeholder="admin" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Password</label>
+                      <input type="password" value={newDevice.password} onChange={e => setNewDevice(p => ({ ...p, password: e.target.value }))} style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>SSH Key Path</label>
+                      <input type="text" value={newDevice.ssh_key} onChange={e => setNewDevice(p => ({ ...p, ssh_key: e.target.value }))} placeholder="~/.ssh/id_rsa" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                    </div>
+                    <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={handleAddDevice}
+                        disabled={!newDevice.name.trim() || !newDevice.host.trim() || !newDevice.username.trim()}
+                        style={{ fontSize: 11 }}
+                      >
+                        Add Device
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Setup Guide */}
+            <div style={{
+              marginTop: 8, padding: 14, background: 'var(--bg-tertiary)',
+              borderRadius: 'var(--radius)', border: '1px solid var(--border-color)',
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
+                Setup Guide
+              </div>
+              <div style={{ fontSize: 11, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+                <div style={{ marginBottom: 8 }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>1. Install the PyEZ Bridge</strong>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', marginTop: 4 }}>
+                    cd tools/pyez-bridge<br />
+                    pip install -r requirements.txt
+                  </div>
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>2. Add your SRX devices</strong> (choose one method)
+                  <ul style={{ margin: '4px 0 0 16px', padding: 0, fontSize: 11 }}>
+                    <li>Edit <code style={{ fontSize: 10 }}>tools/pyez-bridge/devices.yaml</code> directly, or</li>
+                    <li>Use the "+ Add Device" form above after connecting</li>
+                  </ul>
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>3. Start the bridge</strong>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', marginTop: 4 }}>
+                    python app.py
+                  </div>
+                </div>
+                <div>
+                  <strong style={{ color: 'var(--text-primary)' }}>4. Connect</strong>
+                  <span> — Enter <code style={{ fontSize: 10 }}>http://localhost:8830</code> above and click Test Connection.</span>
+                </div>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>
+                <strong style={{ fontSize: 11, color: 'var(--text-primary)' }}>SRX Device Setup</strong>
+
+                <div style={{ marginTop: 6, marginBottom: 6, lineHeight: 1.5 }}>
+                  <strong>A. Generate an SSH key pair</strong> (on your workstation)
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', lineHeight: 1.8 }}>
+                  ssh-keygen -t rsa -b 4096 -f ~/.ssh/pyez_rsa -C "pyez-bridge"<br />
+                  cat ~/.ssh/pyez_rsa.pub
+                </div>
+                <div style={{ marginTop: 2, lineHeight: 1.5 }}>
+                  Press Enter for no passphrase (required for unattended automation). Copy the public key output.
+                </div>
+
+                <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.5 }}>
+                  <strong>B. Configure the SRX</strong> (in configuration mode)
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', lineHeight: 1.8 }}>
+                  set system services netconf ssh<br />
+                  set system services netconf rfc-compliant<br />
+                  set system login user <em style={{ color: 'var(--accent)' }}>pyez</em> class super-user<br />
+                  set system login user <em style={{ color: 'var(--accent)' }}>pyez</em> authentication ssh-rsa "<em style={{ color: 'var(--accent)' }}>paste-public-key-here</em>"<br />
+                  commit
+                </div>
+                <div style={{ marginTop: 2, lineHeight: 1.5 }}>
+                  Creates a dedicated NETCONF user. Use <strong>super-user</strong> class for full commit access, or <strong>read-only</strong> for diff/check only.
+                </div>
+
+                <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.5 }}>
+                  <strong>C. Verify connectivity</strong> (from your workstation)
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', lineHeight: 1.8 }}>
+                  ssh -i ~/.ssh/pyez_rsa <em style={{ color: 'var(--accent)' }}>pyez</em>@<em style={{ color: 'var(--accent)' }}>device-ip</em> -p 830 -s netconf
+                </div>
+                <div style={{ marginTop: 2, lineHeight: 1.5 }}>
+                  You should see an XML <code style={{ fontSize: 9 }}>&lt;hello&gt;</code> response. Press Ctrl+C to exit.
+                  Then reference the private key path in the device config above (SSH Key Path: <code style={{ fontSize: 9 }}>~/.ssh/pyez_rsa</code>).
+                </div>
+
+                <div style={{ marginTop: 8, padding: '4px 0', lineHeight: 1.5 }}>
+                  <strong>Password auth alternative:</strong> Skip step A. On the SRX, replace the ssh-rsa line with:<br />
+                  <code style={{ fontSize: 9 }}>set system login user pyez authentication plain-text-password</code> and enter a password at the prompt.
+                  Then use the Password field above instead of SSH Key Path.
+                </div>
+              </div>
+            </div>
           </>
         )}
 
