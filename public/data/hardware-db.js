@@ -879,13 +879,43 @@ export const SRX_MODELS = {
     ],
   },
 
-  // ---- Virtual ----
-  'vSRX3.0': {
-    name: 'vSRX3.0',
+  // ---- Virtual (vSRX per-core licensing) ----
+  'vSRX-2C': {
+    name: 'vSRX-2C',
     tier: 'virtual',
     current: true,
-    description: 'Virtual SRX firewall for cloud and NFV',
-    throughput: { l4: '200 Gbps', l7: '100 Gbps', threat: '30 Gbps' },
+    description: 'vSRX3.0 — 2 vCPU cores',
+    throughput: { l4: '17.8 Gbps', l7: '6.9 Gbps', threat: '2.9 Gbps' },
+    ports: [
+      ...genSrxPorts('ge', 0, 0, 0, 6, 'virtual', 'virtual'),
+    ],
+  },
+  'vSRX-5C': {
+    name: 'vSRX-5C',
+    tier: 'virtual',
+    current: true,
+    description: 'vSRX3.0 — 5 vCPU cores',
+    throughput: { l4: '51.5 Gbps', l7: '21.8 Gbps', threat: '6.6 Gbps' },
+    ports: [
+      ...genSrxPorts('ge', 0, 0, 0, 6, 'virtual', 'virtual'),
+    ],
+  },
+  'vSRX-9C': {
+    name: 'vSRX-9C',
+    tier: 'virtual',
+    current: true,
+    description: 'vSRX3.0 — 9 vCPU cores',
+    throughput: { l4: '128 Gbps', l7: '52.9 Gbps', threat: '19.8 Gbps' },
+    ports: [
+      ...genSrxPorts('ge', 0, 0, 0, 6, 'virtual', 'virtual'),
+    ],
+  },
+  'vSRX-17C': {
+    name: 'vSRX-17C',
+    tier: 'virtual',
+    current: true,
+    description: 'vSRX3.0 — 17 vCPU cores',
+    throughput: { l4: '200 Gbps', l7: '88 Gbps', threat: '36.2 Gbps' },
     ports: [
       ...genSrxPorts('ge', 0, 0, 0, 6, 'virtual', 'virtual'),
     ],
@@ -1540,7 +1570,7 @@ export function detectSrxModel(intermediateConfig) {
  * Suggests a compatible SRX model based on the source PAN-OS model's throughput.
  *
  * Logic:
- *   - Virtual PAN-OS → always vSRX3.0 (recommended)
+ *   - Virtual PAN-OS → best-fit vSRX tier (1G–40G)
  *   - Otherwise, find the SRX model with the next higher throughput in the
  *     selected metric. Mark it as recommended.
  *   - If no SRX has higher throughput, fall back to SRX4700-700 (not recommended).
@@ -1554,9 +1584,15 @@ export function suggestSrxModel(panosModel, metric = 'l7') {
   const source = PANOS_MODELS[panosModel] || SRX_SOURCE_MODELS[panosModel] || FORTIGATE_SOURCE_MODELS[panosModel] || CISCO_SOURCE_MODELS[panosModel];
   if (!source) return null;
 
-  // Virtual always maps to vSRX
+  // Virtual sources → pick the best-fit vSRX tier
   if (source.tier === 'virtual') {
-    return { model: 'vSRX3.0', recommended: true };
+    const srcVal = parseThroughput(getThroughputDisplay(source, metric));
+    const vTiers = Object.entries(SRX_MODELS)
+      .filter(([n]) => n.startsWith('vSRX-'))
+      .map(([n, m]) => ({ name: n, throughput: parseThroughput(getThroughputDisplay(m, metric)) }))
+      .sort((a, b) => a.throughput - b.throughput);
+    const match = vTiers.find(t => t.throughput >= srcVal) || vTiers[vTiers.length - 1];
+    return { model: match.name, recommended: true };
   }
 
   const sourceThroughput = parseThroughput(getThroughputDisplay(source, metric));
@@ -1564,7 +1600,7 @@ export function suggestSrxModel(panosModel, metric = 'l7') {
   // Build list of SRX candidates (exclude virtual for hardware sources)
   const candidates = [];
   for (const [name, srx] of Object.entries(SRX_MODELS)) {
-    if (name === 'vSRX3.0') continue; // skip virtual for physical sources
+    if (name.startsWith('vSRX')) continue; // skip virtual for physical sources
     const srxVal = parseThroughput(getThroughputDisplay(srx, metric));
     if (srxVal > 0) {
       candidates.push({ name, throughput: srxVal });

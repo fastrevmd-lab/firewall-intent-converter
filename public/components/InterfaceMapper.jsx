@@ -275,8 +275,10 @@ export default function InterfaceMapper({
   /** Check if port speeds are compatible */
   const getCompatibility = (sourcePort, targetPort) => {
     if (!sourcePort || !targetPort) return 'unknown';
-    // Tunnel-to-tunnel is always fine
+    // Tunnel/loopback is always fine
     if (sourcePort.type === 'tunnel' || sourcePort.type === 'loopback') return 'match';
+    // Virtual target ports (vSRX) — speed comparison doesn't apply
+    if (targetPort.speed === 'virtual' || targetPort.type === 'virtual') return 'virtual';
     if (sourcePort.speed === targetPort.speed) return 'match';
     const srcSpeed = maxSpeedGbps(sourcePort.speed);
     const tgtSpeed = maxSpeedGbps(targetPort.speed);
@@ -444,6 +446,9 @@ export default function InterfaceMapper({
                         )}
                         {!isTunnel && !isLoopback && currentSrx && compat === 'downgrade' && (
                           <span style={{ color: 'var(--warning)', fontSize: 12 }}>Speed down</span>
+                        )}
+                        {!isTunnel && !isLoopback && currentSrx && compat === 'virtual' && (
+                          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Virtual</span>
                         )}
                         {isL2 && !isTunnel && !isLoopback && (
                           <span style={{ color: '#93c5fd', fontSize: 11, display: 'block' }}>family bridge</span>

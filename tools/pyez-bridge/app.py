@@ -228,6 +228,73 @@ def device_facts(name):
         return _error_response(f"Unexpected error: {e}", 500)
 
 
+@app.route("/devices/<name>/unlock", methods=["POST"])
+def unlock_config(name):
+    """Clear any stale configuration lock on the device.
+
+    Useful when a previous session left a lock behind.  Connects, rolls back
+    the candidate to discard uncommitted edits, and closes cleanly.
+    """
+    dev_dict, _ = _find_device(name)
+    if not dev_dict:
+        return _error_response(f"Device '{name}' not found.", 404)
+
+    dev = None
+    try:
+        dev = _connect(dev_dict)
+        cu = Config(dev)
+        # rollback discards candidate changes; no lock required
+        try:
+            cu.rollback(0)
+        except Exception:
+            pass
+        # unlock releases the lock if this session holds it
+        try:
+            cu.unlock()
+        except UnlockError:
+            pass
+        dev.close()
+        return jsonify({"ok": True, "message": "Lock cleared (if any)."})
+    except (ConnectError, ConnectAuthError, ConnectRefusedError, ConnectTimeoutError) as e:
+        return _error_response(f"Connection failed: {e}", 502)
+    except Exception as e:
+        if dev:
+            try:
+                dev.close()
+            except Exception:
+                pass
+        return _error_response(f"Unlock failed: {e}", 500)
+
+
+def _acquire_lock(dev_dict, cu, dev):
+    """Try to lock the candidate config.  On LockError, reconnect and retry once."""
+    try:
+        cu.lock()
+        return cu, dev
+    except LockError:
+        # Previous session may have left a stale lock.
+        # Close this connection (which releases any lock *we* hold),
+        # wait briefly, reconnect, and try once more.
+        print("  Lock failed — retrying after reconnect...")
+        try:
+            cu.rollback(0)
+        except Exception:
+            pass
+        try:
+            cu.unlock()
+        except Exception:
+            pass
+        try:
+            dev.close()
+        except Exception:
+            pass
+        time.sleep(2)
+        dev = _connect(dev_dict)
+        cu = Config(dev)
+        cu.lock()          # If this also fails, LockError propagates to caller
+        return cu, dev
+
+
 @app.route("/devices/<name>/load", methods=["POST"])
 def load_config(name):
     """Load configuration into candidate configuration."""
@@ -252,15 +319,18 @@ def load_config(name):
         return _error_response("Configuration is empty after filtering.")
 
     dev = None
+    locked = False
     try:
         dev = _connect(dev_dict)
         cu = Config(dev)
-        cu.lock()
+        cu, dev = _acquire_lock(dev_dict, cu, dev)
+        locked = True
 
         # First try loading the full config at once
         try:
             cu.load(config_text, format=fmt)
             cu.unlock()
+            locked = False
             dev.close()
             total = len(config_text.splitlines())
             return jsonify({"ok": True, "message": f"Configuration loaded ({total} lines)."})
@@ -270,6 +340,7 @@ def load_config(name):
         # Batch load failed — fall back to line-by-line for set format
         if fmt != "set":
             cu.unlock()
+            locked = False
             dev.close()
             return _error_response("Configuration load failed. Check syntax.", 400)
 
@@ -291,6 +362,7 @@ def load_config(name):
                 print(f"    Error: {msg}")
 
         cu.unlock()
+        locked = False
         dev.close()
 
         if loaded == 0:
@@ -309,12 +381,26 @@ def load_config(name):
         })
     except LockError:
         if dev:
-            dev.close()
-        return _error_response("Could not lock configuration. Another session may hold the lock.", 409)
+            try:
+                dev.close()
+            except Exception:
+                pass
+        return _error_response(
+            "Could not lock configuration after retry. "
+            "Another CLI/NETCONF session may hold the lock. "
+            "Try 'clear system commit' on the device CLI, or use the Unlock button.",
+            409,
+        )
     except (ConnectError, ConnectAuthError, ConnectRefusedError, ConnectTimeoutError) as e:
         return _error_response(f"Connection failed: {e}", 502)
     except Exception as e:
+        # Always try to unlock + close on unexpected errors
         if dev:
+            if locked:
+                try:
+                    Config(dev).unlock()
+                except Exception:
+                    pass
             try:
                 dev.close()
             except Exception:

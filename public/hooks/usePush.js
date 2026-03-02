@@ -250,7 +250,20 @@ export default function usePush() {
   // Push workflow
   // -----------------------------------------------------------------------
 
-  const loadConfig = useCallback(async (deviceName) => {
+  /** Try to clear a stale config lock via the bridge unlock endpoint. */
+  const unlockConfig = useCallback(async (deviceName) => {
+    const name = deviceName || selectedDevice;
+    if (!name) return false;
+    try {
+      const resp = await fetchWithTimeout(baseUrl() + `/devices/${encodeURIComponent(name)}/unlock`, {
+        method: 'POST',
+      });
+      const data = await resp.json();
+      return data.ok;
+    } catch { return false; }
+  }, [selectedDevice, baseUrl]);
+
+  const loadConfig = useCallback(async (deviceName, _retried) => {
     const name = deviceName || selectedDevice;
     if (!name) return false;
     setIsWorking(true);
@@ -295,6 +308,14 @@ export default function usePush() {
         setIsWorking(false);
         return true;
       }
+
+      // Lock error (HTTP 409) — auto-unlock and retry once
+      if (resp.status === 409 && !_retried) {
+        appendLog('warn', 'Config lock held by another session — clearing lock and retrying...');
+        await unlockConfig(name);
+        return loadConfig(name, true);
+      }
+
       appendLog('error', `Load failed: ${data.error}`);
       if (data.details) {
         if (Array.isArray(data.details)) {
@@ -313,7 +334,7 @@ export default function usePush() {
       setIsWorking(false);
       return false;
     }
-  }, [selectedDevice, getConfigText, outputFormat, baseUrl, appendLog]);
+  }, [selectedDevice, getConfigText, outputFormat, baseUrl, appendLog, unlockConfig]);
 
   const fetchDiff = useCallback(async (deviceName) => {
     const name = deviceName || selectedDevice;
@@ -536,6 +557,7 @@ export default function usePush() {
     isWorking,
 
     // Workflow actions
+    unlockConfig,
     loadConfig,
     fetchDiff,
     commitCheck,
