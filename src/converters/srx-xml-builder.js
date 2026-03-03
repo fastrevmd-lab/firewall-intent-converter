@@ -413,6 +413,9 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
         if (policy.log_end) lines.push('              <session-close/>');
         lines.push('            </log>');
       }
+      if (policy._srx_log_count !== false) {
+        lines.push('            <count/>');
+      }
 
       // Application services (UTM / IDP / SecIntel)
       const hasUtm = !!utmPolicyMap[policy.name];

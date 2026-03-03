@@ -44,7 +44,7 @@
   --caution: #a78bfa;
 
   /* Juniper SRX brand green (front panel color) */
-  --juniper-green: #84B135;
+  --juniper-green: #90C641;
 
   /* Status badges */
   --status-clean: #34d399;
@@ -2485,7 +2485,7 @@ html, body, #root {
 
 .platform-view-bar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   padding: 8px 12px 0;
   background: var(--bg-secondary);
   gap: 0;
@@ -2499,76 +2499,43 @@ html, body, #root {
   flex-wrap: wrap;
 }
 
-.platform-view-btn {
-  padding: 6px 20px;
+/* Shared base for all 5 workflow buttons */
+.platform-view-btn,
+.btn-translate {
+  padding: 6px 14px;
   font-size: 12px;
   font-weight: 600;
   font-family: var(--font-mono);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
+  border-right: none;
+  border-radius: 0;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.4;
 }
 
-.platform-view-btn:first-child {
+/* First button gets left radius */
+.platform-view-bar > .platform-view-btn:first-child {
   border-radius: var(--radius) 0 0 var(--radius);
-  border-right: none;
 }
 
-.platform-view-btn + .platform-view-btn {
-  border-right: none;
-}
-
-.platform-view-btn + .btn-translate + .platform-view-btn {
-  border-radius: 0 var(--radius) var(--radius) 0;
-  border-right: 1px solid var(--border-color);
-}
-
-.platform-view-btn:last-of-type {
-  border-radius: 0 var(--radius) var(--radius) 0;
-  border-right: 1px solid var(--border-color);
-}
-
-.platform-bar-badge {
-  display: inline-block;
-  min-width: 16px;
-  padding: 0 4px;
-  margin-left: 4px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 700;
-  background: var(--caution);
-  color: #fff;
-  text-align: center;
-  line-height: 16px;
-}
-
-.platform-view-btn.active {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--accent);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.platform-view-btn:hover:not(.active) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
+/* Convert (last workflow button) gets right radius + right border */
 .platform-view-btn.convert-btn {
+  border-radius: 0 var(--radius) var(--radius) 0;
+  border-right: 1px solid var(--juniper-green);
   background: var(--juniper-green);
   color: #1a1a2e;
   border-color: var(--juniper-green);
-  font-weight: 600;
-  margin-left: 8px;
 }
 
 .platform-view-btn.convert-btn:hover:not(:disabled) {
   filter: brightness(1.1);
-  background: var(--juniper-green);
-  color: #1a1a2e;
 }
 
 .platform-view-btn.convert-btn:disabled {
@@ -2576,23 +2543,25 @@ html, body, #root {
   cursor: not-allowed;
 }
 
-/* Translate with LLM button — between the two platform-view buttons */
+/* Active state */
+.platform-view-btn.active {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+
+.platform-view-btn:hover:not(.active):not(.convert-btn) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* LLM translate button — colored variant in the chain */
 .btn-translate {
-  margin: 0 8px;
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: var(--font-mono);
   background: var(--llm-cloud);
   color: #1a1a2e;
-  border: 1px solid var(--llm-cloud);
-  border-radius: var(--radius);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  transition: all 0.15s;
+  border-color: var(--llm-cloud);
+  margin: 0;
 }
 
 .btn-translate.llm-local {
@@ -2606,10 +2575,6 @@ html, body, #root {
 }
 
 .btn-translate:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.btn-translate.llm-local:hover:not(:disabled) {
   filter: brightness(1.1);
 }
 
