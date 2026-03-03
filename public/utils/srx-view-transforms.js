@@ -140,6 +140,7 @@ export function buildSrxLogDisplay(rule) {
   const parts = [];
   if (rule.log_end) parts.push('session-close');
   if (rule.log_start) parts.push('session-init');
+  if (rule._srx_log_count !== false) parts.push('count');
   return parts;
 }
 

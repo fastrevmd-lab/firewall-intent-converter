@@ -1174,6 +1174,11 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
           commands.push(`set ${policyPath} then log session-close`);
         }
 
+        // Count (enabled by default)
+        if (policy._srx_log_count !== false) {
+          commands.push(`set ${policyPath} then count`);
+        }
+
         // UTM policy attachment
         if (utmPolicyMap[policy.name]) {
           commands.push(`set ${policyPath} then permit application-services utm-policy ${utmPolicyMap[policy.name]}`);

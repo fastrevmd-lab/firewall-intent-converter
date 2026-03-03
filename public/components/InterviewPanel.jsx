@@ -438,7 +438,7 @@ export default function InterviewPanel({
                   <div className="srx-toggle-sublabel">Enable packet/byte counters</div>
                 </div>
                 <label className="srx-toggle">
-                  <input type="checkbox" checked={selectedRule._srx_log_count || false} onChange={() => handleToggle('_srx_log_count')} />
+                  <input type="checkbox" checked={selectedRule._srx_log_count !== false} onChange={() => handleToggle('_srx_log_count')} />
                   <span className="srx-toggle-track" />
                 </label>
               </div>

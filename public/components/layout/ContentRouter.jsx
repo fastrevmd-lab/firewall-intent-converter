@@ -128,6 +128,107 @@ export default function ContentRouter({
     });
   }, [warningStatuses, cfgDispatch]);
 
+  // --- Platform view bar (hoisted before early returns) ---
+  const analysisCount = activeConfig?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0;
+  const detMode = isDeterministicMode(ui.llmRiskAcceptance);
+  const localOnly = ui.llmRiskAcceptance === 'local-only';
+
+  const renderPlatformBar = () => (
+    <div className="platform-view-bar">
+      <button
+        className={`platform-view-btn ${platformView === 'panos' && editTab === 'rules' ? 'active' : ''}`}
+        onClick={() => {
+          uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'panos' });
+          uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
+        }}
+      >
+        {greenfieldMode ? 'from LLM Interview'
+          : isHealthCheckMode ? 'Original Config'
+          : `from ${sourceModel || ({ panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA', checkpoint: 'Check Point', sonicwall: 'SonicWall', huawei_usg: 'Huawei USG' }[sourceVendor] || 'PAN-OS')}`
+        } &rsaquo;
+      </button>
+      <button
+        className={`platform-view-btn ${editTab === 'analysis' ? 'active' : ''}`}
+        onClick={() => {
+          if (analysisCount > 0) {
+            uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'analysis' });
+          } else {
+            config.handleRunAnalysis();
+          }
+        }}
+        disabled={ui.isLoading || !activeConfig?.security_policies?.length}
+        title={analysisCount > 0 ? `View analysis findings (${analysisCount})` : 'Run pre-conversion analysis'}
+      >
+        <span style={{ color: 'var(--caution)' }}>{ui.isLoading && editTab === 'analysis' ? <><span className="spinner" /> Analyzing...</> : 'Analysis'} &rsaquo;</span>
+      </button>
+      <button
+        className={`btn btn-translate${localOnly ? ' llm-local' : ''}`}
+        onClick={llm.handleTranslateWithLLM}
+        disabled={detMode || isTranslating || !intermediateConfig?.security_policies?.length}
+        title={detMode ? 'Disabled in No-AI mode' : localOnly ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM'}
+        style={detMode ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+      >
+        {isTranslating
+          ? <><span className="spinner" /> {isHealthCheckMode ? 'Checking...' : greenfieldMode ? 'Importing...' : 'Translating...'}</>
+          : 'Review w/LLM'
+        } &rsaquo;
+      </button>
+      <button
+        className={`platform-view-btn ${platformView === 'srx' && editTab === 'rules' ? 'active' : ''}`}
+        onClick={() => {
+          uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'srx' });
+          uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
+        }}
+      >
+        {isHealthCheckMode ? 'Best Practice Status' : <>to <span style={{ color: 'var(--juniper-green)' }}>{targetModel || 'SRX'}</span></>} &rsaquo;
+      </button>
+      <button
+        className="platform-view-btn convert-btn"
+        onClick={() => mergeMode ? conversion.handleMergeConvert('set') : conversion.handleConvertClick('set')}
+        disabled={isLoading || (!intermediateConfig?.security_policies?.length)}
+      >
+        {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
+      </button>
+      {platformView === 'srx' && (
+        <div className="platform-view-actions">
+          <select
+            className="btn btn-secondary btn-sm"
+            value={targetContext.type}
+            onChange={(e) => convDispatch({ type: 'SET_FIELD', field: 'targetContext', value: { ...targetContext, type: e.target.value, name: e.target.value === 'none' ? '' : targetContext.name } })}
+            style={{ maxWidth: 130 }}
+          >
+            <option value="none">Flat Config</option>
+            <option value="logical-system">Logical System</option>
+            <option value="tenant">Tenant</option>
+          </select>
+          {targetContext.type !== 'none' && (
+            <input
+              type="text"
+              className="btn btn-secondary btn-sm"
+              placeholder="Name..."
+              value={targetContext.name}
+              onChange={(e) => convDispatch({ type: 'SET_FIELD', field: 'targetContext', value: { ...targetContext, name: e.target.value } })}
+              style={{ maxWidth: 100, textAlign: 'left' }}
+            />
+          )}
+          <button
+            className="btn btn-secondary btn-sm push-btn"
+            onClick={() => {
+              const bridgeSettings = localStorage.getItem('pyez-bridge-settings') || localStorage.getItem('mcp-settings');
+              if (bridgeSettings) {
+                uiDispatch({ type: 'SHOW_MODAL', name: 'pushModal' });
+              } else {
+                uiDispatch({ type: 'SHOW_MODAL', name: 'settings', value: 'mcp' });
+              }
+            }}
+            title="Push config to SRX device via PyEZ"
+            disabled={!conv.srxOutput}
+          >Push to SRX</button>
+        </div>
+      )}
+    </div>
+  );
+
   // --- Import / Config Input ---
   if (editTab === 'import') {
     return (
@@ -172,13 +273,16 @@ export default function ContentRouter({
 
     if (!table.length) {
       return (
-        <div className="center-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-          <div className="empty-state">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
-            <h3>No sanitized objects</h3>
-            <p>Parse a configuration to see sanitized items here.</p>
+        <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {renderPlatformBar()}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="empty-state">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <h3>No sanitized objects</h3>
+              <p>Parse a configuration to see sanitized items here.</p>
+            </div>
           </div>
         </div>
       );
@@ -260,107 +364,6 @@ export default function ContentRouter({
       </div>
     );
   }
-
-  // --- Platform view bar + tab content ---
-  const analysisCount = activeConfig?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0;
-  const detMode = isDeterministicMode(ui.llmRiskAcceptance);
-  const localOnly = ui.llmRiskAcceptance === 'local-only';
-
-  const renderPlatformBar = () => (
-    <div className="platform-view-bar">
-      <button
-        className={`platform-view-btn ${platformView === 'panos' && editTab === 'rules' ? 'active' : ''}`}
-        onClick={() => {
-          uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'panos' });
-          uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
-        }}
-      >
-        {greenfieldMode ? 'from LLM Interview'
-          : isHealthCheckMode ? 'Original Config'
-          : `from ${sourceModel || ({ panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA', checkpoint: 'Check Point', sonicwall: 'SonicWall', huawei_usg: 'Huawei USG' }[sourceVendor] || 'PAN-OS')}`
-        } &rsaquo;
-      </button>
-      <button
-        className={`platform-view-btn ${editTab === 'analysis' ? 'active' : ''}`}
-        onClick={() => {
-          if (analysisCount > 0) {
-            uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'analysis' });
-          } else {
-            config.handleRunAnalysis();
-          }
-        }}
-        disabled={ui.isLoading || !activeConfig?.security_policies?.length}
-        title={analysisCount > 0 ? `View analysis findings (${analysisCount})` : 'Run pre-conversion analysis'}
-      >
-        {ui.isLoading && editTab === 'analysis' ? <><span className="spinner" /> Analyzing...</> : 'Analysis'} &rsaquo;
-      </button>
-      <button
-        className={`btn btn-translate${localOnly ? ' llm-local' : ''}`}
-        onClick={llm.handleTranslateWithLLM}
-        disabled={detMode || isTranslating || !intermediateConfig?.security_policies?.length}
-        title={detMode ? 'Disabled in No-AI mode' : localOnly ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM'}
-        style={detMode ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-      >
-        {isTranslating
-          ? <><span className="spinner" /> {isHealthCheckMode ? 'Checking...' : greenfieldMode ? 'Importing...' : 'Translating...'}</>
-          : 'Review w/LLM'
-        } &rsaquo;
-      </button>
-      <button
-        className={`platform-view-btn ${platformView === 'srx' && editTab === 'rules' ? 'active' : ''}`}
-        onClick={() => {
-          uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'srx' });
-          uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
-        }}
-      >
-        {isHealthCheckMode ? 'Best Practice Status' : <>to <span style={{ color: 'var(--juniper-green)' }}>{targetModel || 'SRX'}</span></>} &rsaquo;
-      </button>
-      <button
-        className="platform-view-btn convert-btn"
-        onClick={() => mergeMode ? conversion.handleMergeConvert('set') : conversion.handleConvertClick('set')}
-        disabled={isLoading || (!intermediateConfig?.security_policies?.length)}
-      >
-        {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
-      </button>
-      {platformView === 'srx' && (
-        <div className="platform-view-actions">
-          <select
-            className="btn btn-secondary btn-sm"
-            value={targetContext.type}
-            onChange={(e) => convDispatch({ type: 'SET_FIELD', field: 'targetContext', value: { ...targetContext, type: e.target.value, name: e.target.value === 'none' ? '' : targetContext.name } })}
-            style={{ maxWidth: 130 }}
-          >
-            <option value="none">Flat Config</option>
-            <option value="logical-system">Logical System</option>
-            <option value="tenant">Tenant</option>
-          </select>
-          {targetContext.type !== 'none' && (
-            <input
-              type="text"
-              className="btn btn-secondary btn-sm"
-              placeholder="Name..."
-              value={targetContext.name}
-              onChange={(e) => convDispatch({ type: 'SET_FIELD', field: 'targetContext', value: { ...targetContext, name: e.target.value } })}
-              style={{ maxWidth: 100, textAlign: 'left' }}
-            />
-          )}
-          <button
-            className="btn btn-secondary btn-sm push-btn"
-            onClick={() => {
-              const bridgeSettings = localStorage.getItem('pyez-bridge-settings') || localStorage.getItem('mcp-settings');
-              if (bridgeSettings) {
-                uiDispatch({ type: 'SHOW_MODAL', name: 'pushModal' });
-              } else {
-                uiDispatch({ type: 'SHOW_MODAL', name: 'settings', value: 'mcp' });
-              }
-            }}
-            title="Push config to SRX device via PyEZ"
-            disabled={!conv.srxOutput}
-          >Push to SRX</button>
-        </div>
-      )}
-    </div>
-  );
 
   // --- Security Policies ---
   if (editTab === 'rules') {
