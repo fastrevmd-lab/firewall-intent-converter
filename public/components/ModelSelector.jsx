@@ -264,6 +264,7 @@ export default function ModelSelector({
               className="model-select"
               value={selectedTarget}
               onChange={(e) => setSelectedTarget(e.target.value)}
+              style={/^(SRX1600|SRX4120|SRX4300|SRX4700|vSRX)/.test(selectedTarget) ? { color: '#84B135', borderColor: '#84B135' } : undefined}
             >
               <option value="">-- Select SRX Model --</option>
               {Object.entries(srxGroups).map(([tier, models]) => (
@@ -271,11 +272,7 @@ export default function ModelSelector({
                   {models.map(m => {
                     const isRec = recommendedSrx?.model === m.name && recommendedSrx?.recommended;
                     return (
-                      <option
-                        key={m.name}
-                        value={m.name}
-                        style={m.current ? { color: '#34d399' } : undefined}
-                      >
+                      <option key={m.name} value={m.name}>
                         {m.name} — {m.ports.length} ports ({metricLabel}: {getThroughputDisplay(m, throughputMetric)}){isRec ? ' (Recommended)' : ''}
                       </option>
                     );
@@ -539,7 +536,7 @@ function ModelInfoCard({ model, vendor = 'srx', metric }) {
         </div>
       )}
       {model.current && (
-        <div className="model-info-row" style={{ color: '#34d399' }}>
+        <div className="model-info-row" style={{ color: /^(SRX1600|SRX4120|SRX4300|SRX4700|vSRX)/.test(model.name) ? '#84B135' : '#34d399' }}>
           <span className="model-info-label">Status</span>
           <span className="model-info-value" style={{ fontWeight: 600 }}>Current Model</span>
         </div>
