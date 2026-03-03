@@ -278,7 +278,7 @@ export default function ContentRouter({
         {greenfieldMode ? 'from LLM Interview'
           : isHealthCheckMode ? 'Original Config'
           : `from ${sourceModel || ({ panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA', checkpoint: 'Check Point', sonicwall: 'SonicWall', huawei_usg: 'Huawei USG' }[sourceVendor] || 'PAN-OS')}`
-        }
+        } &rsaquo;
       </button>
       <button
         className={`platform-view-btn ${editTab === 'analysis' ? 'active' : ''}`}
@@ -290,10 +290,9 @@ export default function ContentRouter({
           }
         }}
         disabled={ui.isLoading || !activeConfig?.security_policies?.length}
-        title={analysisCount > 0 ? 'View analysis findings' : 'Run pre-conversion analysis'}
+        title={analysisCount > 0 ? `View analysis findings (${analysisCount})` : 'Run pre-conversion analysis'}
       >
-        {ui.isLoading && editTab === 'analysis' ? <><span className="spinner" /> Analyzing...</> : 'Analysis'}
-        {analysisCount > 0 && <span className="platform-bar-badge">{analysisCount}</span>}
+        {ui.isLoading && editTab === 'analysis' ? <><span className="spinner" /> Analyzing...</> : 'Analysis'} &rsaquo;
       </button>
       <button
         className={`btn btn-translate${localOnly ? ' llm-local' : ''}`}
@@ -305,7 +304,7 @@ export default function ContentRouter({
         {isTranslating
           ? <><span className="spinner" /> {isHealthCheckMode ? 'Checking...' : greenfieldMode ? 'Importing...' : 'Translating...'}</>
           : 'Review w/LLM'
-        }
+        } &rsaquo;
       </button>
       <button
         className={`platform-view-btn ${platformView === 'srx' && editTab === 'rules' ? 'active' : ''}`}
@@ -314,7 +313,14 @@ export default function ContentRouter({
           uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
         }}
       >
-        {isHealthCheckMode ? 'Best Practice Status' : <>to <span style={{ color: 'var(--juniper-green)' }}>{targetModel || 'SRX'}</span></>}
+        {isHealthCheckMode ? 'Best Practice Status' : <>to <span style={{ color: 'var(--juniper-green)' }}>{targetModel || 'SRX'}</span></>} &rsaquo;
+      </button>
+      <button
+        className="platform-view-btn convert-btn"
+        onClick={() => mergeMode ? conversion.handleMergeConvert('set') : conversion.handleConvertClick('set')}
+        disabled={isLoading || (!intermediateConfig?.security_policies?.length)}
+      >
+        {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
       </button>
       {platformView === 'srx' && (
         <div className="platform-view-actions">
@@ -339,13 +345,6 @@ export default function ContentRouter({
             />
           )}
           <button
-            className="btn btn-primary btn-sm"
-            onClick={() => mergeMode ? conversion.handleMergeConvert('set') : conversion.handleConvertClick('set')}
-            disabled={isLoading}
-          >
-            {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
-          </button>
-          <button
             className="btn btn-secondary btn-sm push-btn"
             onClick={() => {
               const bridgeSettings = localStorage.getItem('pyez-bridge-settings') || localStorage.getItem('mcp-settings');
@@ -358,8 +357,6 @@ export default function ContentRouter({
             title="Push config to SRX device via PyEZ"
             disabled={!conv.srxOutput}
           >Push to SRX</button>
-          <button className="btn btn-secondary btn-sm push-btn" onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'showPushToast', value: 'SDC' })}>Push SDC</button>
-          <button className="btn btn-secondary btn-sm push-btn" onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'showPushToast', value: 'Mist' })}>Push Mist</button>
         </div>
       )}
     </div>

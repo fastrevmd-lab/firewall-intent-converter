@@ -2546,14 +2546,34 @@ html, body, #root {
 }
 
 .platform-view-btn.active {
-  background: var(--accent);
-  color: var(--bg-primary);
+  background: var(--bg-hover);
+  color: var(--text-primary);
   border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .platform-view-btn:hover:not(.active) {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.platform-view-btn.convert-btn {
+  background: var(--juniper-green);
+  color: #1a1a2e;
+  border-color: var(--juniper-green);
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.platform-view-btn.convert-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+  background: var(--juniper-green);
+  color: #1a1a2e;
+}
+
+.platform-view-btn.convert-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Translate with LLM button — between the two platform-view buttons */
