@@ -103,7 +103,7 @@ export default function TopBar() {
               Warnings{' '}
               <span
                 className="stat-value"
-                style={{ color: unresolvedWarningCount > 0 ? 'var(--warning)' : 'var(--success)' }}
+                style={{ color: unresolvedWarningCount > 0 ? 'var(--caution)' : 'var(--success)' }}
               >
                 {unresolvedWarningCount}/{allWarnings.length}
               </span>

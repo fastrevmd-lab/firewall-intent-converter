@@ -40,6 +40,9 @@
   --llm-cloud: #f59e0b;
   --llm-local: #84cc16;
 
+  /* Caution — warnings/analysis (distinct from LLM orange) */
+  --caution: #a78bfa;
+
   /* Status badges */
   --status-clean: #34d399;
   --status-warning: #fbbf24;
@@ -2531,7 +2534,7 @@ html, body, #root {
   border-radius: 8px;
   font-size: 10px;
   font-weight: 700;
-  background: var(--warning, #f59e0b);
+  background: var(--caution);
   color: #fff;
   text-align: center;
   line-height: 16px;

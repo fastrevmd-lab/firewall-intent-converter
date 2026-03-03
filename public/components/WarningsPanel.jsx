@@ -91,7 +91,7 @@ export default function WarningsPanel({ warnings, warningStatuses = {}, onWarnin
           label={`Unresolved (${counts.unresolved})`}
           active={statusFilter === 'unresolved'}
           onClick={() => setStatusFilter('unresolved')}
-          color="var(--warning)"
+          color="var(--caution)"
         />
         <FilterButton
           label={`Resolved (${counts.resolved})`}
@@ -107,7 +107,7 @@ export default function WarningsPanel({ warnings, warningStatuses = {}, onWarnin
           label={`Warnings (${counts.warning})`}
           active={severityFilter === 'warning'}
           onClick={() => setSeverityFilter(severityFilter === 'warning' ? 'all' : 'warning')}
-          color="var(--warning)"
+          color="var(--caution)"
         />
         <FilterButton
           label={`Unsupported (${counts.unsupported})`}

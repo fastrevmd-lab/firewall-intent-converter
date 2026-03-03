@@ -109,7 +109,7 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
           <SummaryCard label="Services" value={summary.services_converted} />
           <SummaryCard label="Policies" value={summary.policies_converted} />
           <SummaryCard label="NAT Rules" value={summary.nat_rules_converted} />
-          <SummaryCard label="Warnings" value={summary.total_warnings} color="var(--warning)" />
+          <SummaryCard label="Warnings" value={summary.total_warnings} color="var(--caution)" />
         </div>
       )}
 
