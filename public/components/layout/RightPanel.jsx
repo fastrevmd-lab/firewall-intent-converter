@@ -142,8 +142,8 @@ export default function RightPanel() {
                 return (
                   <span key={f.id} style={{
                     fontSize: 11, padding: '2px 6px', borderRadius: 4,
-                    background: isWarn ? 'var(--warning-bg, rgba(255,170,0,0.1))' : 'var(--surface-3)',
-                    color: isWarn ? 'var(--warning)' : 'var(--text-secondary)',
+                    background: isWarn ? 'rgba(167, 139, 250, 0.1)' : 'var(--surface-3)',
+                    color: isWarn ? 'var(--caution)' : 'var(--text-secondary)',
                   }}>
                     {f.id.replace(/_/g, ' ')}: {f.count}
                   </span>
