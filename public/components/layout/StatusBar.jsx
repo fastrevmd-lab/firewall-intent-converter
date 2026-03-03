@@ -57,7 +57,7 @@ export default function StatusBar() {
           <span className="status-dot success" />
           <span>{sourceModel}</span>
           <span style={{ color: 'var(--accent)', margin: '0 2px' }}>&rarr;</span>
-          <span>{targetModel || '?'}</span>
+          <span style={{ color: 'var(--juniper-green)' }}>{targetModel || '?'}</span>
         </div>
       ) : (
         <div className="status-item">

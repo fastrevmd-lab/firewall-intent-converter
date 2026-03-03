@@ -229,7 +229,7 @@ export default function ConfigInput({
             <span style={{ color: 'var(--accent)', fontSize: 14 }}>&rarr;</span>
             <div className="model-badge-item">
               <span className="model-badge-label">Target</span>
-              <span className="model-badge-value">{targetModel || 'Not set'}</span>
+              <span className="model-badge-value" style={{ color: 'var(--juniper-green)' }}>{targetModel || 'Not set'}</span>
             </div>
           </div>
         )}

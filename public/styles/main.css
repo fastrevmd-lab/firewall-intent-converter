@@ -43,6 +43,9 @@
   /* Caution — warnings/analysis (distinct from LLM orange) */
   --caution: #a78bfa;
 
+  /* Juniper SRX brand green (front panel color) */
+  --juniper-green: #84B135;
+
   /* Status badges */
   --status-clean: #34d399;
   --status-warning: #fbbf24;
@@ -145,14 +148,15 @@ html, body, #root {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
   padding: 4px 10px;
   border-radius: 12px;
+  border: 1px solid var(--border-color);
 }
 
 .stat-badge .stat-value {
-  color: var(--accent-text);
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -2404,11 +2408,12 @@ html, body, #root {
 
 /* --- Review Progress Badge --- */
 .review-progress {
-  font-size: 10px;
-  color: var(--text-muted);
-  padding: 2px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  padding: 4px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
   white-space: nowrap;
 }
 
@@ -2694,7 +2699,7 @@ html, body, #root {
 
 /* License badge in navbar */
 .license-badge {
-  color: var(--accent-text) !important;
+  color: var(--text-primary) !important;
   font-family: var(--font-mono);
 }
 
