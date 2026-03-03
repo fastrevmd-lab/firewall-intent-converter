@@ -314,7 +314,7 @@ export default function ContentRouter({
           uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
         }}
       >
-        {isHealthCheckMode ? 'Best Practice Status' : `to ${targetModel || 'SRX'}`}
+        {isHealthCheckMode ? 'Best Practice Status' : <>to <span style={{ color: 'var(--juniper-green)' }}>{targetModel || 'SRX'}</span></>}
       </button>
       {platformView === 'srx' && (
         <div className="platform-view-actions">

@@ -45,8 +45,11 @@ export default function TopBar() {
 
   // Warning counts
   const allWarnings = convertWarnings || [];
-  const unresolvedWarningCount = allWarnings.length -
-    Object.values(warningStatuses).filter(s => s === 'acknowledged' || s === 'resolved').length;
+  const statusValues = Object.values(warningStatuses);
+  const ackCount = statusValues.filter(s => s === 'acknowledged').length;
+  const fixedCount = statusValues.filter(s => s === 'fixed' || s === 'resolved').length;
+  const ignoredCount = statusValues.filter(s => s === 'ignored').length;
+  const unresolvedWarningCount = allWarnings.length - ackCount - fixedCount - ignoredCount;
 
   // Helpers
   const showModal = (name) => uiDispatch({ type: 'SHOW_MODAL', name });
@@ -73,7 +76,7 @@ export default function TopBar() {
             >
               {greenfieldMode ? 'Greenfield' : sourceModel}
               <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span>
-              {targetModel || '?'}
+              <span style={{ color: 'var(--juniper-green)' }}>{targetModel || '?'}</span>
             </span>
           )}
           {srxLicense && (
@@ -82,7 +85,7 @@ export default function TopBar() {
               onClick={() => showModal('modelSelector')}
               style={{ cursor: 'pointer' }}
             >
-              License <span className="stat-value">{srxLicense}</span>
+              <span style={{ color: 'var(--accent)' }}>License</span> <span className="stat-value">{srxLicense}</span>
             </span>
           )}
           {siteName && (
@@ -97,21 +100,40 @@ export default function TopBar() {
           {allWarnings.length > 0 && (
             <span
               className="stat-badge"
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', gap: 6 }}
               onClick={() => setTab('warnings')}
             >
-              Warnings{' '}
-              <span
-                className="stat-value"
-                style={{ color: unresolvedWarningCount > 0 ? 'var(--caution)' : 'var(--success)' }}
-              >
-                {unresolvedWarningCount}/{allWarnings.length}
+              <span style={{ color: 'var(--caution)' }}>Warnings</span>{' '}
+              <span style={{ color: unresolvedWarningCount > 0 ? 'var(--caution)' : 'var(--text-muted)', fontWeight: 600 }}>
+                {unresolvedWarningCount}
               </span>
+              {(ackCount > 0 || fixedCount > 0 || ignoredCount > 0) && (
+                <span style={{ color: 'var(--accent)', margin: '0 2px' }}>&rarr;</span>
+              )}
+              {ackCount > 0 && (
+                <span style={{ color: 'var(--accent)', fontWeight: 600, fontSize: 11 }}>
+                  {ackCount} ack
+                </span>
+              )}
+              {fixedCount > 0 && (
+                <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: 11 }}>
+                  {fixedCount} fix
+                </span>
+              )}
+              {ignoredCount > 0 && (
+                <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11 }}>
+                  {ignoredCount} ign
+                </span>
+              )}
             </span>
           )}
           {intermediateConfig && (
             <span className="review-progress">
-              Policies: {accepted}/{policyCount} accepted
+              <span style={{ color: 'var(--caution)' }}>Policies</span> <span style={{ color: 'var(--caution)', fontWeight: 600 }}>{policyCount}</span>
+              <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span>
+              <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                Accepted {accepted}
+              </span>
               {llmReviewed > 0 && (
                 <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
                   ({llmReviewed} LLM reviewed)
