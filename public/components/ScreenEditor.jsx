@@ -125,7 +125,7 @@ export default function ScreenEditor({
           {showPresetPanel ? 'Close Presets' : 'Apply Best Practice'}
         </button>
         {detection.confidence === 'low' && detection.allZones.length > 0 && !showPresetPanel && (
-          <span style={{ fontSize: 11, color: 'var(--warning)' }}>
+          <span style={{ fontSize: 11, color: 'var(--caution)' }}>
             No internet-facing zones auto-detected — select zones manually
           </span>
         )}
@@ -199,7 +199,7 @@ export default function ScreenEditor({
                             setSelectedSpeed(info.maxTier);
                           }
                         }} />
-                      <span style={detection.detected.includes(z) ? { color: 'var(--warning)', fontWeight: 600 } : undefined}>{z}</span>
+                      <span style={detection.detected.includes(z) ? { color: 'var(--caution)', fontWeight: 600 } : undefined}>{z}</span>
                     </label>
                   ))}
                 </div>
