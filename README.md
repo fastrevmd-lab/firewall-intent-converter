@@ -35,6 +35,15 @@ npm run preview        # Preview the production build locally
 
 The `dist/` folder is a fully self-contained static SPA — deploy it to any static file host (Nginx, Apache, S3, GitHub Pages, Netlify, etc.) or open `dist/index.html` directly from the filesystem. No server runtime required.
 
+### Standalone Offline Build
+
+```bash
+npm run build:standalone   # Builds to dist-standalone/
+npm run zip:standalone     # Builds + creates .zip for distribution
+```
+
+Produces a single-file bundle that works from `file://` with no server. LLM features and PyEZ push are stripped — parse, edit, and export only. Firefox opens it directly; Chrome needs `--allow-file-access-from-files` or a local HTTP server (`python3 -m http.server`). The `dist-standalone/README.txt` has end-user instructions.
+
 ## Usage
 
 ### 1a. Load a Configuration (Import Mode)
@@ -166,8 +175,8 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Predefined Junos app detection** — Services matching Junos predefined applications (junos-ssh, junos-http, junos-https, junos-dns-udp, etc.) are automatically detected and referenced instead of generating redundant custom definitions
 - **Application mapping** — 120+ cross-vendor application mappings (PAN-OS, FortiGate, Cisco ASA) to Junos predefined applications. Unmapped applications receive a `Customfwic` placeholder suffix with a warning to create a custom application definition on the SRX
 - **Application groups** — PAN-OS `<application-group>` entries are parsed with their members and expanded during conversion. The Applications tab shows groups with expandable member lists, and the SRX view displays per-app Junos mapping (e.g., `junos-ssh`) or `custom:app:'name'` for unmapped apps
-- **Sanitization** — One-click replacement of sensitive data (IPs, hostnames, keys) with placeholders before sharing or sending to an LLM. Originals are restored on export
-- **Sanitization mapping table** — Clickable sanitize badge expands a collapsible table showing all replacements: type-colored badges (Hash, Key, SNMP, User, Public IP), masked originals for secrets (full values for public IPs), placeholder codes, and restore-on-export indicator. Inline stats summary
+- **Sanitization (18 categories)** — One-click replacement of sensitive data across 18 data categories: password hashes, pre-shared/API keys, SNMP communities, usernames, certificates, server hostnames, BGP AS numbers, device hostname, domain names, email addresses, URLs, descriptions/comments, public IPv4 (→ RFC 5737 documentation IPs: `192.0.2.x`, `198.51.100.x`, `203.0.113.x`), private IPv4 (→ synthetic `10.x.x.x`), IPv6 (→ RFC 3849 `2001:db8::N`), zone names, interface names, and object/group names. Deterministic mapping ensures the same input always produces the same placeholder. IPs, zones, objects, and interfaces are automatically restored on export; secrets stay redacted
+- **Sanitization mapping table** — Clickable sanitize badge expands a collapsible table showing all replacements: type-colored badges (Hash, Key, SNMP, User, Public IP, Private IP, IPv6, Domain, Zone, Object, Interface, Email, URL, Description, Device Name, Certificate, Hostname, BGP AS), masked originals for secrets (full values for non-secret types), placeholder codes, and restore-on-export indicator. Inline stats summary
 
 ### Post-Conversion Diff View
 - **Diff tab** — New "Diff" tab in the bottom panel (alongside SRX Output and Warnings) comparing source policies vs LLM-translated policies

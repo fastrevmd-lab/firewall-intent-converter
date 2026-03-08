@@ -1,6 +1,9 @@
 node_modules/
 dist/
+dist-standalone/
+*.zip
 .vite/
+venv/
 .claude/
 CLAUDE.md
 tmp/
