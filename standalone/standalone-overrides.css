@@ -1,0 +1,5 @@
+/*
+ * Standalone build overrides.
+ * Hides features that require external services (PyEZ bridge).
+ */
+.push-btn { display: none !important; }

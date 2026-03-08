@@ -310,6 +310,42 @@
 - [x] **Transition consistency** — Standardized all CSS transitions to 0.15s (was mixed 0.1s/0.2s/0.15s)
 - [x] **Gemini LLM provider** — Added Google Gemini as LLM provider with Flash 3, Flash-Lite 3.1, Pro 3.1, and 2.5 stable models
 
+### Planned — 3-Node & 4-Node MNHA
+- [ ] **3-node MNHA support** — Extend chassis cluster / MNHA generation to support 3-node configurations (active/active/standby or active/active/active topologies)
+- [ ] **4-node MNHA support** — Extend chassis cluster / MNHA generation to support 4-node configurations with full mesh redundancy
+
+### Planned — Light / Dark Mode
+- [ ] **Light/dark theme toggle** — User-selectable light and dark themes with TopBar toggle button. CSS custom property swap (all `--bg-*`, `--text-*`, `--accent` vars). Light palette with white backgrounds, dark text, adjusted accent contrast. `prefers-color-scheme` media query for OS default. Persisted in localStorage
+
+### Planned — Enhanced Migration Report
+- [ ] **Rule count comparison** — Source vs converted rule counts with delta (e.g., "Source: 247 → SRX: 203 (-44)"). Breakdown by action (permit/deny), zone pair, and disabled status
+- [ ] **Unused objects cleaned summary** — Report section listing address/service objects identified as unused by analysis engine and removed/flagged during conversion, with count and object names
+- [ ] **Shadowed rules removed summary** — Report section listing rules identified as fully shadowed by earlier rules, with the shadowing rule reference and removal status
+- [ ] **AI-disabled rules report** — Report section for rules disabled by LLM with "No longer needed" rationale (e.g., vendor management rules, EDL references). Shows LLM reasoning from `_translation_notes`
+- [ ] **Migration delta dashboard** — Visual summary card at top of report: rules added/removed/modified/disabled, objects consolidated, zones merged, NAT rules changed. Before/after comparison chart
+- [ ] **Exportable migration summary** — One-page PDF/HTML executive summary suitable for change management approval, with risk assessment and rollback instructions
+
+### Planned — Aggregate Interface (LAG/LACP) Support
+- [ ] **PAN-OS aggregate-ethernet parser** — Parse `<ae>` aggregate-ethernet interfaces, LACP mode, member links, and LACP system priority from PAN-OS XML
+- [ ] **FortiGate LAG parser** — Parse `config system interface` with `type aggregate` / `type redundant`, `set member`, LACP mode (static/active/passive)
+- [ ] **Cisco ASA port-channel parser** — Parse `interface Port-channel`, `channel-group` member assignments, LACP mode
+- [ ] **SRX ae interface round-trip** — Parse and preserve `set interfaces ae0`, `set chassis aggregated-devices ethernet device-count`, `ether-options 802.3ad`, LACP config
+- [ ] **Huawei Eth-Trunk parser** — Parse `interface Eth-Trunk`, `trunkport`, LACP mode/priority
+- [ ] **SonicWall LAG parser** — Parse link aggregation from REST API JSON interface config
+- [ ] **Check Point bond interface parser** — Parse Gaia clish `add bonding group`, `set bonding group` member interfaces
+- [ ] **SRX ae converter** — Generate `set chassis aggregated-devices ethernet device-count`, `set interfaces ae0 aggregated-ether-options lacp`, member `ether-options 802.3ad ae0` bindings
+- [ ] **Interface Mapper LAG support** — Display aggregate interfaces with member link expansion, map source LAG → SRX ae with member auto-mapping, visual grouping of member ports under parent ae
+
+### Planned — Additional Improvements
+- [ ] **Hardware capacity validation** — Compare converted config against target SRX model limits (max policies, NAT rules, address objects, zones, interfaces) from hardware-db. Warn when approaching or exceeding capacity
+- [ ] **Rollback plan generation** — Auto-generate `delete` commands for every `set` command in the SRX output, producing a ready-to-paste rollback script. Include in migration report
+- [ ] **Policy dependency graph** — Visual graph showing rule dependencies: which address objects feed which policies, zone-pair groupings, NAT→policy relationships. Interactive SVG/canvas with click-to-navigate
+- [ ] **Config comparison / version diff** — Compare two SRX outputs or project files side-by-side, highlighting added/removed/changed set commands. Useful for iterating on translations
+- [ ] **Export to Terraform / Ansible** — Generate Junos Terraform provider resources (`junos_security_policy`, `junos_security_zone`) or Ansible `junos_config` playbooks from the converted config for IaC workflows
+- [ ] **Pre/post migration checklist** — Auto-generated task checklist based on parsed config features: certificate imports needed, JIMS setup required, SecIntel license verification, RADIUS server config, etc. Checkbox tracking with export
+- [ ] **Interface mapping templates** — Save/load interface mapping profiles for repeated migrations of the same platform type. E.g., save a "PA-3260 → SRX4600" mapping template and reuse across sites
+- [ ] **Batch migration mode** — Process multiple config files in sequence, each producing independent SRX output. Summary dashboard showing conversion status across all files. Useful for multi-site rollouts
+
 ### Blocked — Waiting on Vendor APIs
 - [ ] **Push to SDC / SD On-Prem / Mist** — Direct deployment to Juniper management platforms. Requires HPE Juniper public REST APIs
 
@@ -323,5 +359,6 @@
 - **Dynamic Routing** — BGP, OSPF, OSPFv3, EVPN/VxLAN supported across applicable vendors
 - **User Identity** — User-ID / FSSO / IDFW parsed and converted to SRX `source-identity` — requires manual JIMS server configuration
 - **Virtual-Wire** — SRX maps vwire to bridge-domain; auto-assigns interfaces when mapped in Interface Mapper
-- **MNHA** — Only 2-node configurations supported
+- **MNHA** — Only 2-node configurations supported (3-node and 4-node planned)
+- **Aggregate Interfaces** — LAG/LACP/port-channel/bond/Eth-Trunk not yet parsed or converted (planned)
 - **Application Mapping** — ~120 built-in + 236 extended mappings (from fatcat-converter); unmapped apps get `Customfwic` suffix + warning

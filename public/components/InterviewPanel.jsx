@@ -15,6 +15,13 @@ import {
   SRX_LICENSE_TIERS,
 } from '../utils/srx-view-transforms.js';
 import AutocompleteInput from './shared/AutocompleteInput.jsx';
+import { getLLMStatus } from '../utils/llm-client.js';
+
+const PROVIDER_LABELS = {
+  claude: 'Claude', openai: 'OpenAI', gemini: 'Gemini',
+  ollama: 'Ollama', lmstudio: 'LM Studio', custom: 'Custom',
+};
+const LOCAL_PROVIDERS = new Set(['ollama', 'lmstudio']);
 
 export default function InterviewPanel({
   selectedRule,
@@ -112,6 +119,12 @@ export default function InterviewPanel({
       ? Math.round((p.chunk / p.totalChunks) * 100)
       : p.phase === 'calling_llm' ? null : (p.phase === 'parsing_response' ? 80 : (p.phase === 'complete' ? 100 : 10));
 
+    // LLM provider/model info
+    const llmInfo = getLLMStatus();
+    const isLocal = LOCAL_PROVIDERS.has(llmInfo.provider);
+    const providerLabel = PROVIDER_LABELS[llmInfo.provider] || llmInfo.provider;
+    const providerColor = isLocal ? 'var(--llm-local)' : 'var(--llm-cloud)';
+
     return (
       <div className="panel interview-panel">
         <div className="panel-header">
@@ -123,6 +136,29 @@ export default function InterviewPanel({
             background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)',
             padding: 20, marginBottom: 16,
           }}>
+            {/* Provider / Model badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14,
+              padding: '6px 10px', background: 'var(--bg-primary)', borderRadius: 'var(--radius)',
+              fontSize: 11, fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', background: providerColor, flexShrink: 0,
+              }} />
+              <span style={{ color: providerColor, fontWeight: 600 }}>{providerLabel}</span>
+              <span style={{ color: 'var(--text-muted)' }}>&middot;</span>
+              <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {llmInfo.model}
+              </span>
+              <span style={{
+                marginLeft: 'auto', fontSize: 9, padding: '1px 6px', borderRadius: 8,
+                background: isLocal ? 'rgba(144,198,65,0.12)' : 'rgba(255,165,0,0.12)',
+                color: providerColor, flexShrink: 0,
+              }}>
+                {isLocal ? 'Local' : 'Cloud'}
+              </span>
+            </div>
+
             {/* Phase indicator */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
               <div style={{
@@ -131,7 +167,7 @@ export default function InterviewPanel({
                 animation: p.phase === 'calling_llm' ? 'pulse 1.5s infinite' : 'none',
               }} />
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                {phaseLabel}
+                {phaseLabel}{p.phase === 'calling_llm' && <span className="animated-ellipsis" />}
               </span>
             </div>
 
@@ -146,16 +182,27 @@ export default function InterviewPanel({
             )}
 
             {/* Progress bar */}
-            {progressPct !== null && (
+            {progressPct !== null ? (
               <div style={{
-                height: 4, background: 'var(--bg-primary)', borderRadius: 2,
+                height: 6, background: 'var(--bg-primary)', borderRadius: 3,
                 marginBottom: 16, overflow: 'hidden',
               }}>
                 <div style={{
-                  height: '100%', borderRadius: 2,
+                  height: '100%', borderRadius: 3,
                   background: 'var(--accent)',
                   width: `${progressPct}%`,
                   transition: 'width 0.5s ease',
+                }} />
+              </div>
+            ) : p.phase === 'calling_llm' && (
+              <div style={{
+                height: 6, background: 'var(--bg-primary)', borderRadius: 3,
+                marginBottom: 16, overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%', borderRadius: 3, width: '30%',
+                  background: 'var(--accent)',
+                  animation: 'indeterminate 1.5s ease-in-out infinite',
                 }} />
               </div>
             )}

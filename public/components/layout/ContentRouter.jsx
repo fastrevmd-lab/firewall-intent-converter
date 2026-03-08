@@ -41,10 +41,18 @@ import useLLM from '../../hooks/useLLM.js';
 const SANITIZE_TYPE_LABELS = {
   hash: 'Hash', key: 'Key', community: 'SNMP', username: 'User', public_ip: 'Public IP',
   certificate: 'Certificate', hostname: 'Hostname', bgp: 'BGP AS',
+  device_hostname: 'Device Name', domain: 'Domain', zone: 'Zone', object: 'Object',
+  private_ip: 'Private IP', ipv6: 'IPv6', email: 'Email', url: 'URL',
+  description: 'Description', interface: 'Interface',
 };
 
+const SHOW_FULL_TYPES = new Set([
+  'public_ip', 'private_ip', 'ipv6', 'zone', 'object', 'interface',
+  'domain', 'device_hostname', 'email', 'url', 'description',
+]);
+
 function maskSensitiveValue(entry) {
-  if (entry.type === 'public_ip') return entry.original;
+  if (SHOW_FULL_TYPES.has(entry.type)) return entry.original;
   const val = entry.original || '';
   if (val.length <= 4) return '****';
   return val.substring(0, 3) + '****';
