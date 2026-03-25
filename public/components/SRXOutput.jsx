@@ -93,6 +93,11 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
   if (!output) {
     return (
       <div className="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+        <h3>Ready to generate</h3>
         <p>Click "Convert to SRX" in the policy table to generate the SRX configuration.</p>
       </div>
     );

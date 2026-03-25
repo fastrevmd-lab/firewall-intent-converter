@@ -65,6 +65,11 @@ export default function WarningsPanel({ warnings, warningStatuses = {}, onWarnin
   if (!warnings || warnings.length === 0) {
     return (
       <div className="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <polyline points="22 4 12 14.01 9 11.01" />
+        </svg>
+        <h3>All clear</h3>
         <p>No warnings. All conversion items processed cleanly.</p>
       </div>
     );
@@ -175,6 +180,10 @@ export default function WarningsPanel({ warnings, warningStatuses = {}, onWarnin
 
       {filtered.length === 0 && (
         <div className="empty-state" style={{ padding: '20px' }}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
           <p>No warnings match this filter.</p>
         </div>
       )}
