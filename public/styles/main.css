@@ -364,8 +364,9 @@ html, body, #root {
 }
 
 .btn-sm {
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 5px 12px;
+  font-size: 12px;
+  min-height: 30px;
 }
 
 .btn-block {
@@ -2355,8 +2356,8 @@ html, body, #root {
 /* --- Review Status Labels --- */
 .status-label {
   display: inline-block;
-  padding: 1px 6px;
-  font-size: 9px;
+  padding: 2px 6px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
