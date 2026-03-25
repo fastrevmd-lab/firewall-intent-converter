@@ -281,7 +281,7 @@ html, body, #root {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s;
 }
 
 .sample-btn:hover {
@@ -297,7 +297,7 @@ html, body, #root {
   padding: 20px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, background-color 0.15s;
   margin-bottom: 12px;
 }
 
@@ -327,7 +327,7 @@ html, body, #root {
   font-weight: 500;
   cursor: pointer;
   border: none;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
 }
 
 .btn-primary {
@@ -633,7 +633,7 @@ html, body, #root {
   color: var(--text-secondary);
   border: none;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s;
 }
 
 .format-btn.active {
@@ -762,7 +762,7 @@ html, body, #root {
   border: none;
   cursor: pointer;
   font-weight: 600;
-  transition: all 0.15s;
+  transition: filter 0.15s;
 }
 .btn-accept:hover { filter: brightness(1.1); }
 
@@ -772,7 +772,7 @@ html, body, #root {
   border: 1px solid var(--juniper-green);
   cursor: default;
   font-weight: 600;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
 }
 
 /* --- Conversion Summary --- */
@@ -872,7 +872,7 @@ html, body, #root {
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, background-color 0.15s;
   text-align: center;
 }
 
@@ -993,7 +993,7 @@ html, body, #root {
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s, border-bottom-color 0.15s;
 }
 
 .tab-btn.active {
@@ -1039,7 +1039,7 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: color 0.15s, background-color 0.15s;
 }
 
 .settings-btn:hover {
@@ -1075,7 +1075,7 @@ html, body, #root {
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s, border-bottom-color 0.15s;
   white-space: nowrap;
 }
 
@@ -1136,7 +1136,7 @@ html, body, #root {
   cursor: pointer;
   padding: 4px 8px;
   border-radius: var(--radius);
-  transition: all 0.15s;
+  transition: color 0.15s, background-color 0.15s;
 }
 
 .modal-close:hover {
@@ -1386,7 +1386,7 @@ html, body, #root {
   border: 1.5px solid var(--border-color);
   color: var(--text-muted);
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .step-number.complete {
@@ -1845,7 +1845,7 @@ html, body, #root {
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s, border-bottom-color 0.15s;
 }
 
 .sub-tab-btn.active {
@@ -1867,7 +1867,7 @@ html, body, #root {
   font-size: 12px;
   line-height: 1;
   color: var(--text-muted);
-  transition: all 0.15s;
+  transition: color 0.15s, background-color 0.15s;
 }
 
 .btn-icon:hover {
@@ -2034,7 +2034,7 @@ html, body, #root {
   color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s;
   white-space: nowrap;
 }
 
@@ -2145,7 +2145,7 @@ html, body, #root {
   background: var(--bg-elevated);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
-  transition: all 0.15s;
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s;
 }
 
 .btn-sanitize:hover:not(:disabled) {
@@ -2598,7 +2598,7 @@ html, body, #root {
   border-right: none;
   border-radius: 0;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
@@ -2704,7 +2704,7 @@ html, body, #root {
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, background-color 0.15s;
 }
 
 .license-tier-card:hover {
@@ -3948,7 +3948,7 @@ html, body, #root {
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6), 0 0 20px rgba(77, 208, 200, 0.3);
   z-index: 201;
   pointer-events: none;
-  transition: all 0.3s ease;
+  transition: top 0.3s ease, left 0.3s ease, width 0.3s ease, height 0.3s ease, box-shadow 0.3s ease;
 }
 
 .tour-tooltip {
@@ -3959,7 +3959,7 @@ html, body, #root {
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   width: 340px;
-  transition: all 0.3s ease;
+  transition: top 0.3s ease, left 0.3s ease, opacity 0.3s ease;
 }
 
 .tour-tooltip-header {
