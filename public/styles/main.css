@@ -1034,7 +1034,9 @@ html, body, #root {
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 6px;
+  padding: 8px;
+  min-width: 36px;
+  min-height: 36px;
   border-radius: var(--radius);
   display: flex;
   align-items: center;
