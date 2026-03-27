@@ -2043,17 +2043,62 @@ function convertHaConfig(haConfig, commands, warnings, summary) {
 }
 
 /**
+ * Builds the list of MNHA peers from haConfig for 2-, 3-, or 4-node topologies.
+ * For 2-node: uses legacy peer_id/peer_ip fields or additional_peers[0].
+ * For 3/4-node: uses additional_peers array for all peers beyond the first.
+ * @param {Object} haConfig - HA configuration object
+ * @param {number} nodeCount - Total node count (2, 3, or 4)
+ * @returns {Array<Object>} Array of peer objects with peer_id, peer_ip, icl_interface, vpn_profile, etc.
+ */
+function buildMnhaPeerList(haConfig, nodeCount) {
+  const peers = [];
+  const additionalPeers = haConfig.additional_peers || [];
+
+  // First peer — always from top-level fields (backward compatible with 2-node)
+  peers.push({
+    peer_id: haConfig.peer_id || 2,
+    peer_ip: haConfig.peer_ip || '',
+    icl_interface: haConfig.icl_interface || '',
+    vpn_profile: haConfig.vpn_profile || 'IPSEC_VPN_ICL',
+    liveness_interval: haConfig.liveness_interval || 400,
+    liveness_multiplier: haConfig.liveness_multiplier || 5,
+    deployment_type: haConfig.deployment_type || 'routing',
+    activeness_priority: haConfig.activeness_priority || 200,
+    preemption: haConfig.preemption,
+  });
+
+  // Additional peers for 3-node and 4-node
+  for (let i = 0; i < nodeCount - 2; i++) {
+    const extra = additionalPeers[i] || {};
+    peers.push({
+      peer_id: extra.peer_id || (3 + i),
+      peer_ip: extra.peer_ip || '',
+      icl_interface: extra.icl_interface || '',
+      vpn_profile: extra.vpn_profile || 'IPSEC_VPN_ICL',
+      liveness_interval: extra.liveness_interval || haConfig.liveness_interval || 400,
+      liveness_multiplier: extra.liveness_multiplier || haConfig.liveness_multiplier || 5,
+      deployment_type: extra.deployment_type || haConfig.deployment_type || 'routing',
+      activeness_priority: extra.activeness_priority || Math.max(100, (haConfig.activeness_priority || 200) - (50 * (i + 1))),
+      preemption: extra.preemption ?? haConfig.preemption,
+    });
+  }
+
+  return peers;
+}
+
+/**
  * Converts MNHA (Multinode High Availability) configuration to SRX set commands.
  * Uses `set chassis high-availability` instead of `set chassis cluster`.
+ * Supports 2-node, 3-node, and 4-node MNHA topologies.
  */
 function convertMnhaConfig(haConfig, commands, warnings, summary) {
+  const nodeCount = haConfig.node_count || 2;
   commands.push('# =============================================');
-  commands.push('# Multinode High Availability (MNHA) Configuration');
+  commands.push(`# Multinode High Availability (MNHA) — ${nodeCount}-Node Configuration`);
   commands.push('# =============================================');
   commands.push(`# ${haConfig.description || 'MNHA ' + (haConfig.mode || 'active-passive')}`);
 
   const localId = haConfig.local_id || 1;
-  const peerId = haConfig.peer_id || 2;
   const prefix = 'set chassis high-availability';
 
   // Local node
@@ -2062,39 +2107,44 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
     commands.push(`${prefix} local-id local-ip ${haConfig.local_ip}`);
   }
 
-  // Peer node
-  if (haConfig.peer_ip) {
-    commands.push(`${prefix} peer-id ${peerId} peer-ip ${haConfig.peer_ip}`);
+  // Build list of all peers (supports 2-, 3-, and 4-node topologies)
+  const peers = buildMnhaPeerList(haConfig, nodeCount);
+
+  for (const peer of peers) {
+    // Peer node identity
+    if (peer.peer_ip) {
+      commands.push(`${prefix} peer-id ${peer.peer_id} peer-ip ${peer.peer_ip}`);
+    }
+    if (peer.icl_interface) {
+      commands.push(`${prefix} peer-id ${peer.peer_id} interface ${peer.icl_interface}`);
+    }
+    if (peer.vpn_profile) {
+      commands.push(`${prefix} peer-id ${peer.peer_id} vpn-profile ${peer.vpn_profile}`);
+    }
+
+    // Liveness detection per peer
+    const livenessInterval = peer.liveness_interval || haConfig.liveness_interval || 400;
+    const livenessMultiplier = peer.liveness_multiplier || haConfig.liveness_multiplier || 5;
+    commands.push(`${prefix} peer-id ${peer.peer_id} liveness-detection minimum-interval ${livenessInterval}`);
+    commands.push(`${prefix} peer-id ${peer.peer_id} liveness-detection multiplier ${livenessMultiplier}`);
+
+    // SRG0 (control plane) — associate each peer
+    commands.push(`${prefix} services-redundancy-group 0 peer-id ${peer.peer_id}`);
+
+    // SRG1 (data plane) — associate each peer
+    const deployType = peer.deployment_type || haConfig.deployment_type || 'routing';
+    commands.push(`${prefix} services-redundancy-group 1 deployment-type ${deployType}`);
+    commands.push(`${prefix} services-redundancy-group 1 peer-id ${peer.peer_id}`);
+
+    const activePrio = peer.activeness_priority || haConfig.activeness_priority || 200;
+    commands.push(`${prefix} services-redundancy-group 1 activeness-priority ${activePrio}`);
+
+    if (peer.preemption ?? haConfig.preemption) {
+      commands.push(`${prefix} services-redundancy-group 1 preemption`);
+    }
   }
-  if (haConfig.icl_interface) {
-    commands.push(`${prefix} peer-id ${peerId} interface ${haConfig.icl_interface}`);
-  }
-  if (haConfig.vpn_profile) {
-    commands.push(`${prefix} peer-id ${peerId} vpn-profile ${haConfig.vpn_profile}`);
-  }
 
-  // Liveness detection
-  const livenessInterval = haConfig.liveness_interval || 400;
-  const livenessMultiplier = haConfig.liveness_multiplier || 5;
-  commands.push(`${prefix} peer-id ${peerId} liveness-detection minimum-interval ${livenessInterval}`);
-  commands.push(`${prefix} peer-id ${peerId} liveness-detection multiplier ${livenessMultiplier}`);
-
-  // SRG0 (control plane) — always peer-id association
-  commands.push(`${prefix} services-redundancy-group 0 peer-id ${peerId}`);
-
-  // SRG1 (data plane)
-  const deployType = haConfig.deployment_type || 'routing';
-  commands.push(`${prefix} services-redundancy-group 1 deployment-type ${deployType}`);
-  commands.push(`${prefix} services-redundancy-group 1 peer-id ${peerId}`);
-
-  const activePrio = haConfig.activeness_priority || 200;
-  commands.push(`${prefix} services-redundancy-group 1 activeness-priority ${activePrio}`);
-
-  if (haConfig.preemption) {
-    commands.push(`${prefix} services-redundancy-group 1 preemption`);
-  }
-
-  // Monitoring
+  // Monitoring (applies to all peers)
   if (haConfig.monitoring) {
     for (const lg of (haConfig.monitoring.link_groups || [])) {
       if (lg.enabled && lg.interfaces && lg.interfaces.length > 0) {
@@ -2105,11 +2155,16 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
     }
   }
 
+  if (nodeCount > 2) {
+    commands.push(`# NOTE: ${nodeCount}-node MNHA requires full mesh ICL connectivity between all nodes.`);
+    commands.push('# Ensure each node has dedicated ICL interfaces to every other peer.');
+  }
   commands.push('# NOTE: Review MNHA config — verify ICL interface, VPN profile, and virtual-IP');
   commands.push('# assignments match your target SRX4700 topology');
 
-  warnings.push(createWarning('ha', 'MNHA configured — verify ICL, VPN profile, and SRG settings for target topology', 'info'));
+  warnings.push(createWarning('ha', `${nodeCount}-node MNHA configured — verify ICL, VPN profile, and SRG settings for target topology`, 'info'));
   summary.ha_converted = 1;
+  summary.mnha_node_count = nodeCount;
   commands.push('');
 }
 

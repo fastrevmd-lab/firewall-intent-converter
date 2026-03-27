@@ -46,6 +46,7 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
       onHAUpdate({
         ...haConfig,
         ha_type: 'mnha',
+        node_count: 2,
         local_id: 1,
         local_ip: haConfig.local_ip || '',
         peer_id: 2,
@@ -57,6 +58,7 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
         deployment_type: 'routing',
         activeness_priority: haConfig.priority || 200,
         preemption: haConfig.preempt ?? true,
+        additional_peers: [],
       });
       return;
     }
@@ -69,6 +71,7 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
         enabled: true,
         ha_type: 'mnha',
         mode: 'active-passive',
+        node_count: 2,
         local_id: 1,
         local_ip: '',
         peer_id: 2,
@@ -80,6 +83,7 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
         deployment_type: 'routing',
         activeness_priority: 200,
         preemption: true,
+        additional_peers: [],
         ha_interfaces: [],
         monitoring: { link_groups: [], path_groups: [] },
         description: '',
@@ -251,7 +255,7 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
           {haType === 'mnha' && (
             <div style={{ padding: '6px 12px', background: 'rgba(59, 130, 246, 0.1)', borderBottom: '1px solid rgba(59, 130, 246, 0.2)', fontSize: 11, color: '#60a5fa', lineHeight: 1.4 }}>
               {isSrx4700 && <>SRX4700 requires Multinode High Availability (MNHA) — chassis cluster is not supported. </>}
-              Only 2-node MNHA is supported at this time.
+              Supports 2-, 3-, and 4-node MNHA topologies with full mesh ICL.
             </div>
           )}
 
@@ -259,23 +263,60 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
             {haType === 'mnha' ? (
               /* ---- MNHA Fields ---- */
               <>
-                {/* Mode */}
+                {/* Mode + Node Count */}
                 <div style={{ marginBottom: 8 }}>
-                  <label style={sectionLabel}>Mode</label>
-                  <select
-                    className="cell-select"
-                    value={haConfig.mode || 'active-passive'}
-                    onChange={(e) => handleChange('mode', e.target.value)}
-                    style={{ width: 160 }}
-                  >
-                    <option value="active-passive">Active / Backup</option>
-                    <option value="active-active">Active / Active</option>
-                  </select>
+                  <div className="editor-field-row">
+                    <div className="editor-field" style={{ width: 160 }}>
+                      <label style={sectionLabel}>Mode</label>
+                      <select
+                        className="cell-select"
+                        value={haConfig.mode || 'active-passive'}
+                        onChange={(e) => handleChange('mode', e.target.value)}
+                        style={{ width: 160 }}
+                      >
+                        <option value="active-passive">Active / Backup</option>
+                        <option value="active-active">Active / Active</option>
+                      </select>
+                    </div>
+                    <div className="editor-field" style={{ width: 120 }}>
+                      <label style={sectionLabel}>Node Count</label>
+                      <select
+                        className="cell-select"
+                        value={haConfig.node_count || 2}
+                        onChange={(e) => {
+                          const count = parseInt(e.target.value, 10);
+                          const updated = { ...haConfig, node_count: count };
+                          // Ensure additional_peers array matches node_count - 2
+                          const needed = Math.max(0, count - 2);
+                          const existing = updated.additional_peers || [];
+                          if (existing.length < needed) {
+                            updated.additional_peers = [...existing];
+                            for (let i = existing.length; i < needed; i++) {
+                              updated.additional_peers.push({
+                                peer_id: 3 + i,
+                                peer_ip: '',
+                                icl_interface: '',
+                                vpn_profile: 'IPSEC_VPN_ICL',
+                              });
+                            }
+                          } else if (existing.length > needed) {
+                            updated.additional_peers = existing.slice(0, needed);
+                          }
+                          onHAUpdate(updated);
+                        }}
+                        style={{ width: 80 }}
+                      >
+                        <option value={2}>2</option>
+                        <option value={3}>3</option>
+                        <option value={4}>4</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Local Node */}
                 <div style={{ marginBottom: 8 }}>
-                  <label style={sectionLabel}>Local Node</label>
+                  <label style={sectionLabel}>Local Node (Node 1)</label>
                   <div className="editor-field-row">
                     <div className="editor-field" style={{ width: 80 }}>
                       <label>Local ID</label>
@@ -290,9 +331,9 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
                   </div>
                 </div>
 
-                {/* Peer Node */}
+                {/* Peer Node 1 (always present) */}
                 <div style={{ marginBottom: 8 }}>
-                  <label style={sectionLabel}>Peer Node</label>
+                  <label style={sectionLabel}>Peer Node 2</label>
                   <div className="editor-field-row">
                     <div className="editor-field" style={{ width: 80 }}>
                       <label>Peer ID</label>
@@ -318,6 +359,53 @@ export default function HAEditor({ haConfig, onHAUpdate, viewMode, targetModel }
                     </div>
                   </div>
                 </div>
+
+                {/* Additional Peer Nodes (3-node, 4-node) */}
+                {(haConfig.additional_peers || []).map((peer, idx) => (
+                  <div key={idx} style={{ marginBottom: 8 }}>
+                    <label style={sectionLabel}>Peer Node {3 + idx}</label>
+                    <div className="editor-field-row">
+                      <div className="editor-field" style={{ width: 80 }}>
+                        <label>Peer ID</label>
+                        <input className="cell-input" type="number" value={peer.peer_id ?? (3 + idx)}
+                          onChange={(e) => {
+                            const peers = [...(haConfig.additional_peers || [])];
+                            peers[idx] = { ...peers[idx], peer_id: parseInt(e.target.value, 10) || (3 + idx) };
+                            onHAUpdate({ ...haConfig, additional_peers: peers });
+                          }} />
+                      </div>
+                      <div className="editor-field" style={{ flex: 1 }}>
+                        <label>Peer IP</label>
+                        <input className="cell-input" value={peer.peer_ip || ''}
+                          onChange={(e) => {
+                            const peers = [...(haConfig.additional_peers || [])];
+                            peers[idx] = { ...peers[idx], peer_ip: e.target.value };
+                            onHAUpdate({ ...haConfig, additional_peers: peers });
+                          }} placeholder={`10.22.0.${3 + idx}`} />
+                      </div>
+                    </div>
+                    <div className="editor-field-row" style={{ marginTop: 4 }}>
+                      <div className="editor-field" style={{ flex: 1 }}>
+                        <label>ICL Interface</label>
+                        <input className="cell-input" value={peer.icl_interface || ''}
+                          onChange={(e) => {
+                            const peers = [...(haConfig.additional_peers || [])];
+                            peers[idx] = { ...peers[idx], icl_interface: e.target.value };
+                            onHAUpdate({ ...haConfig, additional_peers: peers });
+                          }} placeholder={`ge-0/0/${3 + idx}.0`} />
+                      </div>
+                      <div className="editor-field" style={{ flex: 1 }}>
+                        <label>VPN Profile</label>
+                        <input className="cell-input" value={peer.vpn_profile || ''}
+                          onChange={(e) => {
+                            const peers = [...(haConfig.additional_peers || [])];
+                            peers[idx] = { ...peers[idx], vpn_profile: e.target.value };
+                            onHAUpdate({ ...haConfig, additional_peers: peers });
+                          }} placeholder="IPSEC_VPN_ICL" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
 
                 {/* Liveness Detection */}
                 <div style={{ marginBottom: 8 }}>
