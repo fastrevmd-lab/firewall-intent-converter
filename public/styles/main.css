@@ -4285,6 +4285,64 @@ html, body, #root {
   margin: 0;
 }
 
+/* --- Conversion Report --- */
+.report-section {
+  max-width: 900px;
+}
+
+.report-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.report-section h4 {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.report-table th {
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.report-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+.report-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.report-table tbody tr.expanded-row {
+  background: var(--bg-tertiary);
+}
+
+.report-table tbody tr.expanded-detail-row:hover {
+  background: var(--bg-secondary);
+}
+
+.report-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 /* --- Reduced Motion --- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

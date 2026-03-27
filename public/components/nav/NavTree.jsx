@@ -83,6 +83,7 @@ const NAV_STRUCTURE = [
     { id: 'output', label: 'SRX Config' },
     { id: 'warnings', label: 'Warnings', warnCount: true },
     { id: 'diff', label: 'Diff View' },
+    { id: 'report', label: 'Report' },
   ]},
 ];
 
