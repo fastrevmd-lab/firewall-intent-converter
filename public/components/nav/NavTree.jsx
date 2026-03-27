@@ -97,6 +97,7 @@ const NAV_STRUCTURE = [
       if ((ic.nat_rules || []).length > 0) count++;
       return count;
     }},
+    { id: 'report', label: 'Report' },
   ]},
 ];
 
