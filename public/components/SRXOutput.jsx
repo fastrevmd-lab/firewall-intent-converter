@@ -11,6 +11,18 @@
  */
 import React, { useState, useCallback } from 'react';
 import { useUIContext } from '../contexts/UIContext.jsx';
+import { exportToTerraform, exportToAnsible } from '../utils/iac-export.js';
+
+/** Download a text string as a file */
+function downloadText(text, filename, mimeType = 'text/plain') {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function SRXOutput({ output, format, summary, isParsed, sanitizationTable }) {
   const { dispatch: uiDispatch } = useUIContext();
@@ -153,6 +165,31 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
             <path d="M22 2L11 13" /><path d="M22 2L15 22 11 13 2 9z" />
           </svg>
           Push to SRX
+        </button>
+        <span style={{ width: 1, height: 20, background: 'var(--border-color)', flexShrink: 0 }} />
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => {
+            const commands = output?.commands || [];
+            const text = exportToTerraform(commands);
+            downloadText(text, 'srx-config.tf', 'text/plain');
+          }}
+          title="Export as Terraform HCL (Junos provider)"
+          disabled={format === 'xml'}
+        >
+          Terraform
+        </button>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => {
+            const commands = output?.commands || [];
+            const text = exportToAnsible(commands);
+            downloadText(text, 'srx-playbook.yml', 'text/yaml');
+          }}
+          title="Export as Ansible playbook (junos_config)"
+          disabled={format === 'xml'}
+        >
+          Ansible
         </button>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', alignSelf: 'center', marginLeft: 'auto' }}>
           {outputText.split('\n').length} lines
