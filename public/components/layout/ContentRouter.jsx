@@ -24,6 +24,7 @@ const GreenfieldChat = React.lazy(() => import('../GreenfieldChat.jsx'));
 const SRXOutput = React.lazy(() => import('../SRXOutput.jsx'));
 const WarningsPanel = React.lazy(() => import('../WarningsPanel.jsx'));
 const DiffPanel = React.lazy(() => import('../DiffPanel.jsx'));
+const ConversionReport = React.lazy(() => import('../ConversionReport.jsx'));
 import SectionAcceptBar from '../shared/SectionAcceptBar.jsx';
 
 const LoadingTab = () => (
@@ -358,7 +359,7 @@ export default function ContentRouter({
   }
 
   // If no config loaded, show empty state
-  if (!activeConfig && editTab !== 'output' && editTab !== 'warnings' && editTab !== 'diff') {
+  if (!activeConfig && editTab !== 'output' && editTab !== 'warnings' && editTab !== 'diff' && editTab !== 'report') {
     return (
       <div className="center-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
         <div className="empty-state">
@@ -733,6 +734,24 @@ export default function ContentRouter({
         <div style={{ flex: 1, overflow: 'auto' }}>
           <DiffPanel sourcePolicies={intermediateConfig?.security_policies || []} translatedPolicies={srxTranslatedPolicies} />
         </div>
+      </div>
+    );
+  }
+
+  if (editTab === 'report') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <Suspense fallback={<LoadingTab />}>
+          <ConversionReport
+            intermediateConfig={intermediateConfig}
+            srxTranslatedPolicies={srxTranslatedPolicies}
+            srxOutput={srxOutput}
+            warnings={allWarnings}
+            conversionSummary={conversionSummary}
+            isParsed={!!intermediateConfig}
+          />
+        </Suspense>
       </div>
     );
   }
