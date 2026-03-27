@@ -24,6 +24,7 @@ const GreenfieldChat = React.lazy(() => import('../GreenfieldChat.jsx'));
 const SRXOutput = React.lazy(() => import('../SRXOutput.jsx'));
 const WarningsPanel = React.lazy(() => import('../WarningsPanel.jsx'));
 const DiffPanel = React.lazy(() => import('../DiffPanel.jsx'));
+const ConfigDiff = React.lazy(() => import('../ConfigDiff.jsx'));
 const MigrationChecklist = React.lazy(() => import('../MigrationChecklist.jsx'));
 const ConversionReport = React.lazy(() => import('../ConversionReport.jsx'));
 import SectionAcceptBar from '../shared/SectionAcceptBar.jsx';
@@ -729,11 +730,24 @@ export default function ContentRouter({
   }
 
   if (editTab === 'diff') {
+    const [diffSubTab, setDiffSubTab] = [
+      ui.diffSubTab || 'policy',
+      (val) => uiDispatch({ type: 'SET_FIELD', field: 'diffSubTab', value: val }),
+    ];
     return (
       <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {renderPlatformBar()}
+        <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
+          <button className={`format-btn ${diffSubTab === 'policy' ? 'active' : ''}`} onClick={() => setDiffSubTab('policy')}>Policy Diff</button>
+          <button className={`format-btn ${diffSubTab === 'config' ? 'active' : ''}`} onClick={() => setDiffSubTab('config')}>Config Diff</button>
+        </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
-          <DiffPanel sourcePolicies={intermediateConfig?.security_policies || []} translatedPolicies={srxTranslatedPolicies} />
+          <Suspense fallback={<LoadingTab />}>
+            {diffSubTab === 'config'
+              ? <ConfigDiff currentOutput={srxOutput} />
+              : <DiffPanel sourcePolicies={intermediateConfig?.security_policies || []} translatedPolicies={srxTranslatedPolicies} />
+            }
+          </Suspense>
         </div>
       </div>
     );
