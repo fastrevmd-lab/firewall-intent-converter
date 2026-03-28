@@ -142,6 +142,12 @@ FILTER_PATTERNS = [
     re.compile(r"^set\s+protocols\s+evpn\b"),
     # Skip IDP (requires signature DB)
     re.compile(r"^set\s+security\s+idp\b"),
+    # Skip UTM/IDP/SecIntel references in policy application-services
+    re.compile(r".*utm-policy\b"),
+    re.compile(r".*idp-policy\b"),
+    re.compile(r".*application-services\s+security-intelligence"),
+    # Skip interface references outside FPC 0 slot 0
+    re.compile(r".*\s+ge-0/[1-9]"),
 ]
 
 
