@@ -271,6 +271,7 @@ def test_on_device(config_text, label):
                 "delete interfaces lo0",
                 "delete interfaces irb",
                 "delete interfaces ae0",
+                "delete interfaces fab0",
                 "delete interfaces ae1",
                 "delete interfaces ae2",
                 "delete interfaces ae3",
