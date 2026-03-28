@@ -900,7 +900,26 @@ function convertAddressObjects(objects, commands, warnings, summary) {
             'Add an IP address or subnet to this address object'));
           continue;
         }
-        commands.push(`set security address-book global address ${name} ${addrValue}`);
+        {
+          // Validate IP/mask: if host bits are set (e.g., 198.51.100.9/27), Junos rejects it.
+          // Fix: for host addresses with non-/32 mask, use /32 (it's a host, not a network).
+          let fixedAddr = addrValue;
+          const cidrMatch = addrValue.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/);
+          if (cidrMatch) {
+            const [, ip, maskStr] = cidrMatch;
+            const mask = parseInt(maskStr);
+            if (mask < 32) {
+              // Check if host bits are set
+              const ipNum = ip.split('.').reduce((acc, oct) => (acc << 8) + parseInt(oct), 0) >>> 0;
+              const netMask = mask === 0 ? 0 : (0xFFFFFFFF << (32 - mask)) >>> 0;
+              if ((ipNum & ~netMask) !== 0) {
+                // Host bits set — use /32 for address-book entry
+                fixedAddr = `${ip}/32`;
+              }
+            }
+          }
+          commands.push(`set security address-book global address ${name} ${fixedAddr}`);
+        }
         break;
       case 'range':
         if (!addrValue) {
