@@ -335,6 +335,9 @@ function convertZones(zones, commands, warnings, summary, interfaceMappings = {}
   commands.push('# Security Zones');
   commands.push('# =============================================');
 
+  // Track which interfaces are already assigned to a zone (Junos: one zone per interface)
+  const assignedInterfaces = new Map(); // srxIface → zoneName
+
   for (const zone of zones) {
     const zoneName = sanitizeJunosName(zone.name);
     commands.push(`set security zones security-zone ${zoneName}`);
@@ -343,6 +346,16 @@ function convertZones(zones, commands, warnings, summary, interfaceMappings = {}
     for (const iface of zone.interfaces || []) {
       // Map PAN-OS interface names to SRX convention if needed
       const srxIface = mapInterfaceName(iface, interfaceMappings);
+      // Skip if this interface is already assigned to another zone (first assignment wins)
+      if (assignedInterfaces.has(srxIface)) {
+        const existingZone = assignedInterfaces.get(srxIface);
+        warnings.push(createWarning('warning', `zones/${zoneName}`,
+          `Interface ${srxIface} already assigned to zone "${existingZone}" — skipped in zone "${zoneName}"`,
+          'Junos allows an interface in only one security zone. Verify zone assignments.'));
+        commands.push(`# WARNING: ${srxIface} skipped — already in zone ${existingZone}`);
+        continue;
+      }
+      assignedInterfaces.set(srxIface, zoneName);
       commands.push(`set security zones security-zone ${zoneName} interfaces ${srxIface}`);
     }
 
@@ -558,6 +571,11 @@ function autoGenerateMissingAppDefinitions(commands) {
     if (matchApp && matchApp[1] !== 'any') {
       referencedApps.add(matchApp[1]);
     }
+    // Also scan application-set member references — these apps need definitions too
+    const appSetMember = cmd.match(/^set applications application-set \S+ application (\S+)/);
+    if (appSetMember) {
+      referencedApps.add(appSetMember[1]);
+    }
     const defApp = cmd.match(/^set applications application (\S+)/);
     if (defApp) {
       definedApps.add(defApp[1]);
@@ -588,11 +606,25 @@ function autoGenerateMissingAppDefinitions(commands) {
 
   for (const appName of missing) {
     // Try to infer protocol/port from name
+    // Pattern 1: explicit proto-port like "tcp-8080", "udp-53"
     const protoPortMatch = appName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
+    // Pattern 2: short name like "n-993", "n-587" → infer TCP + port
+    const shortNameMatch = !protoPortMatch && appName.match(/^[a-zA-Z]-(\d+)$/);
+    // Pattern 3: descriptive name ending with port like "NAS-Web-Admin-5000" → infer TCP + trailing port
+    const trailingPortMatch = !protoPortMatch && !shortNameMatch && appName.match(/-(\d+)$/);
+
     if (protoPortMatch) {
       const proto = protoPortMatch[1].toLowerCase();
       const port = protoPortMatch[2];
       insertionCmds.push(`set applications application ${appName} protocol ${proto}`);
+      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
+    } else if (shortNameMatch) {
+      const port = shortNameMatch[1];
+      insertionCmds.push(`set applications application ${appName} protocol tcp`);
+      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
+    } else if (trailingPortMatch) {
+      const port = trailingPortMatch[1];
+      insertionCmds.push(`set applications application ${appName} protocol tcp`);
       insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
     } else {
       insertionCmds.push(`# WARNING: "${appName}" — could not infer port, set to placeholder`);
@@ -1962,12 +1994,19 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
             // Create a source NAT pool
             const poolName = sanitizeJunosName(`pool-${rule.name}`);
             for (const addr of rule.translated_src.addresses) {
-              commands.push(`set security nat source pool ${poolName} address ${addr}`);
+              // NAT pool address must be an IP, not a named object — resolve it
+              const resolvedPoolAddr = resolveNatAddress(addr, addrLookup, warnings);
+              const poolAddr = resolvedPoolAddr || addr;
+              commands.push(`set security nat source pool ${poolName} address ${poolAddr}`);
             }
             commands.push(`set ${rulePath} then source-nat pool ${poolName}`);
           } else if (rule.translated_src.type === 'static') {
-            commands.push(`set ${rulePath} then source-nat pool ${sanitizeJunosName(rule.name)}-static`);
-            commands.push(`set security nat source pool ${sanitizeJunosName(rule.name)}-static address ${rule.translated_src.address}`);
+            const staticPoolName = `${sanitizeJunosName(rule.name)}-static`;
+            // NAT pool address must be an IP, not a named object — resolve it
+            const resolvedStaticAddr = resolveNatAddress(rule.translated_src.address, addrLookup, warnings);
+            const staticAddr = resolvedStaticAddr || rule.translated_src.address;
+            commands.push(`set ${rulePath} then source-nat pool ${staticPoolName}`);
+            commands.push(`set security nat source pool ${staticPoolName} address ${staticAddr}`);
           } else {
             // Unknown translation type — default to interface NAT (e.g., Check Point hide NAT)
             commands.push(`set ${rulePath} then source-nat interface`);
@@ -2102,36 +2141,71 @@ function convertStaticRoutes(routes, commands, warnings, summary) {
   commands.push('# Static Routes');
   commands.push('# =============================================');
 
+  // Track destinations that already have a next-hop to avoid duplicate default routes
+  // (Junos allows only one default route action per destination in the same routing table)
+  const routesWithNextHop = new Set();     // key: "vrf|dest" or "|dest"
+  const routesWithAction = new Set();      // any action emitted for this dest
+
+  // First pass: identify all destinations that have a concrete next-hop
+  for (const route of routes) {
+    if (!route.destination) continue;
+    const dest = route.destination.trim();
+    const nextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const key = `${route.vrf || ''}|${dest}`;
+    if (nextHop && route.next_hop_type !== 'next-vr' && route.next_hop_type !== 'discard') {
+      routesWithNextHop.add(key);
+    }
+  }
+
   for (const route of routes) {
     if (!route.destination) continue;
 
     const dest = route.destination.trim();
     const nextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const key = `${route.vrf || ''}|${dest}`;
 
     if (route.vrf) {
       // Routing instance
       const instName = sanitizeJunosName(route.vrf);
       if (route.next_hop_type === 'discard') {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} discard`);
+        if (!routesWithAction.has(key)) {
+          commands.push(`set routing-instances ${instName} routing-options static route ${dest} discard`);
+          routesWithAction.add(key);
+        }
       } else if (route.next_hop_type === 'next-vr' && nextHop) {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+        // Skip next-table if this destination already has a concrete next-hop
+        if (!routesWithNextHop.has(key)) {
+          commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+          routesWithAction.add(key);
+        }
       } else if (nextHop) {
         commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-hop ${nextHop}`);
+        routesWithAction.add(key);
       }
       if (route.metric && route.metric !== 10) {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} metric ${route.metric}`);
+        const pref = Math.max(1, Math.min(4294967295, route.metric));
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} preference ${pref}`);
       }
     } else {
       // Global routing-options
       if (route.next_hop_type === 'discard') {
-        commands.push(`set routing-options static route ${dest} discard`);
+        if (!routesWithAction.has(key)) {
+          commands.push(`set routing-options static route ${dest} discard`);
+          routesWithAction.add(key);
+        }
       } else if (route.next_hop_type === 'next-vr' && nextHop) {
-        commands.push(`set routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+        // Skip next-table if this destination already has a concrete next-hop
+        if (!routesWithNextHop.has(key)) {
+          commands.push(`set routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+          routesWithAction.add(key);
+        }
       } else if (nextHop) {
         commands.push(`set routing-options static route ${dest} next-hop ${nextHop}`);
+        routesWithAction.add(key);
       }
       if (route.metric && route.metric !== 10) {
-        commands.push(`set routing-options static route ${dest} metric ${route.metric}`);
+        const pref = Math.max(1, Math.min(4294967295, route.metric));
+        commands.push(`set routing-options static route ${dest} preference ${pref}`);
       }
     }
 
