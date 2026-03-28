@@ -586,10 +586,25 @@ function autoGenerateMissingAppDefinitions(commands) {
     }
   }
 
-  // Check against predefined Junos apps
+  // junos-* apps that may not exist on all platforms (vSRX, older versions)
+  const PLATFORM_DEPENDENT_APPS = {
+    'junos-mysql':    { protocol: 'tcp', port: '3306' },
+    'junos-mssql':    { protocol: 'tcp', port: '1433' },
+    'junos-oracle':   { protocol: 'tcp', port: '1521' },
+    'junos-postgres': { protocol: 'tcp', port: '5432' },
+    'junos-mongodb':  { protocol: 'tcp', port: '27017' },
+    'junos-redis':    { protocol: 'tcp', port: '6379' },
+    'junos-memcached':{ protocol: 'tcp', port: '11211' },
+  };
+
+  // Check against predefined Junos apps — but always define platform-dependent ones
   const missing = [];
   for (const app of referencedApps) {
     if (definedApps.has(app)) continue;
+    if (PLATFORM_DEPENDENT_APPS[app]) {
+      missing.push(app); // Always generate — may not exist on target
+      continue;
+    }
     if (JUNOS_PREDEFINED_APPS.has(app)) continue;
     missing.push(app);
   }
@@ -605,6 +620,13 @@ function autoGenerateMissingAppDefinitions(commands) {
   insertionCmds.push('# =============================================');
 
   for (const appName of missing) {
+    // Check platform-dependent junos-* apps first (known port mappings)
+    const platformApp = PLATFORM_DEPENDENT_APPS[appName];
+    if (platformApp) {
+      insertionCmds.push(`set applications application ${appName} protocol ${platformApp.protocol}`);
+      insertionCmds.push(`set applications application ${appName} destination-port ${platformApp.port}`);
+      continue;
+    }
     // Try to infer protocol/port from name
     // Pattern 1: explicit proto-port like "tcp-8080", "udp-53"
     const protoPortMatch = appName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
@@ -658,11 +680,22 @@ function convertInterfaceAddresses(interfaces, commands, warnings, summary, inte
   commands.push('# Interface Addresses');
   commands.push('# =============================================');
 
+  const configuredInterfaces = new Set();
   for (const iface of interfaces) {
     if (!iface.ip && !iface.ipv6) continue;
 
     const srxName = mapInterfaceName(iface.name || '', interfaceMappings);
     const [base, unit = '0'] = srxName.split('.');
+    const ifKey = `${base}.${unit}`;
+
+    // Skip if this interface was already configured (multiple vendor interfaces mapped to same SRX interface)
+    if (configuredInterfaces.has(ifKey)) {
+      warnings.push(createWarning('warning', `interfaces/${ifKey}`,
+        `Interface ${ifKey} already configured (mapped from ${iface.name}) — skipping duplicate`,
+        'Check interface mappings for conflicts'));
+      continue;
+    }
+    configuredInterfaces.add(ifKey);
 
     if (iface.ip) {
       commands.push(`set interfaces ${base} unit ${unit} family inet address ${iface.ip}`);
@@ -1993,13 +2026,25 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
           } else if (rule.translated_src.type === 'dynamic-ip-pool') {
             // Create a source NAT pool
             const poolName = sanitizeJunosName(`pool-${rule.name}`);
+            let allResolved = true;
+            const poolCmds = [];
             for (const addr of rule.translated_src.addresses) {
-              // NAT pool address must be an IP, not a named object — resolve it
               const resolvedPoolAddr = resolveNatAddress(addr, addrLookup, warnings);
-              const poolAddr = resolvedPoolAddr || addr;
-              commands.push(`set security nat source pool ${poolName} address ${poolAddr}`);
+              if (resolvedPoolAddr) {
+                poolCmds.push(`set security nat source pool ${poolName} address ${resolvedPoolAddr}`);
+              } else {
+                allResolved = false;
+              }
             }
-            commands.push(`set ${rulePath} then source-nat pool ${poolName}`);
+            if (allResolved && poolCmds.length > 0) {
+              commands.push(...poolCmds);
+              commands.push(`set ${rulePath} then source-nat pool ${poolName}`);
+            } else {
+              // Can't resolve pool addresses (e.g., Check Point hide NAT using gateway name)
+              // Fall back to interface NAT
+              commands.push(`# NAT pool address could not be resolved — using interface NAT`);
+              commands.push(`set ${rulePath} then source-nat interface`);
+            }
           } else if (rule.translated_src.type === 'static') {
             const staticPoolName = `${sanitizeJunosName(rule.name)}-static`;
             // NAT pool address must be an IP, not a named object — resolve it
