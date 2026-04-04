@@ -1,7 +1,55 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
 import { useUIContext, isDeterministicMode } from '../../contexts/UIContext.jsx';
+
+/**
+ * Resolves the active theme ('dark' or 'light') based on localStorage and OS preference.
+ * @returns {'dark'|'light'}
+ */
+function getEffectiveTheme() {
+  const stored = localStorage.getItem('theme');
+  if (stored === 'dark' || stored === 'light') return stored;
+  // Auto: follow OS preference
+  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
+    return 'light';
+  }
+  return 'dark';
+}
+
+/**
+ * Custom hook for theme management (dark/light toggle).
+ * Applies data-theme attribute to :root and persists in localStorage.
+ */
+function useTheme() {
+  const [theme, setThemeState] = useState(getEffectiveTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Listen for OS preference changes when in auto mode
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: light)');
+    if (!mq) return;
+    const handler = () => {
+      const stored = localStorage.getItem('theme');
+      if (!stored) setThemeState(mq.matches ? 'light' : 'dark');
+    };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setThemeState(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('theme', next);
+      return next;
+    });
+  }, []);
+
+  return { theme, toggleTheme };
+}
 
 /**
  * TopBar — Top navigation bar.
@@ -18,6 +66,9 @@ const VENDOR_NAMES = {
   checkpoint: 'Check Point',
   sonicwall: 'SonicWall',
   huawei_usg: 'Huawei USG',
+  aws_sg: 'AWS Security Groups',
+  azure_nsg: 'Azure NSG',
+  gcp_fw: 'GCP Firewall',
 };
 
 export default function TopBar() {
@@ -50,6 +101,8 @@ export default function TopBar() {
   const fixedCount = statusValues.filter(s => s === 'fixed' || s === 'resolved').length;
   const ignoredCount = statusValues.filter(s => s === 'ignored').length;
   const unresolvedWarningCount = allWarnings.length - ackCount - fixedCount - ignoredCount;
+
+  const { theme, toggleTheme } = useTheme();
 
   // Helpers
   const showModal = (name) => uiDispatch({ type: 'SHOW_MODAL', name });
@@ -211,6 +264,31 @@ export default function TopBar() {
             <line x1="12" y1="11" x2="12" y2="17" />
             <polyline points="9 14 12 11 15 14" />
           </svg>
+        </button>
+
+        {/* Theme toggle */}
+        <button
+          className="settings-btn"
+          onClick={toggleTheme}
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        >
+          {theme === 'dark' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+            </svg>
+          )}
         </button>
 
         {/* Tour */}

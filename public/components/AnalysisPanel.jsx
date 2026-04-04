@@ -17,6 +17,7 @@ const FINDING_LABELS = {
   logging_off: 'Logging Disabled',
   permissive: 'Overly Permissive',
   empty_groups: 'Empty Groups',
+  'never-hit': 'Never-Hit Policies',
 };
 
 const FINDING_SEVERITY = {
@@ -27,6 +28,7 @@ const FINDING_SEVERITY = {
   logging_off: 'warning',
   permissive: 'warning',
   empty_groups: 'info',
+  'never-hit': 'warning',
 };
 
 const FINDING_ACTIONS = {
@@ -58,6 +60,10 @@ const FINDING_ACTIONS = {
   empty_groups: [
     { value: 'include', label: 'Keep' },
     { value: 'exclude', label: 'Remove Empty' },
+  ],
+  'never-hit': [
+    { value: 'include', label: 'Keep All' },
+    { value: 'exclude', label: 'Remove Never-Hit' },
   ],
 };
 
@@ -175,16 +181,16 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
                   display: 'inline-flex', alignItems: 'center', gap: 6,
                   padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                   cursor: 'pointer',
-                  background: sev === 'warning' ? 'rgba(167,139,250,0.12)' : 'var(--surface-2, rgba(128,128,128,0.1))',
-                  color: sev === 'warning' ? '#a78bfa' : 'var(--text-secondary)',
-                  border: `1px solid ${sev === 'warning' ? 'rgba(167,139,250,0.3)' : 'var(--border-color)'}`,
+                  background: sev === 'warning' ? 'rgba(245,158,11,0.12)' : 'var(--surface-2, rgba(128,128,128,0.1))',
+                  color: sev === 'warning' ? 'var(--caution)' : 'var(--text-secondary)',
+                  border: `1px solid ${sev === 'warning' ? 'rgba(245,158,11,0.3)' : 'var(--border-color)'}`,
                 }}
               >
                 {FINDING_LABELS[f.id] || f.id}
                 <span style={{
                   display: 'inline-block', minWidth: 18, padding: '0 5px',
                   borderRadius: 8, fontSize: 11, textAlign: 'center',
-                  background: sev === 'warning' ? '#a78bfa' : '#6b7280', color: '#fff',
+                  background: sev === 'warning' ? 'var(--caution)' : '#6b7280', color: '#fff',
                 }}>
                   {f.count}
                 </span>
@@ -199,7 +205,7 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
         const isExpanded = expanded.has(finding.id);
         const severity = FINDING_SEVERITY[finding.id] || 'info';
         const actions = FINDING_ACTIONS[finding.id] || [];
-        const badgeColor = severity === 'warning' ? '#a78bfa' : '#6b7280';
+        const badgeColor = severity === 'warning' ? 'var(--caution)' : '#6b7280';
 
         return (
           <div key={finding.id} style={{

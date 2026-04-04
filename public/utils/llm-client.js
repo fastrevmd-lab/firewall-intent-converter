@@ -720,8 +720,12 @@ async function callGemini(settings, userPrompt, systemPrompt) {
   }
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey },
+      body: JSON.stringify(body),
+    },
   );
 
   if (!response.ok) {
@@ -757,7 +761,7 @@ async function callOllama(settings, userPrompt, systemPrompt) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: settings.model || 'llama3',
+      model: settings.model || 'qwen2.5-coder:7b',
       messages,
       stream: false,
       options: {
@@ -928,8 +932,12 @@ async function callGeminiChat(settings, messages, systemPrompt) {
   }
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey },
+      body: JSON.stringify(body),
+    },
   );
 
   if (!response.ok) {
@@ -952,7 +960,7 @@ async function callOllamaChat(settings, messages, systemPrompt) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: settings.model || 'llama3',
+      model: settings.model || 'qwen2.5-coder:7b',
       messages: allMessages,
       stream: false,
       options: { temperature: settings.temperature ?? 0.2 },

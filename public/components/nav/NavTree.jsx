@@ -58,6 +58,7 @@ const NAV_STRUCTURE = [
     { id: 'decryption', label: 'SSL B&I', countKey: 'decryption_rules' },
     { id: 'pbf', label: 'PBF', countKey: 'pbf_rules' },
     { id: 'analysis', label: 'Analysis', countFn: (ic) => ic?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0 },
+    { id: 'dependency-graph', label: 'Dependency Graph' },
   ]},
   { id: 'objects', label: 'Objects', icon: 'box', children: [
     { id: 'objects', label: 'Addr/Svc/App', countFn: (ic) =>
@@ -78,11 +79,31 @@ const NAV_STRUCTURE = [
     { id: 'ha', label: 'HA', countFn: (ic) => ic?.ha_config?.enabled ? 1 : 0 },
     { id: 'qos', label: 'QoS', countKey: 'qos_config' },
     { id: 'syslog', label: 'Syslog', countKey: 'syslog_config' },
+    { id: 'snmp', label: 'SNMP', countKey: 'snmp_config' },
+    { id: 'aaa', label: 'AAA', countKey: 'aaa_config' },
   ]},
   { id: 'output', label: 'Output', icon: 'export', children: [
     { id: 'output', label: 'SRX Config' },
     { id: 'warnings', label: 'Warnings', warnCount: true },
     { id: 'diff', label: 'Diff View' },
+    { id: 'checklist', label: 'Checklist', countFn: (ic) => {
+      if (!ic) return 0;
+      let count = 0;
+      const policies = ic.security_policies || [];
+      const allText = JSON.stringify(ic);
+      if (allText.includes('certificate') || allText.includes('ssl-') || (ic.decryption_rules || []).length > 0) count++;
+      if (policies.some(p => (p.source_users || []).some(u => u !== 'any'))) count++;
+      if (policies.some(p => (p.profiles || []).some(pr => pr.includes('idp') || pr.includes('ips')))) count++;
+      if (allText.includes('secint') || allText.includes('secintel') || allText.includes('threat-intelligence')) count++;
+      if (allText.includes('radius') || allText.includes('tacacs')) count++;
+      if ((ic.vpn_tunnels || []).length > 0) count++;
+      if ((ic.nat_rules || []).length > 0) count++;
+      return count;
+    }},
+    { id: 'report', label: 'Report' },
+  ]},
+  { id: 'tools', label: 'Tools', icon: 'tool', children: [
+    { id: 'batch', label: 'Batch Migration' },
   ]},
 ];
 

@@ -131,8 +131,13 @@ export function sanitizeJunosName(name) {
   let sanitized = name.replace(/[^a-zA-Z0-9._-]/g, '-');
   // Collapse consecutive hyphens
   sanitized = sanitized.replace(/-{2,}/g, '-');
-  // Remove leading/trailing hyphens
-  sanitized = sanitized.replace(/^-+|-+$/g, '');
+  // Remove leading/trailing hyphens and dots
+  sanitized = sanitized.replace(/^[-_.]+|[-_.]+$/g, '');
+  // Bug 9 fix: Junos names must start with a letter. Prefix with 'n-' if
+  // the name starts with a digit (common in SonicWall/Huawei address objects).
+  if (/^\d/.test(sanitized)) {
+    sanitized = `n-${sanitized}`;
+  }
   // Truncate to 63 characters (Junos limit)
   sanitized = sanitized.substring(0, 63);
   return sanitized || 'unnamed';
@@ -214,6 +219,28 @@ export const JUNOS_PREDEFINED_APPS = new Set([
  * @returns {string|null} - Junos application name or null
  */
 const APP_MAP = {
+  // ── Uppercase vendor names (Huawei, FortiGate, etc.) ─────
+  'HTTP': 'junos-http',
+  'HTTPS': 'junos-https',
+  'DNS': 'junos-dns-udp',
+  'SSH': 'junos-ssh',
+  'FTP': 'junos-ftp',
+  'TELNET': 'junos-telnet',
+  'SMTP': 'junos-smtp',
+  'NTP': 'junos-ntp',
+  'SNMP': 'junos-snmp',
+  'ICMP': 'junos-icmp-all',
+  'PING': 'junos-ping',
+  'TRACEROUTE': 'junos-traceroute',
+  'RDP': 'junos-rdp',
+  'POP3': 'junos-pop3',
+  'IMAP': 'junos-imap',
+  'TFTP': 'junos-tftp',
+  'SYSLOG': 'junos-syslog',
+  'DHCP': 'junos-dhcp-client',
+  'LDAP': 'junos-ldap',
+  'BGP': 'junos-bgp',
+  'SIP': 'junos-sip',
   // ── PAN-OS Application Names ──────────────────────────────
   // Web
   'web-browsing': 'junos-http',
@@ -590,12 +617,12 @@ export function isPredefEquivalent(name, protocol, portRange) {
  * @returns {{ srxFeature: string, srxType: string, srxProfile: string }}
  */
 export function mapProfileToSrx(profileType, profileName) {
-  const safeName = sanitizeJunosName(profileName);
+  const safeName = sanitizeJunosName(profileName).slice(0, 24);
   const mapping = {
     // PAN-OS originated
-    'virus':              { srxFeature: 'utm', srxType: 'anti-virus',        srxProfile: `junos-av-${safeName}` },
-    'wildfire-analysis':  { srxFeature: 'utm', srxType: 'anti-virus',        srxProfile: `junos-av-${safeName}` },
-    'url-filtering':      { srxFeature: 'utm', srxType: 'web-filtering',     srxProfile: `junos-wf-${safeName}` },
+    'virus':              { srxFeature: 'utm', srxType: 'anti-virus',        srxProfile: `custom-av-${safeName}` },
+    'wildfire-analysis':  { srxFeature: 'utm', srxType: 'anti-virus',        srxProfile: `custom-av-${safeName}` },
+    'url-filtering':      { srxFeature: 'utm', srxType: 'web-filtering',     srxProfile: `custom-wf-${safeName}` },
     'file-blocking':      { srxFeature: 'unsupported', srxType: 'content-filtering', srxProfile: `junos-cf-${safeName}` },
     'spyware':            { srxFeature: 'idp', srxType: 'idp-policy',        srxProfile: `idp-${safeName}` },
     'vulnerability':      { srxFeature: 'idp', srxType: 'idp-policy',        srxProfile: `idp-${safeName}` },
@@ -728,6 +755,31 @@ export function detectVendor(configText) {
   if (trimmed.includes('ip address-set') && trimmed.includes('type object')) {
     return { vendor: 'huawei_usg', format: 'text', confidence: 0.85 };
   }
+
+  // Cloud firewall formats (JSON-based)
+  try {
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      const probe = trimmed.slice(0, 3000);
+      // AWS Security Groups: SecurityGroups array with GroupId, IpPermissions
+      if (probe.includes('"SecurityGroups"') && probe.includes('"GroupId"')) {
+        return { vendor: 'aws_sg', format: 'json', confidence: 0.95 };
+      }
+      if (probe.includes('"IpPermissions"') && probe.includes('"VpcId"')) {
+        return { vendor: 'aws_sg', format: 'json', confidence: 0.90 };
+      }
+      // Azure NSG: securityRules with priority, direction, access
+      if (probe.includes('"securityRules"') && (probe.includes('"priority"') || probe.includes('"direction"'))) {
+        return { vendor: 'azure_nsg', format: 'json', confidence: 0.95 };
+      }
+      // GCP Firewall Rules: array with allowed/denied, sourceRanges, network
+      if (probe.includes('"sourceRanges"') && (probe.includes('"allowed"') || probe.includes('"denied"'))) {
+        return { vendor: 'gcp_fw', format: 'json', confidence: 0.95 };
+      }
+      if (probe.includes('"IPProtocol"') && probe.includes('"network"')) {
+        return { vendor: 'gcp_fw', format: 'json', confidence: 0.85 };
+      }
+    }
+  } catch (e) { /* not JSON — continue */ }
 
   // Default: assume PAN-OS XML if it looks like XML
   if (trimmed.startsWith('<')) {

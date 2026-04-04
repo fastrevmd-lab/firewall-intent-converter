@@ -96,6 +96,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     bgp_neighbors_converted: 0,
     ospf_areas_converted: 0,
     ospf_interfaces_converted: 0,
+    lag_interfaces_converted: 0,
     total_warnings: 0,
     unsupported_items: 0,
   };
@@ -115,19 +116,23 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // Clear trackers from any previous conversion (module-level state)
   customfwicApps.clear();
   predefServiceMap.clear();
+  commaPortSetMap.clear();
+  unresolvedServiceApps.clear();
 
   // Generate commands in Junos hierarchy order
   convertSystemConfig(config.system_config, commands, warnings, summary);
   convertZones(config.zones, commands, warnings, summary, interfaceMappings);
   convertInterfaceAddresses(config.interfaces, commands, warnings, summary, interfaceMappings);
+  ensureZoneInterfaceFamilies(config.zones, config.interfaces, commands, interfaceMappings);
+  convertLagInterfaces(config.lag_interfaces, commands, warnings, summary, interfaceMappings);
   convertAddressObjects(config.address_objects, commands, warnings, summary);
-  convertAddressGroups(config.address_groups, commands, warnings, summary);
-  convertServiceObjects(config.service_objects, commands, warnings, summary);
-  convertServiceGroups(config.service_groups, commands, warnings, summary);
-  convertApplications(config.applications, commands, warnings, summary);
-
   // Detect source vendor for 1:1 passthrough (SRX→SRX needs no app mapping)
   const sourceVendor = config.metadata?.source_vendor || '';
+
+  convertAddressGroups(config.address_groups, commands, warnings, summary);
+  convertServiceObjects(config.service_objects, commands, warnings, summary);
+  convertServiceGroups(config.service_groups, commands, warnings, summary, sourceVendor);
+  convertApplications(config.applications, commands, warnings, summary);
 
   // UTM / IDP / SecIntel — must run before security policies to build assignment maps
   const profileDefs = config.security_profile_definitions || {};
@@ -140,27 +145,13 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   commands.push(...secIntelCommands);
 
   convertSchedules(config.schedules, commands, warnings);
-  convertSecurityPolicies(config.security_policies, commands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor, config._rule_groups);
-  convertNatRules(config.nat_rules, commands, warnings, summary);
-  convertStaticRoutes(config.static_routes, commands, warnings, summary);
-  convertBgpConfig(config.bgp_config, commands, warnings, summary);
-  convertOspfConfig(config.ospf_config, commands, warnings, summary);
-  convertOspf3Config(config.ospf3_config, commands, warnings, summary);
-  convertEvpnConfig(config.evpn_config, commands, warnings, summary);
-  convertVxlanConfig(config.vxlan_config, commands, warnings, summary);
-  convertHaConfig(config.ha_config, commands, warnings, summary);
-  convertScreenConfig(config.screen_config, commands, warnings, summary);
-  convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary);
-  convertSyslogConfig(config.syslog_config, commands, warnings, summary);
-  convertDhcpConfig(config.dhcp_config, commands, warnings, summary);
-  convertQosConfig(config.qos_config, commands, warnings, summary);
-  convertL2Config(config, commands, warnings, summary, interfaceMappings);
-  convertPbfConfig(config.pbf_rules, commands, warnings, summary, interfaceMappings);
-  convertSslProxyConfig(config, commands, warnings, summary);
-  convertFlowMonitoringConfig(config.flow_monitoring_config, commands, warnings, summary, interfaceMappings);
-  convertUserIdentification(config.security_policies, commands, warnings);
 
-  // Generate placeholder definitions for unmapped Customfwic applications
+  // Bug 4 fix: Run policy conversion into a temp buffer to populate customfwicApps,
+  // then emit placeholder app definitions BEFORE emitting the policy commands.
+  // This ensures all custom applications are defined before policies reference them.
+  const policyCommands = [];
+  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor, config._rule_groups);
+
   if (customfwicApps.size > 0) {
     commands.push('# =============================================');
     commands.push('# Placeholder Custom Applications (Customfwic)');
@@ -169,19 +160,97 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     for (const [customName, originalName] of customfwicApps) {
       commands.push(`# TODO: Define "${originalName}" — set correct protocol and destination-port`);
       commands.push(`set applications application ${customName} protocol tcp`);
-      commands.push(`set applications application ${customName} destination-port 0`);
+      commands.push(`set applications application ${customName} destination-port 1`);
       commands.push(`set applications application ${customName} description "Placeholder for ${originalName} - REQUIRES MANUAL CONFIGURATION"`);
     }
     commands.push('');
   }
 
-  // Unsupported feature notices
-  commands.push('# =============================================');
-  commands.push('# NOT CONVERTED — Manual Configuration Required');
-  commands.push('# =============================================');
-  commands.push('# AAA / Authentication (RADIUS, TACACS+, LDAP) — not converted by this tool');
-  commands.push('# Configure manually: set system authentication-order, set access profile, etc.');
-  commands.push('');
+  // Fix 4: Emit definitions for service references not already defined as applications.
+  // Build set of already-defined application names from prior commands.
+  if (unresolvedServiceApps.size > 0) {
+    const definedApps = new Set();
+    for (const cmd of commands) {
+      const appMatch = cmd.match(/^set applications application (\S+)/);
+      if (appMatch) definedApps.add(appMatch[1]);
+      const appSetMatch = cmd.match(/^set applications application-set (\S+)/);
+      if (appSetMatch) definedApps.add(appSetMatch[1]);
+    }
+    const needsDefinition = [];
+    for (const [safeName, originalName] of unresolvedServiceApps) {
+      if (definedApps.has(safeName)) continue;
+      if (JUNOS_PREDEFINED_APPS.has(safeName)) continue;
+      // Try to infer protocol/port from name pattern like "tcp-9090" or "udp-53"
+      const protoPortMatch = safeName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
+      if (protoPortMatch) {
+        const proto = protoPortMatch[1].toLowerCase();
+        const port = protoPortMatch[2];
+        needsDefinition.push({ safeName, originalName, proto, port });
+      } else {
+        needsDefinition.push({ safeName, originalName, proto: 'tcp', port: '1' });
+      }
+    }
+    if (needsDefinition.length > 0) {
+      commands.push('# =============================================');
+      commands.push('# Auto-generated Application Definitions');
+      commands.push('# (referenced in policies but not defined by source config)');
+      commands.push('# =============================================');
+      for (const { safeName, originalName, proto, port } of needsDefinition) {
+        commands.push(`set applications application ${safeName} protocol ${proto}`);
+        commands.push(`set applications application ${safeName} destination-port ${port}`);
+        if (port === '1') {
+          commands.push(`# WARNING: "${originalName}" — could not infer port, set to placeholder`);
+        }
+      }
+      commands.push('');
+    }
+  }
+
+  commands.push(...policyCommands);
+
+  // Fix 1: When global policies exist, Junos requires a default-policy statement
+  const hasGlobalPolicy = policyCommands.some(cmd => cmd.includes('security policies global policy'));
+  if (hasGlobalPolicy) {
+    commands.push('set security policies default-policy permit-all');
+  }
+
+  convertNatRules(config.nat_rules, commands, warnings, summary, config.address_objects);
+  convertStaticRoutes(config.static_routes, commands, warnings, summary);
+  convertBgpConfig(config.bgp_config, commands, warnings, summary);
+  convertOspfConfig(config.ospf_config, commands, warnings, summary, interfaceMappings);
+  convertOspf3Config(config.ospf3_config, commands, warnings, summary, interfaceMappings);
+  convertEvpnConfig(config.evpn_config, commands, warnings, summary);
+  convertVxlanConfig(config.vxlan_config, commands, warnings, summary);
+  convertHaConfig(config.ha_config, commands, warnings, summary);
+  convertScreenConfig(config.screen_config, commands, warnings, summary);
+  convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary);
+  convertSyslogConfig(config.syslog_config, commands, warnings, summary);
+  convertSnmpConfig(config.snmp_config, commands, warnings, summary);
+  convertAaaConfig(config.aaa_config, commands, warnings, summary);
+  convertDhcpConfig(config.dhcp_config, commands, warnings, summary);
+  convertQosConfig(config.qos_config, commands, warnings, summary);
+  convertL2Config(config, commands, warnings, summary, interfaceMappings);
+  convertPbfConfig(config.pbf_rules, commands, warnings, summary, interfaceMappings, config.address_objects);
+  convertSslProxyConfig(config, commands, warnings, summary);
+  convertFlowMonitoringConfig(config.flow_monitoring_config, commands, warnings, summary, interfaceMappings);
+  convertUserIdentification(config.security_policies, commands, warnings);
+
+  // Fix 4: Post-process all commands to replace remaining vendor interface names
+  sanitizeAllInterfaceNames(commands, interfaceMappings);
+
+  // Fix 7: Final pass — auto-generate definitions for any application referenced
+  // in policy match but never defined as a custom or predefined application
+  autoGenerateMissingAppDefinitions(commands);
+
+  // Unsupported feature notices (only if AAA was not auto-converted)
+  if (!config.aaa_config || config.aaa_config.length === 0) {
+    commands.push('# =============================================');
+    commands.push('# NOT CONVERTED — Manual Configuration Required');
+    commands.push('# =============================================');
+    commands.push('# AAA / Authentication (RADIUS, TACACS+, LDAP) — no AAA config detected in source');
+    commands.push('# If needed, configure manually: set system authentication-order, set access profile, etc.');
+    commands.push('');
+  }
 
   summary.total_warnings = warnings.length;
 
@@ -270,6 +339,9 @@ function convertZones(zones, commands, warnings, summary, interfaceMappings = {}
   commands.push('# Security Zones');
   commands.push('# =============================================');
 
+  // Track which interfaces are already assigned to a zone (Junos: one zone per interface)
+  const assignedInterfaces = new Map(); // srxIface → zoneName
+
   for (const zone of zones) {
     const zoneName = sanitizeJunosName(zone.name);
     commands.push(`set security zones security-zone ${zoneName}`);
@@ -278,6 +350,16 @@ function convertZones(zones, commands, warnings, summary, interfaceMappings = {}
     for (const iface of zone.interfaces || []) {
       // Map PAN-OS interface names to SRX convention if needed
       const srxIface = mapInterfaceName(iface, interfaceMappings);
+      // Skip if this interface is already assigned to another zone (first assignment wins)
+      if (assignedInterfaces.has(srxIface)) {
+        const existingZone = assignedInterfaces.get(srxIface);
+        warnings.push(createWarning('warning', `zones/${zoneName}`,
+          `Interface ${srxIface} already assigned to zone "${existingZone}" — skipped in zone "${zoneName}"`,
+          'Junos allows an interface in only one security zone. Verify zone assignments.'));
+        commands.push(`# WARNING: ${srxIface} skipped — already in zone ${existingZone}`);
+        continue;
+      }
+      assignedInterfaces.set(srxIface, zoneName);
       commands.push(`set security zones security-zone ${zoneName} interfaces ${srxIface}`);
     }
 
@@ -371,8 +453,256 @@ function mapInterfaceName(panosIface, interfaceMappings = {}) {
     return `xe-0/${slot}/${port}.${u}`;
   }
 
+  // Cisco ASA/IOS: GigabitEthernet1/1 (2-segment) → ge-0/0/0.0
+  const ciscoGe2 = panosIface.match(/^GigabitEthernet(\d+)\/(\d+)(\.(\d+))?$/i);
+  if (ciscoGe2) {
+    const slot = parseInt(ciscoGe2[1]);
+    const port = parseInt(ciscoGe2[2]);
+    const u = ciscoGe2[4] || '0';
+    return `ge-0/${slot}/${port}.${u}`;
+  }
+
+  // Cisco: TenGigabitEthernet1/1 → xe-0/1/1.0
+  const ciscoXe = panosIface.match(/^TenGigabitEthernet(\d+)\/(\d+)(\.(\d+))?$/i);
+  if (ciscoXe) {
+    const slot = parseInt(ciscoXe[1]);
+    const port = parseInt(ciscoXe[2]);
+    const u = ciscoXe[4] || '0';
+    return `xe-0/${slot}/${port}.${u}`;
+  }
+
+  // FortiGate named interfaces: internal/dmz/wan → ge-0/0/N.0
+  const fortiNamed = panosIface.match(/^(internal|dmz|wan|lan)(\d*)(\.(\d+))?$/i);
+  if (fortiNamed) {
+    const nameMap = { internal: 1, dmz: 2, wan: 3, lan: 4 };
+    const basePort = nameMap[fortiNamed[1].toLowerCase()] || 0;
+    const idx = fortiNamed[2] ? parseInt(fortiNamed[2]) : 0;
+    const u = fortiNamed[4] || '0';
+    return `ge-0/0/${basePort + idx}.${u}`;
+  }
+
+  // Cisco: Tunnel interfaces → st0.N
+  const tunnelMatch = panosIface.match(/^tunnel(\d+)(\.(\d+))?$/i);
+  if (tunnelMatch) {
+    const u = tunnelMatch[1] || '0';
+    return `st0.${u}`;
+  }
+
+  // Bug 1 fix: Map vendor "loopback" interfaces to SRX lo0 naming.
+  // Vendor configs use "loopback.X" but SRX expects "lo0.X". Without this,
+  // the zone references an undefined interface-range 'loopback.X'.
+  const loMatch = panosIface.match(/^loopback(\.(\d+))?$/i);
+  if (loMatch) {
+    const u = loMatch[2] || '0';
+    return `lo0.${u}`;
+  }
+
   // If it doesn't match any known format, return as-is
   return panosIface;
+}
+
+/**
+ * Checks if an interface name is a valid SRX interface (not a leftover vendor name).
+ * Valid SRX interfaces: ge-/xe-/et-/lo0/st0/irb/ae/fxp/em/reth/vlan/me
+ */
+function isValidSrxInterface(ifName) {
+  if (!ifName) return false;
+  return /^(ge-|xe-|et-|lo0|st0|irb|ae\d|fxp|em\d|reth|vlan|me\d)/i.test(ifName);
+}
+
+/**
+ * Post-processes all commands to replace remaining vendor interface names
+ * that leaked through sections not using mapInterfaceName() (syslog, routing, NAT, etc.).
+ * Modifies the commands array in-place.
+ */
+function sanitizeAllInterfaceNames(commands, interfaceMappings = {}) {
+  // Patterns for vendor interfaces that should never appear in SRX config
+  const vendorPatterns = [
+    // Cisco 3-segment: GigabitEthernet0/0/1
+    { re: /GigabitEthernet(\d+)\/(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, s3, _, u) => `ge-0/${s2}/${s3}.${u || '0'}` },
+    // Cisco 2-segment: GigabitEthernet1/1
+    { re: /GigabitEthernet(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, _, u) => `ge-0/${s1}/${s2}.${u || '0'}` },
+    // Cisco TenGig
+    { re: /TenGigabitEthernet(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, _, u) => `xe-0/${s1}/${s2}.${u || '0'}` },
+    // Huawei XGigabitEthernet
+    { re: /XGigabitEthernet(\d+)\/(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, s3, _, u) => `xe-0/${s2}/${s3}.${u || '0'}` },
+    // FortiGate: port1 → ge-0/0/0 (only match standalone "portN" not inside other words)
+    { re: /\bport(\d+)(\.(\d+))?\b/gi, replace: (m, p, _, u) => `ge-0/0/${parseInt(p) - 1}.${u || '0'}` },
+    // PAN-OS: ethernet1/2
+    { re: /\bethernet(\d+)\/(\d+)(\.(\d+))?\b/gi, replace: (m, s, p, _, u) => `ge-0/${parseInt(s) - 1}/${parseInt(p) - 1}.${u || '0'}` },
+    // Check Point: eth0 (only when followed by typical interface context)
+    { re: /\beth(\d+)(\.(\d+))?\b/gi, replace: (m, p, _, u) => `ge-0/0/${p}.${u || '0'}` },
+    // Tunnel → st0
+    { re: /\btunnel(\d+)(\.(\d+))?\b/gi, replace: (m, n) => `st0.${n}` },
+    // Loopback
+    { re: /\bloopback(\d*)(\.(\d+))?\b/gi, replace: (m, n, _, u) => `lo0.${u || n || '0'}` },
+  ];
+
+  for (let i = 0; i < commands.length; i++) {
+    const cmd = commands[i];
+    if (!cmd.startsWith('set ') && !cmd.startsWith('deactivate ')) continue;
+
+    let updated = cmd;
+    for (const { re, replace } of vendorPatterns) {
+      // Reset lastIndex for global regexes
+      re.lastIndex = 0;
+      updated = updated.replace(re, replace);
+    }
+    // Also apply user-defined mappings
+    for (const [vendor, srx] of Object.entries(interfaceMappings)) {
+      if (updated.includes(vendor)) {
+        const srxName = srx.includes('.') ? srx : `${srx}.0`;
+        updated = updated.split(vendor).join(srxName);
+      }
+    }
+    if (updated !== cmd) {
+      commands[i] = updated;
+    }
+  }
+}
+
+/**
+ * Final pass: scan all `match application` commands, collect app names,
+ * check against `set applications application` commands, and auto-generate
+ * definitions for any missing ones.
+ */
+function autoGenerateMissingAppDefinitions(commands) {
+  const referencedApps = new Set();
+  const definedApps = new Set();
+
+  for (const cmd of commands) {
+    const matchApp = cmd.match(/^set .* match application (\S+)/);
+    if (matchApp && matchApp[1] !== 'any') {
+      referencedApps.add(matchApp[1]);
+    }
+    // Also scan application-set member references — these apps need definitions too
+    const appSetMember = cmd.match(/^set applications application-set \S+ application (\S+)/);
+    if (appSetMember) {
+      referencedApps.add(appSetMember[1]);
+    }
+    const defApp = cmd.match(/^set applications application (\S+)/);
+    if (defApp) {
+      definedApps.add(defApp[1]);
+    }
+    const defSet = cmd.match(/^set applications application-set (\S+)/);
+    if (defSet) {
+      definedApps.add(defSet[1]);
+    }
+  }
+
+  // junos-* apps that may not exist on all platforms (vSRX, older versions)
+  // We define them with a 'custom-' prefix since 'junos-' is reserved
+  const PLATFORM_DEPENDENT_APPS = {
+    'junos-mysql':    { protocol: 'tcp', port: '3306', alias: 'custom-mysql' },
+    'junos-mssql':    { protocol: 'tcp', port: '1433', alias: 'custom-mssql' },
+    'junos-oracle':   { protocol: 'tcp', port: '1521', alias: 'custom-oracle' },
+    'junos-postgres': { protocol: 'tcp', port: '5432', alias: 'custom-postgres' },
+    'junos-mongodb':  { protocol: 'tcp', port: '27017', alias: 'custom-mongodb' },
+    'junos-redis':    { protocol: 'tcp', port: '6379', alias: 'custom-redis' },
+    'junos-memcached':{ protocol: 'tcp', port: '11211', alias: 'custom-memcached' },
+    'junos-ocsp':     { protocol: 'tcp', port: '80', alias: 'custom-ocsp' },
+    'junos-quic':     { protocol: 'udp', port: '443', alias: 'custom-quic' },
+    'junos-imap':     { protocol: 'tcp', port: '143', alias: 'custom-imap' },
+    'junos-imaps':    { protocol: 'tcp', port: '993', alias: 'custom-imaps' },
+    'junos-pop3':     { protocol: 'tcp', port: '110', alias: 'custom-pop3' },
+    'junos-pop3s':    { protocol: 'tcp', port: '995', alias: 'custom-pop3s' },
+  };
+
+  // Check against predefined Junos apps — but always define platform-dependent ones
+  const missing = [];
+  for (const app of referencedApps) {
+    if (definedApps.has(app)) continue;
+    if (PLATFORM_DEPENDENT_APPS[app]) {
+      missing.push(app); // Always generate — may not exist on target
+      continue;
+    }
+    // For any junos-* app not in our known list, still generate a custom definition
+    // since vSRX and older platforms may lack many predefined apps
+    if (app.startsWith('junos-') && !PLATFORM_DEPENDENT_APPS[app]) {
+      missing.push(app);
+      continue;
+    }
+    if (JUNOS_PREDEFINED_APPS.has(app)) continue;
+    missing.push(app);
+  }
+
+  if (missing.length === 0) return;
+
+  // Find insertion point: before the first policy command (so definitions come first)
+  // Or append at end before unsupported notices
+  const insertionCmds = [];
+  insertionCmds.push('# =============================================');
+  insertionCmds.push('# Auto-generated Missing Application Definitions');
+  insertionCmds.push('# (referenced in policies but not yet defined)');
+  insertionCmds.push('# =============================================');
+
+  for (const appName of missing) {
+    // Check platform-dependent junos-* apps first (known port mappings)
+    // Use alias name since 'junos-' prefix is reserved on Junos
+    const platformApp = PLATFORM_DEPENDENT_APPS[appName];
+    if (platformApp) {
+      const defName = platformApp.alias || appName;
+      insertionCmds.push(`set applications application ${defName} protocol ${platformApp.protocol}`);
+      insertionCmds.push(`set applications application ${defName} destination-port ${platformApp.port}`);
+      // Replace all references to the original name with the alias in existing commands
+      for (let i = 0; i < commands.length; i++) {
+        if (commands[i].includes(appName)) {
+          commands[i] = commands[i].replaceAll(appName, defName);
+        }
+      }
+      continue;
+    }
+    // Catch-all for unknown junos-* apps — create custom alias with TCP/1 placeholder
+    if (appName.startsWith('junos-')) {
+      const alias = appName.replace('junos-', 'custom-');
+      insertionCmds.push(`# ${appName} not available on target platform — using placeholder`);
+      insertionCmds.push(`set applications application ${alias} protocol tcp`);
+      insertionCmds.push(`set applications application ${alias} destination-port 1`);
+      insertionCmds.push(`set applications application ${alias} description "Placeholder for ${appName}"`);
+      for (let i = 0; i < commands.length; i++) {
+        if (commands[i].includes(appName)) {
+          commands[i] = commands[i].replaceAll(appName, alias);
+        }
+      }
+      continue;
+    }
+    // Try to infer protocol/port from name
+    // Pattern 1: explicit proto-port like "tcp-8080", "udp-53"
+    const protoPortMatch = appName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
+    // Pattern 2: short name like "n-993", "n-587" → infer TCP + port
+    const shortNameMatch = !protoPortMatch && appName.match(/^[a-zA-Z]-(\d+)$/);
+    // Pattern 3: descriptive name ending with port like "NAS-Web-Admin-5000" → infer TCP + trailing port
+    const trailingPortMatch = !protoPortMatch && !shortNameMatch && appName.match(/-(\d+)$/);
+
+    if (protoPortMatch) {
+      const proto = protoPortMatch[1].toLowerCase();
+      const port = protoPortMatch[2];
+      insertionCmds.push(`set applications application ${appName} protocol ${proto}`);
+      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
+    } else if (shortNameMatch) {
+      const port = shortNameMatch[1];
+      insertionCmds.push(`set applications application ${appName} protocol tcp`);
+      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
+    } else if (trailingPortMatch) {
+      const port = trailingPortMatch[1];
+      insertionCmds.push(`set applications application ${appName} protocol tcp`);
+      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
+    } else {
+      insertionCmds.push(`# WARNING: "${appName}" — could not infer port, set to placeholder`);
+      insertionCmds.push(`set applications application ${appName} protocol tcp`);
+      insertionCmds.push(`set applications application ${appName} destination-port 1`);
+      insertionCmds.push(`set applications application ${appName} description "Placeholder - REQUIRES MANUAL CONFIGURATION"`);
+    }
+  }
+  insertionCmds.push('');
+
+  // Insert before the first policy command so definitions precede references
+  const firstPolicyIdx = commands.findIndex(cmd => cmd.includes('security policies'));
+  if (firstPolicyIdx >= 0) {
+    commands.splice(firstPolicyIdx, 0, ...insertionCmds);
+  } else {
+    commands.push(...insertionCmds);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -389,11 +719,22 @@ function convertInterfaceAddresses(interfaces, commands, warnings, summary, inte
   commands.push('# Interface Addresses');
   commands.push('# =============================================');
 
+  const configuredInterfaces = new Set();
   for (const iface of interfaces) {
     if (!iface.ip && !iface.ipv6) continue;
 
     const srxName = mapInterfaceName(iface.name || '', interfaceMappings);
     const [base, unit = '0'] = srxName.split('.');
+    const ifKey = `${base}.${unit}`;
+
+    // Skip if this interface was already configured (multiple vendor interfaces mapped to same SRX interface)
+    if (configuredInterfaces.has(ifKey)) {
+      warnings.push(createWarning('warning', `interfaces/${ifKey}`,
+        `Interface ${ifKey} already configured (mapped from ${iface.name}) — skipping duplicate`,
+        'Check interface mappings for conflicts'));
+      continue;
+    }
+    configuredInterfaces.add(ifKey);
 
     if (iface.ip) {
       commands.push(`set interfaces ${base} unit ${unit} family inet address ${iface.ip}`);
@@ -410,6 +751,132 @@ function convertInterfaceAddresses(interfaces, commands, warnings, summary, inte
 }
 
 // ---------------------------------------------------------------------------
+// Ensure Zone-Referenced Interfaces Have Family Config
+// ---------------------------------------------------------------------------
+
+/**
+ * Checks all interfaces referenced in security zones and ensures each has at
+ * least a `set interfaces {base} unit {unit} family inet` command. Interfaces
+ * already configured via convertInterfaceAddresses are skipped.
+ *
+ * @param {Object[]} zones - Parsed zone objects
+ * @param {Object[]} interfaces - Parsed interface objects (may be empty)
+ * @param {string[]} commands - Output commands array
+ * @param {Object} interfaceMappings - User-defined interface mappings
+ */
+function ensureZoneInterfaceFamilies(zones, interfaces, commands, interfaceMappings = {}) {
+  if (!zones || zones.length === 0) return;
+
+  // Collect all interfaces that already have a `set interfaces ... family inet` command
+  const configuredRe = /^set interfaces (\S+) unit (\S+) family inet/;
+  const configured = new Set();
+  for (const cmd of commands) {
+    const m = cmd.match(configuredRe);
+    if (m) configured.add(`${m[1]}.${m[2]}`);
+  }
+
+  const added = [];
+  for (const zone of zones) {
+    for (const iface of zone.interfaces || []) {
+      const srxIface = mapInterfaceName(iface, interfaceMappings);
+      const [base, unit = '0'] = srxIface.split('.');
+      const key = `${base}.${unit}`;
+      if (!configured.has(key)) {
+        commands.push(`set interfaces ${base} unit ${unit} family inet`);
+        configured.add(key);
+        added.push(srxIface);
+      }
+    }
+  }
+
+  if (added.length > 0) {
+    // Insert a blank line after the added interface family commands
+    commands.push('');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LAG / Aggregate Ethernet Converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates SRX ae (aggregate ethernet) interface configuration from parsed
+ * LAG data in the intermediate config.
+ *
+ * Output:
+ *   set chassis aggregated-devices ethernet device-count {N}
+ *   set interfaces ae{N} aggregated-ether-options lacp {active|passive}
+ *   set interfaces ae{N} description "{description}"
+ *   set interfaces {member} ether-options 802.3ad ae{N}
+ *
+ * @param {Object[]} lagInterfaces - Array of lag_interfaces from intermediate config
+ * @param {string[]} commands - Output commands array
+ * @param {Object[]} warnings - Warnings array
+ * @param {Object} summary - Summary counters
+ * @param {Object} interfaceMappings - User-defined interface mappings
+ */
+function convertLagInterfaces(lagInterfaces, commands, warnings, summary, interfaceMappings = {}) {
+  if (!lagInterfaces || lagInterfaces.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# LAG / Aggregate Ethernet Interfaces');
+  commands.push('# =============================================');
+
+  // Device count must accommodate the highest ae index
+  let maxAeIndex = 0;
+  for (const lag of lagInterfaces) {
+    const aeMatch = lag.name.match(/^ae(\d+)$/);
+    if (aeMatch) {
+      const idx = parseInt(aeMatch[1], 10);
+      if (idx >= maxAeIndex) maxAeIndex = idx + 1;
+    }
+  }
+
+  commands.push(`set chassis aggregated-devices ethernet device-count ${maxAeIndex}`);
+
+  for (const lag of lagInterfaces) {
+    const aeName = lag.name;
+
+    // LACP mode
+    if (lag.lacp_mode === 'active' || lag.lacp_mode === 'passive') {
+      commands.push(`set interfaces ${aeName} aggregated-ether-options lacp ${lag.lacp_mode}`);
+    }
+
+    // LACP system priority
+    if (lag.lacp_priority) {
+      commands.push(`set interfaces ${aeName} aggregated-ether-options lacp system-priority ${lag.lacp_priority}`);
+    }
+
+    // Description
+    if (lag.description) {
+      const escaped = lag.description.replace(/"/g, '\\"');
+      commands.push(`set interfaces ${aeName} description "${escaped}"`);
+    }
+
+    // Member interface bindings
+    for (const member of lag.members) {
+      // Apply interface mapping if available
+      const mappedMember = mapInterfaceName(member, interfaceMappings);
+      const memberBase = mappedMember.split('.')[0];
+      commands.push(`set interfaces ${memberBase} ether-options 802.3ad ${aeName}`);
+    }
+
+    summary.lag_interfaces_converted++;
+
+    // Source name annotation for traceability
+    if (lag.source_name && lag.source_name !== aeName) {
+      commands.push(`# Source: ${lag.source_name} (${lag.source_members.join(', ')})`);
+    }
+  }
+
+  commands.push('');
+
+  warnings.push(createWarning('info', 'lag',
+    `Converted ${lagInterfaces.length} LAG interface(s) to SRX ae configuration`,
+    'Verify ae interface settings and member port assignments'));
+}
+
+// ---------------------------------------------------------------------------
 // Address Object Converter
 // ---------------------------------------------------------------------------
 
@@ -423,27 +890,67 @@ function convertAddressObjects(objects, commands, warnings, summary) {
   for (const obj of objects) {
     const name = sanitizeJunosName(obj.name);
 
+    // Fix 6: Check all field variants for IP value (SonicWall uses subnet/network/address)
+    const addrValue = obj.value || obj.ip || obj.network || obj.subnet || obj.address;
+
     switch (obj.type) {
       case 'host':
       case 'subnet':
-        commands.push(`set security address-book global address ${name} ${obj.value}`);
+      case 'network':
+      case 'ip-netmask':
+      case 'ip-prefix':
+        if (!addrValue) {
+          commands.push(`# WARNING: Address "${obj.name}" has no IP value — skipping`);
+          warnings.push(createWarning('warning', `address/${name}`,
+            `Address "${obj.name}" (type: ${obj.type}) has no IP/subnet value — skipped`,
+            'Add an IP address or subnet to this address object'));
+          continue;
+        }
+        {
+          // Validate IP/mask: if host bits are set (e.g., 198.51.100.9/27), Junos rejects it.
+          // Fix: for host addresses with non-/32 mask, use /32 (it's a host, not a network).
+          let fixedAddr = addrValue;
+          const cidrMatch = addrValue.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/);
+          if (cidrMatch) {
+            const [, ip, maskStr] = cidrMatch;
+            const mask = parseInt(maskStr);
+            if (mask < 32) {
+              // Check if host bits are set
+              const ipNum = ip.split('.').reduce((acc, oct) => (acc << 8) + parseInt(oct), 0) >>> 0;
+              const netMask = mask === 0 ? 0 : (0xFFFFFFFF << (32 - mask)) >>> 0;
+              if ((ipNum & ~netMask) !== 0) {
+                // Host bits set — use /32 for address-book entry
+                fixedAddr = `${ip}/32`;
+              }
+            }
+          }
+          commands.push(`set security address-book global address ${name} ${fixedAddr}`);
+        }
         break;
       case 'range':
+        if (!addrValue) {
+          commands.push(`# WARNING: Range address "${obj.name}" has no range value — skipping`);
+          warnings.push(createWarning('warning', `address/${name}`,
+            `Range address "${obj.name}" has no range value — skipped`,
+            'Add a range value (e.g., "10.0.0.1-10.0.0.10") to this address object'));
+          continue;
+        }
         // SRX supports range-address
-        commands.push(`set security address-book global address ${name} range-address ${obj.value.replace('-', ' to ')}`);
+        commands.push(`set security address-book global address ${name} range-address ${addrValue.replace('-', ' to ')}`);
         break;
       case 'fqdn': {
+        const fqdnValue = addrValue;
         // Wildcard FQDNs (e.g., *.example.com) are not supported by SRX dns-name
-        const isWildcard = obj.value && obj.value.startsWith('*.');
+        const isWildcard = fqdnValue && fqdnValue.startsWith('*.');
         if (isWildcard) {
-          commands.push(`# WARNING: Wildcard FQDN "${obj.name}" (${obj.value}) — SRX does not support wildcard dns-name`);
+          commands.push(`# WARNING: Wildcard FQDN "${obj.name}" (${fqdnValue}) — SRX does not support wildcard dns-name`);
           commands.push(`# Convert to specific FQDN, address feed, or address set`);
-          commands.push(`set security address-book global address ${name} dns-name ${obj.value.slice(2)}`);
+          commands.push(`set security address-book global address ${name} dns-name ${fqdnValue.slice(2)}`);
           warnings.push(createWarning('warning', `address/${name}`,
-            `Wildcard FQDN "${obj.name}" (${obj.value}) stripped to "${obj.value.slice(2)}" — SRX dns-name does not support wildcards`,
+            `Wildcard FQDN "${obj.name}" (${fqdnValue}) stripped to "${fqdnValue.slice(2)}" — SRX dns-name does not support wildcards`,
             'Replace with specific FQDN or use custom address feed'));
         } else {
-          let dnsCmd = `set security address-book global address ${name} dns-name ${obj.value}`;
+          let dnsCmd = `set security address-book global address ${name} dns-name ${fqdnValue}`;
           // Append ipv4-only / ipv6-only if source specified IP version
           if (obj.fqdn_ip_version === 'v4') {
             dnsCmd += ' ipv4-only';
@@ -456,23 +963,23 @@ function convertAddressObjects(objects, commands, warnings, summary) {
       }
       case 'wildcard':
         // No SRX equivalent — add as comment
-        commands.push(`# UNSUPPORTED: Wildcard address "${obj.name}" (${obj.value}) — convert manually`);
+        commands.push(`# UNSUPPORTED: Wildcard address "${obj.name}" (${addrValue}) — convert manually`);
         warnings.push(createWarning('unsupported', `address/${name}`,
           `Wildcard address "${obj.name}" cannot be converted to SRX format`,
           'Replace with subnet or range address'));
         summary.unsupported_items++;
         continue; // Skip the description line
       case 'geography':
-        commands.push(`# UNSUPPORTED: Geography address "${obj.name}" (country: ${obj.value}) — SRX requires Security Intelligence feeds for geo-IP`);
+        commands.push(`# UNSUPPORTED: Geography address "${obj.name}" (country: ${addrValue}) — SRX requires Security Intelligence feeds for geo-IP`);
         warnings.push(createWarning('unsupported', `address/${name}`,
-          `Geography address "${obj.name}" (${obj.value}) has no direct SRX equivalent`,
+          `Geography address "${obj.name}" (${addrValue}) has no direct SRX equivalent`,
           'Replace with static IP ranges or configure SRX Security Intelligence geo-IP feeds'));
         summary.unsupported_items++;
         continue;
       case 'dynamic':
-        commands.push(`# UNSUPPORTED: Dynamic/SDN address "${obj.name}" (${obj.value}) — SRX requires manual configuration`);
+        commands.push(`# UNSUPPORTED: Dynamic/SDN address "${obj.name}" (${addrValue}) — SRX requires manual configuration`);
         warnings.push(createWarning('unsupported', `address/${name}`,
-          `Dynamic/SDN address "${obj.name}" (${obj.value}) has no direct SRX equivalent`,
+          `Dynamic/SDN address "${obj.name}" (${addrValue}) has no direct SRX equivalent`,
           'Replace with static addresses or use SRX Security Intelligence feeds'));
         summary.unsupported_items++;
         continue;
@@ -581,8 +1088,28 @@ function convertServiceObjects(services, commands, warnings, summary) {
         continue;
       }
 
-      commands.push(`set applications application ${name} protocol ${protocol}`);
-      commands.push(`set applications application ${name} destination-port ${port}`);
+      // Bug 2 fix: Junos destination-port does not accept comma-separated discrete
+      // ports (e.g., "443,8443"). Split into individual applications and wrap in an
+      // application-set so policies can reference the set by the original name.
+      if (port.includes(',')) {
+        // Fix 2: Append -set suffix to application-set name to avoid name conflict
+        const setName = `${name}-set`;
+        commaPortSetMap.set(svc.name, setName);
+        commaPortSetMap.set(name, setName);
+        const portParts = port.split(',').map(p => p.trim());
+        for (const part of portParts) {
+          const subName = `${name}-${part.replace('-', 'to')}`;
+          commands.push(`set applications application ${subName} protocol ${protocol}`);
+          commands.push(`set applications application ${subName} destination-port ${part}`);
+        }
+        for (const part of portParts) {
+          const subName = `${name}-${part.replace('-', 'to')}`;
+          commands.push(`set applications application-set ${setName} application ${subName}`);
+        }
+      } else {
+        commands.push(`set applications application ${name} protocol ${protocol}`);
+        commands.push(`set applications application ${name} destination-port ${port}`);
+      }
 
       if (svc.source_port) {
         commands.push(`set applications application ${name} source-port ${svc.source_port}`);
@@ -603,7 +1130,7 @@ function convertServiceObjects(services, commands, warnings, summary) {
 // Service Group Converter → SRX Application Sets
 // ---------------------------------------------------------------------------
 
-function convertServiceGroups(groups, commands, warnings, summary) {
+function convertServiceGroups(groups, commands, warnings, summary, sourceVendor = '') {
   if (!groups || groups.length === 0) return;
 
   commands.push('# =============================================');
@@ -618,8 +1145,10 @@ function convertServiceGroups(groups, commands, warnings, summary) {
     for (const member of group.members) {
       // Check if member maps to a predefined Junos app
       const predefName = predefServiceMap.get(member);
-      if (predefName) {
-        commands.push(`set applications application-set ${groupName} application ${predefName}`);
+      // Also try mapAppToJunos for uppercase names (HTTP→junos-http)
+      const mappedName = predefName || mapAppToJunos(member, sourceVendor);
+      if (mappedName) {
+        commands.push(`set applications application-set ${groupName} application ${mappedName}`);
       } else if (groupNameSet.has(member)) {
         commands.push(`set applications application-set ${groupName} application-set ${sanitizeJunosName(member)}`);
       } else {
@@ -652,8 +1181,26 @@ function convertApplications(apps, commands, warnings, summary) {
       continue;
     }
 
-    commands.push(`set applications application ${name} protocol ${app.protocol}`);
-    commands.push(`set applications application ${name} destination-port ${app.port}`);
+    // Bug 2 fix: handle comma-separated discrete ports in custom apps too
+    if (app.port.includes(',')) {
+      // Fix 2: Append -set suffix to application-set name to avoid name conflict
+      const setName = `${name}-set`;
+      commaPortSetMap.set(app.name, setName);
+      commaPortSetMap.set(name, setName);
+      const portParts = app.port.split(',').map(p => p.trim());
+      for (const part of portParts) {
+        const subName = `${name}-${part.replace('-', 'to')}`;
+        commands.push(`set applications application ${subName} protocol ${app.protocol}`);
+        commands.push(`set applications application ${subName} destination-port ${part}`);
+      }
+      for (const part of portParts) {
+        const subName = `${name}-${part.replace('-', 'to')}`;
+        commands.push(`set applications application-set ${setName} application ${subName}`);
+      }
+    } else {
+      commands.push(`set applications application ${name} protocol ${app.protocol}`);
+      commands.push(`set applications application ${name} destination-port ${app.port}`);
+    }
 
     if (app.description) {
       commands.push(`set applications application ${name} description "${app.description}"`);
@@ -782,15 +1329,17 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
           const sizeLimit = (profileDef && profileDef.scanMode === 'full') ? 40000 : 20000;
           utmCommands.push(`set security utm feature-profile anti-virus profile ${mapped.srxProfile} fallback-options default log-and-permit`);
           utmCommands.push(`set security utm feature-profile anti-virus profile ${mapped.srxProfile} fallback-options content-size log-and-permit`);
-          utmCommands.push(`set security utm feature-profile anti-virus profile ${mapped.srxProfile} scan-options content-size-limit ${sizeLimit}`);
-          utmCommands.push(`set security utm feature-profile anti-virus profile ${mapped.srxProfile} scan-options timeout 180`);
+          // content-size-limit and timeout are not valid under AV profile in modern Junos — skip
         } else if (mapped.srxType === 'web-filtering') {
-          utmCommands.push(`set security utm feature-profile web-filtering profile ${mapped.srxProfile} type juniper-enhanced`);
+          // Fix 3: Junos requires the web-filtering type to be set before
+          // defining profiles, and the utm-policy http-profile name must match
+          // the profile name defined under juniper-enhanced exactly.
+          utmCommands.push(`set security utm feature-profile web-filtering type juniper-enhanced`);
           if (profileDef && profileDef.blockCategories && profileDef.blockCategories.length > 0) {
             utmCommands.push(`# Block categories from source: ${profileDef.blockCategories.join(', ')}`);
-            utmCommands.push(`set security utm feature-profile web-filtering profile ${mapped.srxProfile} default block`);
+            utmCommands.push(`set security utm feature-profile web-filtering juniper-enhanced profile ${mapped.srxProfile} default block`);
           } else {
-            utmCommands.push(`set security utm feature-profile web-filtering profile ${mapped.srxProfile} default log-and-permit`);
+            utmCommands.push(`set security utm feature-profile web-filtering juniper-enhanced profile ${mapped.srxProfile} default log-and-permit`);
           }
         } else if (mapped.srxType === 'content-filtering') {
           if (profileDef && profileDef.blockedExtensions && profileDef.blockedExtensions.length > 0) {
@@ -820,8 +1369,7 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
       // Attach to utm-policy
       if (mapped.srxType === 'anti-virus') {
         utmCommands.push(`set security utm utm-policy ${pName} anti-virus http-profile ${mapped.srxProfile}`);
-        utmCommands.push(`set security utm utm-policy ${pName} anti-virus ftp-upload-profile ${mapped.srxProfile}`);
-        utmCommands.push(`set security utm utm-policy ${pName} anti-virus ftp-download-profile ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} anti-virus smtp-profile ${mapped.srxProfile}`);
       } else if (mapped.srxType === 'web-filtering') {
         utmCommands.push(`set security utm utm-policy ${pName} web-filtering http-profile ${mapped.srxProfile}`);
       } else if (mapped.srxType === 'content-filtering') {
@@ -1036,13 +1584,13 @@ function convertUserIdentification(policies, commands, warnings) {
   commands.push('# =============================================');
   commands.push('# User Identification (JIMS Integration)');
   commands.push('# =============================================');
-  commands.push('# NOTE: JIMS server connection details must be configured manually');
-  commands.push('set services user-identification identity-management connection connect-method https');
-  commands.push('set services user-identification identity-management connection port 1443');
+  commands.push('# NOTE: JIMS/User-ID requires manual configuration with server-specific details.');
+  commands.push('# Configure identity-management connection after JIMS server is set up:');
+  commands.push('# set services user-identification identity-management connection connect-method https');
+  commands.push('# set services user-identification identity-management connection port 1443');
   commands.push('# set services user-identification identity-management connection primary address <JIMS_SERVER_IP>');
   commands.push('# set services user-identification identity-management connection primary client-id <CLIENT_ID>');
   commands.push('# set services user-identification identity-management connection primary client-secret <SECRET>');
-  commands.push('set services user-identification device-information authentication-source active-directory-authentication-table');
   commands.push('');
 
   // Document all unique identity references
@@ -1125,7 +1673,11 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
       for (const dstZone of dstZones) {
         const fromZone = sanitizeJunosName(srcZone);
         const toZone = sanitizeJunosName(dstZone);
-        const policyPath = `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
+        // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
+        const isGlobal = fromZone === 'any' || toZone === 'any';
+        const policyPath = isGlobal
+          ? `security policies global policy ${policyName}`
+          : `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
 
         // Description (include PAN-OS tags as comments)
         let fullDescription = policy.description || '';
@@ -1150,7 +1702,11 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         }
 
         // Match criteria: applications
-        const apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor);
+        let apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor);
+        // Junos: if 'any' is present, it must be the only application entry
+        if (apps.includes('any')) {
+          apps = ['any'];
+        }
         for (const app of apps) {
           commands.push(`set ${policyPath} match application ${app}`);
         }
@@ -1194,12 +1750,14 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
           commands.push(`set ${policyPath} then permit application-services security-intelligence-policy secIntel-policy`);
         }
 
-        // SSL Proxy attachment (for policies flagged by LLM or safety net)
+        // Fix 8: SSL Proxy profiles require PKI certificates that can't be auto-generated.
+        // Skip the active ssl-proxy-profile reference; emit as comment only.
         if (policy._srx_decrypt && policy.action === 'allow') {
           const sslProfile = policy._srx_decrypt_profile
             ? sanitizeJunosName(policy._srx_decrypt_profile)
             : 'ssl-fwd-proxy';
-          commands.push(`set ${policyPath} then permit application-services ssl-proxy profile-name ${sslProfile}`);
+          commands.push(`# NOTE: SSL proxy skipped — profile "${sslProfile}" requires manual PKI setup before enabling`);
+          commands.push(`# set ${policyPath} then permit application-services ssl-proxy profile-name ${sslProfile}`);
         }
 
         // Profile group fallback (if no individual profiles but group exists)
@@ -1240,6 +1798,22 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 const customfwicApps = new Map();
 
 /**
+ * Fix 4: Tracks service names referenced in policies that were not defined
+ * by convertServiceObjects (e.g., "tcp-9090"). These need application
+ * definitions emitted before policies.
+ * Map of sanitizedName → originalServiceName.
+ */
+const unresolvedServiceApps = new Map();
+
+/**
+ * Tracks services/apps with comma-separated ports that were split into
+ * individual applications and wrapped in an application-set with a -set suffix.
+ * Map of originalName → setName (e.g., "tcp-443-8443" → "tcp-443-8443-set").
+ * Built during convertServiceObjects()/convertApplications(), consumed by resolveApplications().
+ */
+const commaPortSetMap = new Map();
+
+/**
  * Tracks service objects that are equivalent to predefined Junos applications.
  * Map of serviceName → junosPredefinedName (e.g., "SSH" → "junos-ssh").
  * Built during convertServiceObjects(), consumed by resolveApplications().
@@ -1271,7 +1845,9 @@ function resolveApplications(applications, services, warnings, policyName, appGr
     if (junosApp) {
       resolved.push(junosApp);
     } else {
-      const customName = sanitizeJunosName(appName) + 'Customfwic';
+      let customName = sanitizeJunosName(appName).replace(/\./g, '-') + 'Customfwic';
+      // Junos names must start with a letter
+      if (/^\d/.test(customName)) customName = `app-${customName}`;
       resolved.push(customName);
       customfwicApps.set(customName, appName);
       warnings.push(createWarning(
@@ -1291,6 +1867,9 @@ function resolveApplications(applications, services, warnings, policyName, appGr
         continue;
       }
 
+      // Skip vendor keywords that aren't real application names
+      if (app === 'service-set') continue;
+
       // Check if this is an application group reference — expand to members
       const group = appGroups.find(g => g.name === app);
       if (group && group.members.length > 0) {
@@ -1308,10 +1887,19 @@ function resolveApplications(applications, services, warnings, policyName, appGr
   if (services && services.length > 0) {
     for (const svc of services) {
       if (svc === 'application-default' || svc === 'any') continue;
+      // Bug 10 fix: Filter Huawei "service-set" keyword from services too.
+      // This is a Huawei config keyword meaning "use the service objects", not an app name.
+      if (svc === 'service-set') continue;
       // Check if this service was mapped to a predefined app during convertServiceObjects
       const predefName = predefServiceMap.get(svc);
       if (predefName) {
         resolved.push(predefName);
+        continue;
+      }
+      // Fix 2: Check if this service was split into comma-port application-set
+      const commaSetName = commaPortSetMap.get(svc);
+      if (commaSetName) {
+        resolved.push(commaSetName);
         continue;
       }
       // Try mapping service name (catches FortiGate "HTTP", "HTTPS", etc.)
@@ -1320,7 +1908,11 @@ function resolveApplications(applications, services, warnings, policyName, appGr
         resolved.push(junosApp);
       } else {
         // Service objects already converted to SRX applications — reference by name
-        resolved.push(sanitizeJunosName(svc));
+        const safeSvcName = sanitizeJunosName(svc);
+        resolved.push(safeSvcName);
+        // Fix 4: Track service references that may not have been defined
+        // so we can emit application definitions before policies
+        unresolvedServiceApps.set(safeSvcName, svc);
       }
     }
   }
@@ -1360,12 +1952,68 @@ function mapAction(panosAction) {
 // NAT Rule Converter
 // ---------------------------------------------------------------------------
 
-function convertNatRules(natRules, commands, warnings, summary) {
+/**
+ * Resolves a NAT match address to a raw IP/subnet. Junos NAT match commands
+ * require literal IPs, not address-book object names.
+ * @param {string} addr - Address string (IP, subnet, or object name)
+ * @param {Object} addrLookup - Map of address-object names to IP values
+ * @param {string[]} warnings - Collector for warning messages
+ * @returns {string|null} Resolved IP/subnet, or null if unresolvable
+ */
+function resolveNatAddress(addr, addrLookup, warnings) {
+  if (!addr || addr === 'any') return null;
+  // Already an IP or subnet (contains a dot and looks numeric)
+  if (/^\d+\.\d+\.\d+\.\d+(\/\d+)?$/.test(addr) || /^[0-9a-fA-F:]+\/\d+$/.test(addr)) {
+    return addr;
+  }
+  const resolved = addrLookup[addr];
+  if (!resolved) {
+    warnings.push(createWarning('nat', `NAT match address "${addr}" is not a known address object — skipped`));
+    return null;
+  }
+  // Skip FQDN / dns-name values (not usable in NAT match)
+  if (!/^\d+\.\d+\.\d+\.\d+/.test(resolved) && !/^[0-9a-fA-F:]+/.test(resolved)) {
+    warnings.push(createWarning('nat', `NAT match address "${addr}" resolves to FQDN "${resolved}" — skipped (Junos NAT requires IP)`));
+    return null;
+  }
+  return resolved;
+}
+
+function convertNatRules(natRules, commands, warnings, summary, addressObjects) {
   if (!natRules || natRules.length === 0) return;
+
+  // Build lookup map: address-object name → IP/subnet value
+  const addrLookup = {};
+  for (const obj of (addressObjects || [])) {
+    if (obj.value) addrLookup[obj.name] = obj.value;
+    else if (obj.ip) addrLookup[obj.name] = obj.ip;
+    else if (obj.network) addrLookup[obj.name] = obj.network;
+    else if (obj.subnet) addrLookup[obj.name] = obj.subnet;
+    else if (obj.address) addrLookup[obj.name] = obj.address;
+  }
 
   commands.push('# =============================================');
   commands.push('# NAT Rules');
   commands.push('# =============================================');
+
+  // Bug 8 fix: Ensure all zones referenced in NAT rules are defined.
+  // Collect already-defined zones from prior commands, then create any missing ones.
+  const definedZones = new Set();
+  for (const cmd of commands) {
+    const zoneMatch = cmd.match(/^set security zones security-zone (\S+)/);
+    if (zoneMatch) definedZones.add(zoneMatch[1]);
+  }
+  for (const rule of natRules) {
+    const allZones = [...(rule.src_zones || []), ...(rule.dst_zones || [])];
+    for (const zone of allZones) {
+      if (zone === 'any') continue;
+      const safeName = sanitizeJunosName(zone);
+      if (!definedZones.has(safeName)) {
+        commands.push(`set security zones security-zone ${safeName}`);
+        definedZones.add(safeName);
+      }
+    }
+  }
 
   // Group NAT rules by type for SRX rule-set organization
   const sourceNatRules = natRules.filter(r => r.type === 'source' || r.type === 'source-and-destination');
@@ -1379,11 +2027,30 @@ function convertNatRules(natRules, commands, warnings, summary) {
 
     for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
       const [fromZone, toZone] = zonePair.split('->');
+      // Fix 5: NAT rule-sets cannot use 'any' as zone — replace with actual zones
       const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
       const ruleSetPath = `security nat source rule-set ${ruleSetName}`;
-
-      commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
-      commands.push(`set ${ruleSetPath} to zone ${sanitizeJunosName(toZone)}`);
+      if (fromZone === 'any' || toZone === 'any') {
+        const actualZones = [...definedZones].filter(z => z !== 'any');
+        if (actualZones.length === 0) {
+          commands.push(`# WARNING: NAT rule-set ${fromZone}-to-${toZone} skipped — no defined zones to replace 'any'`);
+          warnings.push(createWarning('warning', `nat/source/${fromZone}-to-${toZone}`,
+            `NAT rule-set from ${fromZone} to ${toZone} skipped — 'any' is not valid and no zones defined`,
+            'Define security zones before NAT rules'));
+          continue;
+        }
+        const resolvedFromZones = fromZone === 'any' ? actualZones : [sanitizeJunosName(fromZone)];
+        const resolvedToZones = toZone === 'any' ? actualZones : [sanitizeJunosName(toZone)];
+        for (const fz of resolvedFromZones) {
+          commands.push(`set ${ruleSetPath} from zone ${fz}`);
+        }
+        for (const tz of resolvedToZones) {
+          commands.push(`set ${ruleSetPath} to zone ${tz}`);
+        }
+      } else {
+        commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
+        commands.push(`set ${ruleSetPath} to zone ${sanitizeJunosName(toZone)}`);
+      }
 
       for (const rule of rules) {
         const ruleName = sanitizeJunosName(rule.name);
@@ -1395,14 +2062,20 @@ function convertNatRules(natRules, commands, warnings, summary) {
           if (addr === 'any') {
             commands.push(`set ${rulePath} match source-address ${anyAddr}`);
           } else {
-            commands.push(`set ${rulePath} match source-address ${addr}`);
+            const resolved = resolveNatAddress(addr, addrLookup, warnings);
+            if (resolved) {
+              commands.push(`set ${rulePath} match source-address ${resolved}`);
+            }
           }
         }
         for (const addr of (rule.dst_addresses || [anyAddr])) {
           if (addr === 'any') {
             commands.push(`set ${rulePath} match destination-address ${anyAddr}`);
           } else {
-            commands.push(`set ${rulePath} match destination-address ${addr}`);
+            const resolved = resolveNatAddress(addr, addrLookup, warnings);
+            if (resolved) {
+              commands.push(`set ${rulePath} match destination-address ${resolved}`);
+            }
           }
         }
 
@@ -1413,14 +2086,39 @@ function convertNatRules(natRules, commands, warnings, summary) {
           } else if (rule.translated_src.type === 'dynamic-ip-pool') {
             // Create a source NAT pool
             const poolName = sanitizeJunosName(`pool-${rule.name}`);
+            let allResolved = true;
+            const poolCmds = [];
             for (const addr of rule.translated_src.addresses) {
-              commands.push(`set security nat source pool ${poolName} address ${addr}`);
+              const resolvedPoolAddr = resolveNatAddress(addr, addrLookup, warnings);
+              if (resolvedPoolAddr) {
+                poolCmds.push(`set security nat source pool ${poolName} address ${resolvedPoolAddr}`);
+              } else {
+                allResolved = false;
+              }
             }
-            commands.push(`set ${rulePath} then source-nat pool ${poolName}`);
+            if (allResolved && poolCmds.length > 0) {
+              commands.push(...poolCmds);
+              commands.push(`set ${rulePath} then source-nat pool ${poolName}`);
+            } else {
+              // Can't resolve pool addresses (e.g., Check Point hide NAT using gateway name)
+              // Fall back to interface NAT
+              commands.push(`# NAT pool address could not be resolved — using interface NAT`);
+              commands.push(`set ${rulePath} then source-nat interface`);
+            }
           } else if (rule.translated_src.type === 'static') {
-            commands.push(`set ${rulePath} then source-nat pool ${sanitizeJunosName(rule.name)}-static`);
-            commands.push(`set security nat source pool ${sanitizeJunosName(rule.name)}-static address ${rule.translated_src.address}`);
+            const staticPoolName = `${sanitizeJunosName(rule.name)}-static`;
+            // NAT pool address must be an IP, not a named object — resolve it
+            const resolvedStaticAddr = resolveNatAddress(rule.translated_src.address, addrLookup, warnings);
+            const staticAddr = resolvedStaticAddr || rule.translated_src.address;
+            commands.push(`set ${rulePath} then source-nat pool ${staticPoolName}`);
+            commands.push(`set security nat source pool ${staticPoolName} address ${staticAddr}`);
+          } else {
+            // Unknown translation type — default to interface NAT (e.g., Check Point hide NAT)
+            commands.push(`set ${rulePath} then source-nat interface`);
           }
+        } else {
+          // No translated_src specified — default to interface NAT (hide/masquerade)
+          commands.push(`set ${rulePath} then source-nat interface`);
         }
 
         // U-turn/hairpin NAT: add persistent-nat for return traffic
@@ -1442,7 +2140,22 @@ function convertNatRules(natRules, commands, warnings, summary) {
       const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
       const ruleSetPath = `security nat destination rule-set ${ruleSetName}`;
 
-      commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
+      // Fix 5: NAT rule-sets cannot use 'any' as zone — replace with actual zones
+      if (fromZone === 'any') {
+        const actualZones = [...definedZones].filter(z => z !== 'any');
+        if (actualZones.length === 0) {
+          commands.push(`# WARNING: Destination NAT rule-set ${fromZone}-to-${toZone} skipped — no defined zones`);
+          warnings.push(createWarning('warning', `nat/destination/${fromZone}-to-${toZone}`,
+            `Destination NAT rule-set from ${fromZone} skipped — 'any' is not valid and no zones defined`,
+            'Define security zones before NAT rules'));
+          continue;
+        }
+        for (const fz of actualZones) {
+          commands.push(`set ${ruleSetPath} from zone ${fz}`);
+        }
+      } else {
+        commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
+      }
 
       for (const rule of rules) {
         const ruleName = sanitizeJunosName(rule.name);
@@ -1454,7 +2167,10 @@ function convertNatRules(natRules, commands, warnings, summary) {
           if (addr === 'any') {
             commands.push(`set ${rulePath} match destination-address ${dnatAny}`);
           } else {
-            commands.push(`set ${rulePath} match destination-address ${addr}`);
+            const resolved = resolveNatAddress(addr, addrLookup, warnings);
+            if (resolved) {
+              commands.push(`set ${rulePath} match destination-address ${resolved}`);
+            }
           }
         }
         // Port-forward matching (FortiGate VIP extport)
@@ -1470,8 +2186,18 @@ function convertNatRules(natRules, commands, warnings, summary) {
 
         // Translation
         if (rule.translated_dst) {
-          const dstAddr = typeof rule.translated_dst === 'string' ? rule.translated_dst : rule.translated_dst.address || '';
+          let dstAddr = typeof rule.translated_dst === 'string' ? rule.translated_dst : rule.translated_dst.address || '';
           if (dstAddr) {
+            // Bug 5 fix: NAT destination pool address must be IP/prefix format.
+            // Resolve named objects and ensure bare IPs get /32 suffix.
+            const resolvedDst = resolveNatAddress(dstAddr, addrLookup, warnings);
+            if (resolvedDst) {
+              dstAddr = resolvedDst;
+            }
+            // Ensure host IPs have /32 prefix for Junos NAT pool format
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(dstAddr)) {
+              dstAddr = `${dstAddr}/32`;
+            }
             const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
             commands.push(`set security nat destination pool ${poolName} address ${dstAddr}`);
             if (rule.translated_port) {
@@ -1495,7 +2221,10 @@ function convertNatRules(natRules, commands, warnings, summary) {
 
       for (const addr of (rule.dst_addresses || [])) {
         if (addr !== 'any') {
-          commands.push(`set ${ruleSetPath} match destination-address ${addr}`);
+          const resolved = resolveNatAddress(addr, addrLookup, warnings);
+          if (resolved) {
+            commands.push(`set ${ruleSetPath} match destination-address ${resolved}`);
+          }
         }
       }
 
@@ -1517,35 +2246,71 @@ function convertStaticRoutes(routes, commands, warnings, summary) {
   commands.push('# Static Routes');
   commands.push('# =============================================');
 
+  // Track destinations that already have a next-hop to avoid duplicate default routes
+  // (Junos allows only one default route action per destination in the same routing table)
+  const routesWithNextHop = new Set();     // key: "vrf|dest" or "|dest"
+  const routesWithAction = new Set();      // any action emitted for this dest
+
+  // First pass: identify all destinations that have a concrete next-hop
+  for (const route of routes) {
+    if (!route.destination) continue;
+    const dest = route.destination.trim();
+    const nextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const key = `${route.vrf || ''}|${dest}`;
+    if (nextHop && route.next_hop_type !== 'next-vr' && route.next_hop_type !== 'discard') {
+      routesWithNextHop.add(key);
+    }
+  }
+
   for (const route of routes) {
     if (!route.destination) continue;
 
-    const dest = route.destination;
+    const dest = route.destination.trim();
+    const nextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const key = `${route.vrf || ''}|${dest}`;
 
     if (route.vrf) {
       // Routing instance
       const instName = sanitizeJunosName(route.vrf);
       if (route.next_hop_type === 'discard') {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} discard`);
-      } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-table ${route.next_hop}.inet.0`);
-      } else if (route.next_hop) {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-hop ${route.next_hop}`);
+        if (!routesWithAction.has(key)) {
+          commands.push(`set routing-instances ${instName} routing-options static route ${dest} discard`);
+          routesWithAction.add(key);
+        }
+      } else if (route.next_hop_type === 'next-vr' && nextHop) {
+        // Skip next-table if this destination already has a concrete next-hop
+        if (!routesWithNextHop.has(key)) {
+          commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+          routesWithAction.add(key);
+        }
+      } else if (nextHop) {
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-hop ${nextHop}`);
+        routesWithAction.add(key);
       }
       if (route.metric && route.metric !== 10) {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} metric ${route.metric}`);
+        const pref = Math.max(1, Math.min(4294967295, route.metric));
+        commands.push(`set routing-instances ${instName} routing-options static route ${dest} preference ${pref}`);
       }
     } else {
       // Global routing-options
       if (route.next_hop_type === 'discard') {
-        commands.push(`set routing-options static route ${dest} discard`);
-      } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
-        commands.push(`set routing-options static route ${dest} next-table ${route.next_hop}.inet.0`);
-      } else if (route.next_hop) {
-        commands.push(`set routing-options static route ${dest} next-hop ${route.next_hop}`);
+        if (!routesWithAction.has(key)) {
+          commands.push(`set routing-options static route ${dest} discard`);
+          routesWithAction.add(key);
+        }
+      } else if (route.next_hop_type === 'next-vr' && nextHop) {
+        // Skip next-table if this destination already has a concrete next-hop
+        if (!routesWithNextHop.has(key)) {
+          commands.push(`set routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+          routesWithAction.add(key);
+        }
+      } else if (nextHop) {
+        commands.push(`set routing-options static route ${dest} next-hop ${nextHop}`);
+        routesWithAction.add(key);
       }
       if (route.metric && route.metric !== 10) {
-        commands.push(`set routing-options static route ${dest} metric ${route.metric}`);
+        const pref = Math.max(1, Math.min(4294967295, route.metric));
+        commands.push(`set routing-options static route ${dest} preference ${pref}`);
       }
     }
 
@@ -1645,7 +2410,7 @@ function convertBgpConfig(bgpConfig, commands, warnings, summary) {
 // OSPF Configuration
 // ---------------------------------------------------------------------------
 
-function convertOspfConfig(ospfConfig, commands, warnings, summary) {
+function convertOspfConfig(ospfConfig, commands, warnings, summary, interfaceMappings = {}) {
   if (!ospfConfig || ospfConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -1671,6 +2436,19 @@ function convertOspfConfig(ospfConfig, commands, warnings, summary) {
     for (const area of ospf.areas || []) {
       const areaId = area.area_id;
 
+      // Fix 7: Check if area has any valid SRX interfaces after mapping — skip if empty
+      const mappedInterfaces = (area.interfaces || []).filter(iface => {
+        const mapped = mapInterfaceName(iface.name, interfaceMappings);
+        return isValidSrxInterface(mapped);
+      });
+      if (mappedInterfaces.length === 0) {
+        commands.push(`# WARNING: OSPF area ${areaId} skipped — no interfaces configured`);
+        warnings.push(createWarning('warning', `ospf/area/${areaId}`,
+          `OSPF area ${areaId} has no interfaces after mapping — skipped to avoid commit error`,
+          'Add interfaces to this OSPF area or remove it'));
+        continue;
+      }
+
       // Area type
       if (area.area_type === 'stub') {
         commands.push(`${prefix}protocols ospf area ${areaId} stub`);
@@ -1684,7 +2462,9 @@ function convertOspfConfig(ospfConfig, commands, warnings, summary) {
 
       // Interfaces
       for (const iface of area.interfaces || []) {
-        const ifBase = `${prefix}protocols ospf area ${areaId} interface ${iface.name}`;
+        const mappedIfName = mapInterfaceName(iface.name, interfaceMappings);
+        if (!isValidSrxInterface(mappedIfName)) continue;
+        const ifBase = `${prefix}protocols ospf area ${areaId} interface ${mappedIfName}`;
         commands.push(ifBase);
 
         if (iface.cost != null) {
@@ -1748,7 +2528,7 @@ function convertOspfConfig(ospfConfig, commands, warnings, summary) {
 // OSPFv3 Configuration
 // ---------------------------------------------------------------------------
 
-function convertOspf3Config(ospf3Config, commands, warnings, summary) {
+function convertOspf3Config(ospf3Config, commands, warnings, summary, interfaceMappings = {}) {
   if (!ospf3Config || ospf3Config.length === 0) return;
 
   commands.push('# =============================================');
@@ -1771,6 +2551,19 @@ function convertOspf3Config(ospf3Config, commands, warnings, summary) {
     for (const area of ospf.areas || []) {
       const areaId = area.area_id;
 
+      // Fix 7: Skip OSPFv3 areas with no valid SRX interfaces after mapping
+      const mappedIf3s = (area.interfaces || []).filter(iface => {
+        const mapped = mapInterfaceName(iface.name, interfaceMappings);
+        return isValidSrxInterface(mapped);
+      });
+      if (mappedIf3s.length === 0) {
+        commands.push(`# WARNING: OSPFv3 area ${areaId} skipped — no interfaces configured`);
+        warnings.push(createWarning('warning', `ospf3/area/${areaId}`,
+          `OSPFv3 area ${areaId} has no interfaces after mapping — skipped to avoid commit error`,
+          'Add interfaces to this OSPFv3 area or remove it'));
+        continue;
+      }
+
       if (area.area_type === 'stub') {
         commands.push(`${prefix}protocols ospf3 area ${areaId} stub`);
       } else if (area.area_type === 'totally-stub') {
@@ -1782,7 +2575,9 @@ function convertOspf3Config(ospf3Config, commands, warnings, summary) {
       }
 
       for (const iface of area.interfaces || []) {
-        const ifBase = `${prefix}protocols ospf3 area ${areaId} interface ${iface.name}`;
+        const mappedIf3Name = mapInterfaceName(iface.name, interfaceMappings);
+        if (!isValidSrxInterface(mappedIf3Name)) continue;
+        const ifBase = `${prefix}protocols ospf3 area ${areaId} interface ${mappedIf3Name}`;
         commands.push(ifBase);
 
         if (iface.cost != null) {
@@ -2043,17 +2838,62 @@ function convertHaConfig(haConfig, commands, warnings, summary) {
 }
 
 /**
+ * Builds the list of MNHA peers from haConfig for 2-, 3-, or 4-node topologies.
+ * For 2-node: uses legacy peer_id/peer_ip fields or additional_peers[0].
+ * For 3/4-node: uses additional_peers array for all peers beyond the first.
+ * @param {Object} haConfig - HA configuration object
+ * @param {number} nodeCount - Total node count (2, 3, or 4)
+ * @returns {Array<Object>} Array of peer objects with peer_id, peer_ip, icl_interface, vpn_profile, etc.
+ */
+function buildMnhaPeerList(haConfig, nodeCount) {
+  const peers = [];
+  const additionalPeers = haConfig.additional_peers || [];
+
+  // First peer — always from top-level fields (backward compatible with 2-node)
+  peers.push({
+    peer_id: haConfig.peer_id || 2,
+    peer_ip: haConfig.peer_ip || '',
+    icl_interface: haConfig.icl_interface || '',
+    vpn_profile: haConfig.vpn_profile || 'IPSEC_VPN_ICL',
+    liveness_interval: haConfig.liveness_interval || 400,
+    liveness_multiplier: haConfig.liveness_multiplier || 5,
+    deployment_type: haConfig.deployment_type || 'routing',
+    activeness_priority: haConfig.activeness_priority || 200,
+    preemption: haConfig.preemption,
+  });
+
+  // Additional peers for 3-node and 4-node
+  for (let i = 0; i < nodeCount - 2; i++) {
+    const extra = additionalPeers[i] || {};
+    peers.push({
+      peer_id: extra.peer_id || (3 + i),
+      peer_ip: extra.peer_ip || '',
+      icl_interface: extra.icl_interface || '',
+      vpn_profile: extra.vpn_profile || 'IPSEC_VPN_ICL',
+      liveness_interval: extra.liveness_interval || haConfig.liveness_interval || 400,
+      liveness_multiplier: extra.liveness_multiplier || haConfig.liveness_multiplier || 5,
+      deployment_type: extra.deployment_type || haConfig.deployment_type || 'routing',
+      activeness_priority: extra.activeness_priority || Math.max(100, (haConfig.activeness_priority || 200) - (50 * (i + 1))),
+      preemption: extra.preemption ?? haConfig.preemption,
+    });
+  }
+
+  return peers;
+}
+
+/**
  * Converts MNHA (Multinode High Availability) configuration to SRX set commands.
  * Uses `set chassis high-availability` instead of `set chassis cluster`.
+ * Supports 2-node, 3-node, and 4-node MNHA topologies.
  */
 function convertMnhaConfig(haConfig, commands, warnings, summary) {
+  const nodeCount = haConfig.node_count || 2;
   commands.push('# =============================================');
-  commands.push('# Multinode High Availability (MNHA) Configuration');
+  commands.push(`# Multinode High Availability (MNHA) — ${nodeCount}-Node Configuration`);
   commands.push('# =============================================');
   commands.push(`# ${haConfig.description || 'MNHA ' + (haConfig.mode || 'active-passive')}`);
 
   const localId = haConfig.local_id || 1;
-  const peerId = haConfig.peer_id || 2;
   const prefix = 'set chassis high-availability';
 
   // Local node
@@ -2062,39 +2902,44 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
     commands.push(`${prefix} local-id local-ip ${haConfig.local_ip}`);
   }
 
-  // Peer node
-  if (haConfig.peer_ip) {
-    commands.push(`${prefix} peer-id ${peerId} peer-ip ${haConfig.peer_ip}`);
+  // Build list of all peers (supports 2-, 3-, and 4-node topologies)
+  const peers = buildMnhaPeerList(haConfig, nodeCount);
+
+  for (const peer of peers) {
+    // Peer node identity
+    if (peer.peer_ip) {
+      commands.push(`${prefix} peer-id ${peer.peer_id} peer-ip ${peer.peer_ip}`);
+    }
+    if (peer.icl_interface) {
+      commands.push(`${prefix} peer-id ${peer.peer_id} interface ${peer.icl_interface}`);
+    }
+    if (peer.vpn_profile) {
+      commands.push(`${prefix} peer-id ${peer.peer_id} vpn-profile ${peer.vpn_profile}`);
+    }
+
+    // Liveness detection per peer
+    const livenessInterval = peer.liveness_interval || haConfig.liveness_interval || 400;
+    const livenessMultiplier = peer.liveness_multiplier || haConfig.liveness_multiplier || 5;
+    commands.push(`${prefix} peer-id ${peer.peer_id} liveness-detection minimum-interval ${livenessInterval}`);
+    commands.push(`${prefix} peer-id ${peer.peer_id} liveness-detection multiplier ${livenessMultiplier}`);
+
+    // SRG0 (control plane) — associate each peer
+    commands.push(`${prefix} services-redundancy-group 0 peer-id ${peer.peer_id}`);
+
+    // SRG1 (data plane) — associate each peer
+    const deployType = peer.deployment_type || haConfig.deployment_type || 'routing';
+    commands.push(`${prefix} services-redundancy-group 1 deployment-type ${deployType}`);
+    commands.push(`${prefix} services-redundancy-group 1 peer-id ${peer.peer_id}`);
+
+    const activePrio = peer.activeness_priority || haConfig.activeness_priority || 200;
+    commands.push(`${prefix} services-redundancy-group 1 activeness-priority ${activePrio}`);
+
+    if (peer.preemption ?? haConfig.preemption) {
+      commands.push(`${prefix} services-redundancy-group 1 preemption`);
+    }
   }
-  if (haConfig.icl_interface) {
-    commands.push(`${prefix} peer-id ${peerId} interface ${haConfig.icl_interface}`);
-  }
-  if (haConfig.vpn_profile) {
-    commands.push(`${prefix} peer-id ${peerId} vpn-profile ${haConfig.vpn_profile}`);
-  }
 
-  // Liveness detection
-  const livenessInterval = haConfig.liveness_interval || 400;
-  const livenessMultiplier = haConfig.liveness_multiplier || 5;
-  commands.push(`${prefix} peer-id ${peerId} liveness-detection minimum-interval ${livenessInterval}`);
-  commands.push(`${prefix} peer-id ${peerId} liveness-detection multiplier ${livenessMultiplier}`);
-
-  // SRG0 (control plane) — always peer-id association
-  commands.push(`${prefix} services-redundancy-group 0 peer-id ${peerId}`);
-
-  // SRG1 (data plane)
-  const deployType = haConfig.deployment_type || 'routing';
-  commands.push(`${prefix} services-redundancy-group 1 deployment-type ${deployType}`);
-  commands.push(`${prefix} services-redundancy-group 1 peer-id ${peerId}`);
-
-  const activePrio = haConfig.activeness_priority || 200;
-  commands.push(`${prefix} services-redundancy-group 1 activeness-priority ${activePrio}`);
-
-  if (haConfig.preemption) {
-    commands.push(`${prefix} services-redundancy-group 1 preemption`);
-  }
-
-  // Monitoring
+  // Monitoring (applies to all peers)
   if (haConfig.monitoring) {
     for (const lg of (haConfig.monitoring.link_groups || [])) {
       if (lg.enabled && lg.interfaces && lg.interfaces.length > 0) {
@@ -2105,11 +2950,16 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
     }
   }
 
+  if (nodeCount > 2) {
+    commands.push(`# NOTE: ${nodeCount}-node MNHA requires full mesh ICL connectivity between all nodes.`);
+    commands.push('# Ensure each node has dedicated ICL interfaces to every other peer.');
+  }
   commands.push('# NOTE: Review MNHA config — verify ICL interface, VPN profile, and virtual-IP');
   commands.push('# assignments match your target SRX4700 topology');
 
-  warnings.push(createWarning('ha', 'MNHA configured — verify ICL, VPN profile, and SRG settings for target topology', 'info'));
+  warnings.push(createWarning('ha', `${nodeCount}-node MNHA configured — verify ICL, VPN profile, and SRG settings for target topology`, 'info'));
   summary.ha_converted = 1;
+  summary.mnha_node_count = nodeCount;
   commands.push('');
 }
 
@@ -2118,6 +2968,23 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
  */
 function convertScreenConfig(screens, commands, warnings, summary) {
   if (!screens || screens.length === 0) return;
+
+  // Junos screen value limits (parameter → max allowed value)
+  const screenLimits = {
+    syn_flood_timeout: 50,          // 1..50
+    syn_flood_threshold: 1000000,   // 1..1000000
+    syn_flood_alarm_threshold: 1000000,
+    flood_threshold: 1000000,       // icmp/udp flood
+    source_based: 128000,           // limit-session
+    destination_based: 128000,
+  };
+
+  /** @param {number} val @param {string} key */
+  const clampScreen = (val, key) => {
+    const max = screenLimits[key];
+    if (max && val > max) return max;
+    return val;
+  };
 
   commands.push('# =============================================');
   commands.push('# Security Screen (IDS Options)');
@@ -2131,17 +2998,19 @@ function convertScreenConfig(screens, commands, warnings, summary) {
     if (screen.icmp) {
       if (screen.icmp.ping_death) commands.push(`${prefix} icmp ping-death`);
       if (screen.icmp.fragment) commands.push(`${prefix} icmp fragment`);
-      if (screen.icmp.flood_threshold) commands.push(`${prefix} icmp flood threshold ${screen.icmp.flood_threshold}`);
+      if (screen.icmp.flood_threshold) commands.push(`${prefix} icmp flood threshold ${clampScreen(screen.icmp.flood_threshold, 'flood_threshold')}`);
     }
 
     // TCP protections
     if (screen.tcp) {
       if (screen.tcp.syn_flood_threshold) {
-        const alarmVal = screen.tcp.syn_flood_alarm_threshold || Math.round(screen.tcp.syn_flood_threshold * 5) || 1024;
+        const rawAlarm = screen.tcp.syn_flood_alarm_threshold || Math.round(screen.tcp.syn_flood_threshold * 5) || 1024;
+        const alarmVal = clampScreen(rawAlarm, 'syn_flood_alarm_threshold');
+        const attackVal = clampScreen(screen.tcp.syn_flood_threshold, 'syn_flood_threshold');
         commands.push(`${prefix} tcp syn-flood alarm-threshold ${alarmVal}`);
-        commands.push(`${prefix} tcp syn-flood attack-threshold ${screen.tcp.syn_flood_threshold}`);
+        commands.push(`${prefix} tcp syn-flood attack-threshold ${attackVal}`);
       }
-      if (screen.tcp.syn_flood_timeout) commands.push(`${prefix} tcp syn-flood timeout ${screen.tcp.syn_flood_timeout}`);
+      if (screen.tcp.syn_flood_timeout) commands.push(`${prefix} tcp syn-flood timeout ${clampScreen(screen.tcp.syn_flood_timeout, 'syn_flood_timeout')}`);
       if (screen.tcp.land_attack) commands.push(`${prefix} tcp land`);
       if (screen.tcp.winnuke) commands.push(`${prefix} tcp winnuke`);
       if (screen.tcp.tcp_no_flag) commands.push(`${prefix} tcp tcp-no-flag`);
@@ -2149,7 +3018,7 @@ function convertScreenConfig(screens, commands, warnings, summary) {
 
     // UDP protections
     if (screen.udp && screen.udp.flood_threshold) {
-      commands.push(`${prefix} udp flood threshold ${screen.udp.flood_threshold}`);
+      commands.push(`${prefix} udp flood threshold ${clampScreen(screen.udp.flood_threshold, 'flood_threshold')}`);
     }
 
     // IP protections
@@ -2163,8 +3032,8 @@ function convertScreenConfig(screens, commands, warnings, summary) {
 
     // Session limits
     if (screen.limit_session) {
-      if (screen.limit_session.source_based) commands.push(`${prefix} limit-session source-ip-based ${screen.limit_session.source_based}`);
-      if (screen.limit_session.destination_based) commands.push(`${prefix} limit-session destination-ip-based ${screen.limit_session.destination_based}`);
+      if (screen.limit_session.source_based) commands.push(`${prefix} limit-session source-ip-based ${clampScreen(screen.limit_session.source_based, 'source_based')}`);
+      if (screen.limit_session.destination_based) commands.push(`${prefix} limit-session destination-ip-based ${clampScreen(screen.limit_session.destination_based, 'destination_based')}`);
     }
 
     // Apply screen to zone if known
@@ -2181,6 +3050,43 @@ function convertScreenConfig(screens, commands, warnings, summary) {
 /**
  * Converts VPN/IPsec tunnel configuration to SRX set commands.
  */
+/**
+ * Maps common authentication algorithm names to valid Junos IKE/IPsec identifiers.
+ * IKE proposals use bare names (sha-256), IPsec proposals use HMAC variants (hmac-sha-256-128).
+ * @param {string} algo - The source authentication algorithm name
+ * @param {'ike'|'ipsec'} context - Whether this is for an IKE or IPsec proposal
+ * @returns {string} Valid Junos authentication-algorithm value
+ */
+function mapAuthAlgorithm(algo, context = 'ipsec') {
+  const ikeMap = {
+    'sha256': 'sha-256',
+    'sha-256': 'sha-256',
+    'sha1': 'sha1',
+    'sha-1': 'sha1',
+    'sha384': 'sha-384',
+    'sha-384': 'sha-384',
+    'sha512': 'sha-512',
+    'sha-512': 'sha-512',
+    'md5': 'md5',
+    'hmac-sha-256-128': 'sha-256',
+    'hmac-sha1-96': 'sha1',
+    'hmac-md5-96': 'md5',
+  };
+  const ipsecMap = {
+    'sha256': 'hmac-sha-256-128',
+    'sha-256': 'hmac-sha-256-128',
+    'sha1': 'hmac-sha1-96',
+    'sha-1': 'hmac-sha1-96',
+    'sha384': 'hmac-sha-384',
+    'sha-384': 'hmac-sha-384',
+    'sha512': 'hmac-sha-512',
+    'sha-512': 'hmac-sha-512',
+    'md5': 'hmac-md5-96',
+  };
+  const map = context === 'ike' ? ikeMap : ipsecMap;
+  return map[algo.toLowerCase()] || algo;
+}
+
 function convertVpnTunnels(tunnels, commands, warnings, summary) {
   if (!tunnels || tunnels.length === 0) return;
 
@@ -2191,9 +3097,58 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
   const emittedProposals = new Set();
   const emittedPolicies = new Set();
   const emittedGateways = new Set();
+  // Bug 6/11 fix: Track emitted st0 interfaces to avoid duplicates
+  const emittedTunnelInterfaces = new Set();
+
+  // Bug 6/11 fix: Emit all required st0 tunnel interfaces BEFORE IPsec references.
+  // vSRX commit check fails if bind-interface references an unconfigured st0 unit.
+  for (const vpn of tunnels) {
+    if (vpn.tunnel_interface) {
+      const bindIf = vpn.tunnel_interface.startsWith('st0') ? vpn.tunnel_interface : 'st0.0';
+      if (!emittedTunnelInterfaces.has(bindIf)) {
+        emittedTunnelInterfaces.add(bindIf);
+        const [stBase, stUnit = '0'] = bindIf.split('.');
+        commands.push(`set interfaces ${stBase} unit ${stUnit} family inet`);
+      }
+    }
+  }
 
   for (const vpn of tunnels) {
     const vpnName = sanitizeJunosName(vpn.name || 'vpn-1');
+
+    // Bug 7 fix: Determine the external interface for IKE gateway.
+    // If the source vendor interface can't be mapped to a valid SRX interface,
+    // skip the entire VPN config with a warning instead of emitting invalid config.
+    let resolvedExtIf = null;
+    if (vpn.ike_gateway?.external_interface) {
+      const candidateIf = vpn.ike_gateway.external_interface;
+      // Check if it's already a valid SRX interface name (e.g., ge-0/0/0.0)
+      if (/^(ge|xe|et|ae|lo|irb|st|reth)-?\d/.test(candidateIf)) {
+        resolvedExtIf = candidateIf.includes('.') ? candidateIf : `${candidateIf}.0`;
+      }
+    }
+    if (!resolvedExtIf && vpn.ike_gateway?.local_address) {
+      // local_address might be an IP, not an interface — use fallback
+      const la = vpn.ike_gateway.local_address;
+      if (/^(ge|xe|et|ae|lo|irb|reth)-?\d/.test(la)) {
+        resolvedExtIf = la.includes('.') ? la : `${la}.0`;
+      }
+      // If local_address is an IP address, we can't derive the interface — use ge-0/0/0.0 as default
+      if (!resolvedExtIf && /^\d+\.\d+\.\d+\.\d+/.test(la)) {
+        resolvedExtIf = 'ge-0/0/0.0';
+        warnings.push(createWarning('warning', `vpn/${vpnName}`,
+          `IKE gateway local-address "${la}" is an IP — using ge-0/0/0.0 as external-interface`,
+          'Verify the correct external interface for this VPN tunnel'));
+      }
+    }
+    if (!resolvedExtIf) {
+      // No valid external interface found — skip VPN with warning
+      warnings.push(createWarning('warning', `vpn/${vpnName}`,
+        `VPN "${vpn.name}" skipped — external interface could not be determined from source config`,
+        'Manually configure IKE gateway external-interface'));
+      commands.push(`# WARNING: VPN "${vpn.name}" skipped — IKE gateway external-interface not resolvable`);
+      continue;
+    }
 
     // IKE Proposal
     if (vpn.ike_proposal && !emittedProposals.has(vpn.ike_proposal.name)) {
@@ -2202,7 +3157,7 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
       commands.push(`set security ike proposal ${propName} authentication-method ${vpn.ike_proposal.auth_method || 'pre-shared-keys'}`);
       commands.push(`set security ike proposal ${propName} dh-group ${vpn.ike_proposal.dh_group || 'group14'}`);
       commands.push(`set security ike proposal ${propName} encryption-algorithm ${vpn.ike_proposal.encryption || 'aes-256-cbc'}`);
-      commands.push(`set security ike proposal ${propName} authentication-algorithm ${vpn.ike_proposal.authentication || 'sha-256'}`);
+      commands.push(`set security ike proposal ${propName} authentication-algorithm ${mapAuthAlgorithm(vpn.ike_proposal.authentication || 'sha-256', 'ike')}`);
       if (vpn.ike_proposal.lifetime) {
         commands.push(`set security ike proposal ${propName} lifetime-seconds ${vpn.ike_proposal.lifetime}`);
       }
@@ -2225,10 +3180,8 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
         commands.push(`set security ike gateway ${gwName} address ${vpn.ike_gateway.address}`);
       }
       commands.push(`set security ike gateway ${gwName} ike-policy ${polName}`);
-      if (vpn.ike_gateway?.local_address) {
-        const extIf = vpn.ike_gateway.local_address.includes('.') && !vpn.ike_gateway.local_address.includes('/') ? vpn.ike_gateway.local_address : 'ge-0/0/0.0';
-        commands.push(`set security ike gateway ${gwName} external-interface ${extIf}`);
-      }
+      // Bug 7 fix: Use resolved external interface instead of raw vendor interface name
+      commands.push(`set security ike gateway ${gwName} external-interface ${resolvedExtIf}`);
       if (vpn.ike_gateway?.ike_version === 'v2') {
         commands.push(`set security ike gateway ${gwName} version v2-only`);
       }
@@ -2240,7 +3193,7 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
       emittedProposals.add('ipsec-' + vpn.ipsec_proposal.name);
       commands.push(`set security ipsec proposal ${ipropName} protocol ${vpn.ipsec_proposal.protocol || 'esp'}`);
       commands.push(`set security ipsec proposal ${ipropName} encryption-algorithm ${vpn.ipsec_proposal.encryption || 'aes-256-cbc'}`);
-      commands.push(`set security ipsec proposal ${ipropName} authentication-algorithm ${vpn.ipsec_proposal.authentication || 'hmac-sha-256-128'}`);
+      commands.push(`set security ipsec proposal ${ipropName} authentication-algorithm ${mapAuthAlgorithm(vpn.ipsec_proposal.authentication || 'hmac-sha-256-128')}`);
       if (vpn.ipsec_proposal.lifetime) {
         commands.push(`set security ipsec proposal ${ipropName} lifetime-seconds ${vpn.ipsec_proposal.lifetime}`);
       }
@@ -2326,6 +3279,177 @@ function convertSyslogConfig(syslogConfig, commands, warnings, summary) {
 
 
 // ---------------------------------------------------------------------------
+// AAA Configuration Converter
+// ---------------------------------------------------------------------------
+
+function convertAaaConfig(aaaConfig, commands, warnings, summary) {
+  if (!aaaConfig || aaaConfig.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# AAA / Authentication Configuration');
+  commands.push('# =============================================');
+
+  let radiusCount = 0;
+  let tacplusCount = 0;
+  let profileCount = 0;
+
+  for (const entry of aaaConfig) {
+    if (entry.type === 'radius') {
+      if (!entry.server) continue;
+      commands.push(`set system radius-server ${entry.server} port ${entry.port || 1812}`);
+      if (entry.secret) {
+        commands.push(`set system radius-server ${entry.server} secret "${entry.secret}"`);
+      } else {
+        commands.push(`# set system radius-server ${entry.server} secret "<SHARED-SECRET>" /* requires manual configuration */`);
+      }
+      if (entry.timeout) {
+        commands.push(`set system radius-server ${entry.server} timeout ${entry.timeout}`);
+      }
+      if (entry.retry) {
+        commands.push(`set system radius-server ${entry.server} retry ${entry.retry}`);
+      }
+      if (entry.source_address) {
+        commands.push(`set system radius-server ${entry.server} source-address ${entry.source_address}`);
+      }
+      radiusCount++;
+    }
+
+    if (entry.type === 'tacplus') {
+      if (!entry.server) continue;
+      commands.push(`set system tacplus-server ${entry.server} port ${entry.port || 49}`);
+      if (entry.secret) {
+        commands.push(`set system tacplus-server ${entry.server} secret "${entry.secret}"`);
+      } else {
+        commands.push(`# set system tacplus-server ${entry.server} secret "<SHARED-SECRET>" /* requires manual configuration */`);
+      }
+      if (entry.timeout) {
+        commands.push(`set system tacplus-server ${entry.server} timeout ${entry.timeout}`);
+      }
+      if (entry.single_connection) {
+        commands.push(`set system tacplus-server ${entry.server} single-connection`);
+      }
+      if (entry.source_address) {
+        commands.push(`set system tacplus-server ${entry.server} source-address ${entry.source_address}`);
+      }
+      tacplusCount++;
+    }
+
+    if (entry.type === 'ldap') {
+      // SRX uses LDAP via access profile, emit as comments for manual configuration
+      commands.push(`# LDAP server: ${entry.server}:${entry.port || 389} (base-dn: ${entry.base_dn || 'N/A'})`);
+      commands.push(`# Configure via: set access profile <name> ldap-server ${entry.server}`);
+    }
+
+    if (entry.type === 'profile') {
+      const profileName = sanitizeJunosName(entry.name);
+      if (entry.authentication_order && entry.authentication_order.length > 0) {
+        for (const method of entry.authentication_order) {
+          const normalized = method.toLowerCase().includes('tacacs') ? 'tacplus' :
+                            method.toLowerCase().includes('radius') ? 'radius' :
+                            method.toLowerCase().includes('ldap') ? 'ldap' :
+                            method.toLowerCase() === 'password' ? 'password' : method;
+          commands.push(`set access profile ${profileName} authentication-order ${normalized}`);
+        }
+      }
+      profileCount++;
+    }
+
+    if (entry.type === 'auth-order') {
+      if (entry.authentication_order && entry.authentication_order.length > 0) {
+        for (const method of entry.authentication_order) {
+          commands.push(`set system authentication-order ${method}`);
+        }
+      }
+    }
+  }
+
+  // Add note about shared secrets
+  if (radiusCount > 0 || tacplusCount > 0) {
+    commands.push('# NOTE: Shared secrets are sanitized. Verify and replace before deployment.');
+  }
+
+  summary.aaa_radius_servers_converted = radiusCount;
+  summary.aaa_tacplus_servers_converted = tacplusCount;
+  summary.aaa_profiles_converted = profileCount;
+
+  commands.push('');
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Converter
+// ---------------------------------------------------------------------------
+
+function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
+  if (!snmpConfig || snmpConfig.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# SNMP Configuration');
+  commands.push('# =============================================');
+
+  let communityCount = 0;
+  let trapGroupCount = 0;
+
+  // Emit contact/location from first entry that has them
+  const contactEntry = snmpConfig.find(e => e.contact);
+  const locationEntry = snmpConfig.find(e => e.location);
+  if (contactEntry?.contact) {
+    commands.push(`set snmp contact "${contactEntry.contact}"`);
+  }
+  if (locationEntry?.location) {
+    commands.push(`set snmp location "${locationEntry.location}"`);
+  }
+
+  for (const entry of snmpConfig) {
+    if (entry.type === 'community') {
+      const auth = entry.authorization === 'read-write' ? 'read-write' : 'read-only';
+      commands.push(`set snmp community ${sanitizeJunosName(entry.name)} authorization ${auth}`);
+
+      // Restrict to specific clients if configured
+      if (entry.clients && entry.clients.length > 0) {
+        for (const client of entry.clients) {
+          commands.push(`set snmp community ${sanitizeJunosName(entry.name)} clients ${client}`);
+        }
+      }
+      communityCount++;
+    }
+
+    if (entry.type === 'trap-group') {
+      const groupName = sanitizeJunosName(entry.name);
+      if (entry.version) {
+        commands.push(`set snmp trap-group ${groupName} version ${entry.version}`);
+      }
+      for (const target of (entry.targets || [])) {
+        commands.push(`set snmp trap-group ${groupName} targets ${target}`);
+      }
+      for (const cat of (entry.categories || [])) {
+        commands.push(`set snmp trap-group ${groupName} categories ${cat}`);
+      }
+      trapGroupCount++;
+    }
+
+    if (entry.type === 'v3-user') {
+      const VALID_AUTH = ['md5', 'sha'];
+      const VALID_PRIV = ['des', 'aes128'];
+      const userName = sanitizeJunosName(entry.name);
+      commands.push(`set snmp v3 usm local-engine user ${userName}`);
+      if (entry.auth_protocol && entry.auth_protocol !== 'none' && VALID_AUTH.includes(entry.auth_protocol)) {
+        commands.push(`set snmp v3 usm local-engine user ${userName} authentication-${entry.auth_protocol}`);
+      }
+      if (entry.privacy_protocol && entry.privacy_protocol !== 'none' && VALID_PRIV.includes(entry.privacy_protocol)) {
+        commands.push(`set snmp v3 usm local-engine user ${userName} privacy-${entry.privacy_protocol}`);
+      }
+    }
+  }
+
+  summary.snmp_communities_converted = communityCount;
+  summary.snmp_trap_groups_converted = trapGroupCount;
+
+  commands.push('');
+}
+
+
+// ---------------------------------------------------------------------------
 // DHCP Configuration Converter
 // ---------------------------------------------------------------------------
 
@@ -2349,6 +3473,19 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary) {
       // DHCP Server pool
       const poolName = sanitizeJunosName(cfg.name || cfg.interface || 'dhcp-pool');
 
+      // Fix 1: DHCP pool requires a network statement — skip pool entirely if missing
+      const dhcpNetwork = cfg.network || cfg.subnet;
+      if (!dhcpNetwork) {
+        commands.push(`# WARNING: DHCP pool "${cfg.name || poolName}" skipped — no network/subnet defined (mandatory for SRX)`);
+        warnings.push(createWarning('warning', `dhcp/${poolName}`,
+          `DHCP pool "${cfg.name || poolName}" has no network statement — skipped`,
+          'Add a network statement (e.g., 192.168.1.0/24) to the DHCP pool configuration'));
+        continue;
+      }
+
+      // Emit network statement first (mandatory)
+      commands.push(`set access address-assignment pool ${poolName} family inet network ${dhcpNetwork}`);
+
       if (cfg.pools) {
         for (let i = 0; i < cfg.pools.length; i++) {
           const pool = cfg.pools[i];
@@ -2366,10 +3503,6 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary) {
           if (range.low) commands.push(`set access address-assignment pool ${poolName} family inet range ${rName} low ${range.low}`);
           if (range.high) commands.push(`set access address-assignment pool ${poolName} family inet range ${rName} high ${range.high}`);
         }
-      }
-
-      if (cfg.network) {
-        commands.push(`set access address-assignment pool ${poolName} family inet network ${cfg.network}`);
       }
 
       if (cfg.gateway || cfg.router) {
@@ -2634,8 +3767,18 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
  * Discard rules → firewall filter term with "then discard"
  * No-PBF rules → firewall filter term with "then accept" (default routing)
  */
-function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappings = {}) {
+function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappings = {}, addressObjects = []) {
   if (!pbfRules || pbfRules.length === 0) return;
+
+  // Build lookup map from address object names to their IP values
+  const addrLookup = new Map();
+  for (const obj of (addressObjects || [])) {
+    const addrVal = obj.value || obj.ip || obj.network || obj.subnet || obj.address;
+    if (obj.name && addrVal && (obj.type === 'host' || obj.type === 'subnet')) {
+      addrLookup.set(obj.name, addrVal);
+      addrLookup.set(sanitizeJunosName(obj.name), addrVal);
+    }
+  }
 
   commands.push('# =============================================');
   commands.push('# Policy-Based Forwarding (Filter-Based Forwarding)');
@@ -2672,13 +3815,33 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
     const termName = sanitizeJunosName(rule.name);
     const termBase = `set firewall filter ${filterName} term ${termName}`;
 
-    // Match: source addresses
+    // Match: source addresses (resolve named objects to IP values for firewall filters)
     for (const src of (rule.src_addresses || []).filter(a => a !== 'any')) {
-      commands.push(`${termBase} from source-address ${src}`);
+      const isIp = /^[\d.:\/]+$/.test(src);
+      if (isIp) {
+        commands.push(`${termBase} from source-address ${src}`);
+      } else if (addrLookup.has(src)) {
+        commands.push(`${termBase} from source-address ${addrLookup.get(src)}`);
+      } else {
+        commands.push(`# WARNING: skipping source-address "${src}" — named object not resolvable to IP for firewall filter`);
+        warnings.push(createWarning('warning', `pbf/${rule.name}`,
+          `PBF filter term "${rule.name}" references named address "${src}" which could not be resolved to an IP`,
+          'Firewall filters require raw IP addresses — add the address manually'));
+      }
     }
-    // Match: destination addresses
+    // Match: destination addresses (resolve named objects to IP values for firewall filters)
     for (const dst of (rule.dst_addresses || []).filter(a => a !== 'any')) {
-      commands.push(`${termBase} from destination-address ${dst}`);
+      const isIp = /^[\d.:\/]+$/.test(dst);
+      if (isIp) {
+        commands.push(`${termBase} from destination-address ${dst}`);
+      } else if (addrLookup.has(dst)) {
+        commands.push(`${termBase} from destination-address ${addrLookup.get(dst)}`);
+      } else {
+        commands.push(`# WARNING: skipping destination-address "${dst}" — named object not resolvable to IP for firewall filter`);
+        warnings.push(createWarning('warning', `pbf/${rule.name}`,
+          `PBF filter term "${rule.name}" references named address "${dst}" which could not be resolved to an IP`,
+          'Firewall filters require raw IP addresses — add the address manually'));
+      }
     }
     // Match: applications/services (map to protocol/port if possible)
     for (const svc of (rule.services || []).filter(s => s !== 'any' && s !== 'application-default')) {
@@ -2835,19 +3998,22 @@ function convertSslProxyConfig(config, commands, warnings, summary) {
     commands.push('');
   }
 
-  // 3. SSL Forward Proxy profiles
-  for (const profileName of fwdProxyProfiles) {
-    commands.push(`set services ssl proxy profile ${profileName} root-ca FPIC-CA`);
-    commands.push(`set services ssl proxy profile ${profileName} protocol-version tls12-and-above`);
-    commands.push(`set services ssl proxy profile ${profileName} actions log`);
-    commands.push(`set services ssl proxy profile ${profileName} actions crl-disable`);
+  // 3. SSL Forward Proxy profiles — skipped (requires manual PKI setup)
+  if (fwdProxyProfiles.size > 0) {
+    commands.push('# SSL forward-proxy profiles require manual configuration:');
+    for (const profileName of fwdProxyProfiles) {
+      commands.push(`#   set services ssl proxy profile ${profileName} root-ca <CA_PROFILE>`);
+    }
+    commands.push('# SSL proxy requires PKI certificates that cannot be auto-generated.');
+    commands.push('# See: https://www.juniper.net/documentation/us/en/software/junos/ssl-proxy/');
   }
 
-  // 4. SSL Inbound Inspection profiles
-  for (const [profileName, certName] of inboundProfiles) {
-    commands.push(`set services ssl proxy profile ${profileName} server-certificate ${certName}`);
-    commands.push(`set services ssl proxy profile ${profileName} protocol-version tls12-and-above`);
-    commands.push(`set services ssl proxy profile ${profileName} actions log`);
+  // 4. SSL Inbound Inspection profiles — skipped (requires manual PKI setup)
+  if (inboundProfiles.size > 0) {
+    commands.push('# SSL inbound-inspection profiles require manual configuration:');
+    for (const [profileName, certName] of inboundProfiles) {
+      commands.push(`#   set services ssl proxy profile ${profileName} server-certificate ${certName}`);
+    }
   }
 
   if (fwdProxyProfiles.size > 0 || inboundProfiles.size > 0) commands.push('');
@@ -3042,6 +4208,22 @@ export function convertMergedToSrxSetCommands(configSlots, crossLsLinks = [], gl
     const sysCommands = [];
     convertSyslogConfig(globalConfig.syslog_config, sysCommands, allWarnings, {});
     allCommands.push(...sysCommands);
+    allCommands.push('');
+  }
+
+  // SNMP at chassis level
+  if (globalConfig.snmp_config && globalConfig.snmp_config.length > 0) {
+    const snmpCommands = [];
+    convertSnmpConfig(globalConfig.snmp_config, snmpCommands, allWarnings, {});
+    allCommands.push(...snmpCommands);
+    allCommands.push('');
+  }
+
+  // AAA at chassis level
+  if (globalConfig.aaa_config && globalConfig.aaa_config.length > 0) {
+    const aaaCommands = [];
+    convertAaaConfig(globalConfig.aaa_config, aaaCommands, allWarnings, {});
+    allCommands.push(...aaaCommands);
     allCommands.push('');
   }
 

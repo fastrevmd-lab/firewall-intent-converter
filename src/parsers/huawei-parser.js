@@ -1633,6 +1633,9 @@ export function parseHuaweiConfig(configText) {
     ));
   }
 
+  // Parse LAG / Eth-Trunk interfaces
+  const lagInterfaces = parseHuaweiLagInterfaces(sections, warnings);
+
   // Summary warning
   warnings.push(createWarning(
     'info', 'parse-summary',
@@ -1659,10 +1662,13 @@ export function parseHuaweiConfig(configText) {
     ha_config: haConfig,
     screen_config: [],
     syslog_config: [],
+    snmp_config: parseHuaweiSnmpConfig(allLines, warnings),
+    aaa_config: parseHuaweiAaaConfig(allLines, sections, warnings),
     dhcp_config: [],
     qos_config: [],
     flow_monitoring_config: parseHuaweiNetstream(sections, allLines, warnings),
     interfaces: normalizedInterfaces,
+    lag_interfaces: lagInterfaces,
     routing_contexts: [{ name: 'default', type: 'default', virtual_routers: [], zones: [] }],
     static_routes: staticRoutes,
     bgp_config: bgpConfig,
@@ -1804,4 +1810,298 @@ function parseHuaweiNetstream(sections, allLines, warnings) {
   }
 
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// LAG / Eth-Trunk Interface Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Huawei USG Eth-Trunk (LAG) interfaces and their member assignments.
+ *
+ * Huawei config patterns:
+ *   interface Eth-Trunk0
+ *     description LAG to switch
+ *     mode lacp-static
+ *     trunkport GigabitEthernet0/0/1
+ *     trunkport GigabitEthernet0/0/2
+ *   #
+ *
+ * Alternative member assignment:
+ *   interface GigabitEthernet0/0/1
+ *     eth-trunk 0
+ *   #
+ *
+ * @param {Object[]} sections - Parsed config sections
+ * @param {Object[]} warnings - Warnings array
+ * @returns {Object[]} Array of lag_interfaces in intermediate schema format
+ */
+function parseHuaweiLagInterfaces(sections, warnings) {
+  const lagInterfaces = [];
+  const trunkData = {};
+  const memberFromIface = {};
+
+  for (const section of sections) {
+    if (!section.header) continue;
+    const lines = section.lines || [];
+
+    // Match Eth-Trunk interface sections
+    const trunkMatch = section.header.match(/^interface\s+Eth-Trunk(\d+)/i);
+    if (trunkMatch) {
+      const trunkNum = trunkMatch[1];
+      const trunk = {
+        source_name: `Eth-Trunk${trunkNum}`,
+        description: '',
+        members: [],
+        lacp_mode: 'static',
+      };
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('description ')) {
+          trunk.description = trimmed.slice(12).trim();
+        } else if (trimmed.startsWith('mode lacp-static')) {
+          trunk.lacp_mode = 'active';
+        } else if (trimmed.startsWith('mode manual')) {
+          trunk.lacp_mode = 'static';
+        } else if (trimmed.startsWith('trunkport ')) {
+          const member = trimmed.slice(10).trim().split(/\s+/)[0];
+          if (member) trunk.members.push(member);
+        }
+      }
+
+      trunkData[trunkNum] = trunk;
+      continue;
+    }
+
+    // Check for eth-trunk assignment on physical interfaces
+    const ifMatch = section.header.match(/^interface\s+(\S+)/i);
+    if (ifMatch) {
+      const ifName = ifMatch[1];
+      for (const line of lines) {
+        const etMatch = line.trim().match(/^eth-trunk\s+(\d+)/i);
+        if (etMatch) {
+          const trunkNum = etMatch[1];
+          if (!memberFromIface[trunkNum]) memberFromIface[trunkNum] = [];
+          memberFromIface[trunkNum].push(ifName);
+        }
+      }
+    }
+  }
+
+  // Merge member assignments from physical interface sections
+  for (const [trunkNum, members] of Object.entries(memberFromIface)) {
+    if (!trunkData[trunkNum]) {
+      trunkData[trunkNum] = {
+        source_name: `Eth-Trunk${trunkNum}`,
+        description: '',
+        members: [],
+        lacp_mode: 'static',
+      };
+    }
+    for (const m of members) {
+      if (!trunkData[trunkNum].members.includes(m)) {
+        trunkData[trunkNum].members.push(m);
+      }
+    }
+  }
+
+  let aeIndex = 0;
+  for (const [trunkNum, trunk] of Object.entries(trunkData)) {
+    lagInterfaces.push({
+      name: `ae${aeIndex}`,
+      source_name: trunk.source_name,
+      members: trunk.members,
+      source_members: [...trunk.members],
+      lacp_mode: trunk.lacp_mode,
+      lacp_priority: null,
+      description: trunk.description,
+    });
+    aeIndex++;
+  }
+
+  if (lagInterfaces.length > 0) {
+    warnings.push(createWarning('info', 'lag',
+      `Parsed ${lagInterfaces.length} Eth-Trunk (LAG) interface(s) with ${lagInterfaces.reduce((s, l) => s + l.members.length, 0)} member(s)`,
+      'Eth-Trunk interfaces will be converted to SRX ae interfaces'));
+  }
+
+  return lagInterfaces;
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Parser (Huawei USG)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Huawei USG SNMP configuration from CLI lines.
+ * Huawei: snmp-agent community, snmp-agent target-host, snmp-agent sys-info, etc.
+ */
+function parseHuaweiSnmpConfig(allLines, warnings) {
+  const entries = [];
+  let contact = '';
+  let location = '';
+  const communities = new Map();
+  const trapHosts = [];
+
+  for (const line of allLines) {
+    const trimmed = line.trim();
+
+    // snmp-agent community read <string> / snmp-agent community write <string>
+    const commMatch = trimmed.match(/^snmp-agent\s+community\s+(read|write)\s+(\S+)/);
+    if (commMatch) {
+      communities.set(commMatch[2], commMatch[1] === 'write' ? 'read-write' : 'read-only');
+      continue;
+    }
+
+    // snmp-agent target-host trap address udp-domain <ip> [udp-port <port>] params securityname <str>
+    const targetMatch = trimmed.match(/^snmp-agent\s+target-host\s+trap\s+address\s+udp-domain\s+(\S+)/);
+    if (targetMatch) {
+      const portMatch = trimmed.match(/udp-port\s+(\d+)/);
+      const secMatch = trimmed.match(/securityname\s+(\S+)/);
+      trapHosts.push({
+        ip: targetMatch[1],
+        port: portMatch ? parseInt(portMatch[1], 10) : 162,
+        community: secMatch ? secMatch[1] : '',
+      });
+      continue;
+    }
+
+    // snmp-agent sys-info contact <string>
+    const contactMatch = trimmed.match(/^snmp-agent\s+sys-info\s+contact\s+(.+)$/);
+    if (contactMatch) {
+      contact = contactMatch[1];
+      continue;
+    }
+
+    // snmp-agent sys-info location <string>
+    const locationMatch = trimmed.match(/^snmp-agent\s+sys-info\s+location\s+(.+)$/);
+    if (locationMatch) {
+      location = locationMatch[1];
+      continue;
+    }
+  }
+
+  for (const [name, auth] of communities) {
+    entries.push({
+      type: 'community',
+      name,
+      authorization: auth,
+      clients: [],
+      contact,
+      location,
+    });
+  }
+
+  if (trapHosts.length > 0) {
+    entries.push({
+      type: 'trap-group',
+      name: 'trap-default',
+      targets: trapHosts.map(th => th.ip),
+      categories: [],
+      version: 'v2c',
+    });
+  }
+
+    if (entries.length > 0) {
+    warnings.push(createWarning('info', 'snmp', `Parsed ${entries.length} SNMP configuration item(s)`, 'Huawei SNMP configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA Configuration Parser (Huawei USG)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Huawei USG AAA configuration from CLI lines and sections.
+ * Huawei: radius-server template, hwtacacs-server template, aaa
+ */
+function parseHuaweiAaaConfig(allLines, sections, warnings) {
+  const entries = [];
+
+  // Parse radius-server template sections
+  for (const sec of sections) {
+    const radiusMatch = sec.header.match(/^radius-server\s+template\s+(\S+)/i);
+    if (radiusMatch) {
+      const templateName = radiusMatch[1];
+      let server = '';
+      let port = 1812;
+      let secret = '';
+
+      for (const line of sec.lines) {
+        const trimmed = line.trim();
+        const authMatch = trimmed.match(/radius-server\s+authentication\s+(\S+)\s+(\d+)/);
+        if (authMatch) { server = authMatch[1]; port = parseInt(authMatch[2], 10); }
+        const keyMatch = trimmed.match(/radius-server\s+shared-key\s+(?:cipher\s+)?(\S+)/);
+        if (keyMatch) secret = keyMatch[1];
+      }
+
+      if (server) {
+        entries.push({
+          type: 'radius',
+          name: templateName,
+          server,
+          port,
+          secret,
+          timeout: 5,
+          retry: 3,
+          source_address: '',
+        });
+      }
+    }
+
+    // hwtacacs-server template
+    const tacMatch = sec.header.match(/^hwtacacs-server\s+template\s+(\S+)/i);
+    if (tacMatch) {
+      const templateName = tacMatch[1];
+      let server = '';
+      let port = 49;
+      let secret = '';
+
+      for (const line of sec.lines) {
+        const trimmed = line.trim();
+        const authMatch = trimmed.match(/hwtacacs-server\s+authentication\s+(\S+)(?:\s+(\d+))?/);
+        if (authMatch) { server = authMatch[1]; if (authMatch[2]) port = parseInt(authMatch[2], 10); }
+        const keyMatch = trimmed.match(/hwtacacs-server\s+shared-key\s+(?:cipher\s+)?(\S+)/);
+        if (keyMatch) secret = keyMatch[1];
+      }
+
+      if (server) {
+        entries.push({
+          type: 'tacplus',
+          name: templateName,
+          server,
+          port,
+          secret,
+          timeout: 5,
+          single_connection: false,
+          source_address: '',
+        });
+      }
+    }
+
+    // aaa section with authentication-scheme, domain, etc.
+    if (sec.header.match(/^aaa\s*$/i)) {
+      for (const line of sec.lines) {
+        const trimmed = line.trim();
+        const schemeMatch = trimmed.match(/authentication-scheme\s+(\S+)/);
+        if (schemeMatch) {
+          entries.push({
+            type: 'profile',
+            name: schemeMatch[1],
+            authentication_order: ['radius'],
+          });
+        }
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'aaa', `Parsed ${entries.length} AAA configuration item(s)`, 'Huawei AAA configuration detected'));
+  }
+  return entries;
 }

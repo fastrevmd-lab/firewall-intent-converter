@@ -108,13 +108,18 @@ function parseFlatSrx(tree, setCommands, warnings) {
   // Parse VPN/IPsec tunnel configuration
   const vpnTunnels = parseSrxVpnConfig(tree, warnings);
 
-  // Parse syslog, DHCP, QoS
+  // Parse syslog, SNMP, AAA, DHCP, QoS
   const syslogConfig = parseSrxSyslogConfig(tree, warnings);
+  const snmpConfig = parseSrxSnmpConfig(tree, warnings);
+  const aaaConfig = parseSrxAaaConfig(tree, warnings);
   const dhcpConfig = parseSrxDhcpConfig(tree, warnings);
   const qosConfig = parseSrxQosConfig(tree, warnings);
 
   // Parse interface configurations
   const interfaces = parseSrxInterfaces(tree, zones, warnings);
+
+  // Parse LAG / ae interfaces
+  const lagInterfaces = parseSrxLagInterfaces(tree, warnings);
 
   // Parse L2 / bridge-domain configuration
   const bridgeDomains = parseSrxBridgeDomains(tree, warnings);
@@ -146,9 +151,12 @@ function parseFlatSrx(tree, setCommands, warnings) {
     ha_config: haConfig,
     screen_config: screenConfig,
     syslog_config: syslogConfig,
+    snmp_config: snmpConfig,
+    aaa_config: aaaConfig,
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
     interfaces,
+    lag_interfaces: lagInterfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
     bgp_config: bgpConfig,
@@ -175,6 +183,8 @@ function parseFlatSrx(tree, setCommands, warnings) {
       interface_count: interfaces.length,
       vpn_tunnel_count: vpnTunnels.length,
       syslog_server_count: syslogConfig.length,
+      snmp_config_count: snmpConfig.length,
+      aaa_config_count: aaaConfig.length,
       dhcp_config_count: dhcpConfig.length,
       qos_profile_count: qosConfig.length,
       routing_context_count: routingContexts.length,
@@ -220,6 +230,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
   const allVpnTunnels = [];
   const allScreenConfig = [];
   const allSyslogConfig = [];
+  const allSnmpConfig = [];
+  const allAaaConfig = [];
   const allDhcpConfig = [];
   const allQosConfig = [];
   const allInterfaces = [];
@@ -238,6 +250,10 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
   if (globalHa && globalHa.enabled) haConfig = globalHa;
   const globalSyslog = parseSrxSyslogConfig(tree, warnings);
   if (globalSyslog.length) allSyslogConfig.push(...globalSyslog);
+  const globalSnmp = parseSrxSnmpConfig(tree, warnings);
+  if (globalSnmp.length) allSnmpConfig.push(...globalSnmp);
+  const globalAaa = parseSrxAaaConfig(tree, warnings);
+  if (globalAaa.length) allAaaConfig.push(...globalAaa);
 
   // Parse each logical-system
   for (const lsName of lsNames) {
@@ -273,6 +289,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
     allVpnTunnels.push(...parsed.vpnTunnels);
     allScreenConfig.push(...parsed.screenConfig);
     allSyslogConfig.push(...parsed.syslogConfig);
+    allSnmpConfig.push(...(parsed.snmpConfig || []));
+    allAaaConfig.push(...(parsed.aaaConfig || []));
     allDhcpConfig.push(...parsed.dhcpConfig);
     allQosConfig.push(...parsed.qosConfig);
     allInterfaces.push(...parsed.interfaces);
@@ -321,6 +339,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
     allVpnTunnels.push(...parsed.vpnTunnels);
     allScreenConfig.push(...parsed.screenConfig);
     allSyslogConfig.push(...parsed.syslogConfig);
+    allSnmpConfig.push(...(parsed.snmpConfig || []));
+    allAaaConfig.push(...(parsed.aaaConfig || []));
     allDhcpConfig.push(...parsed.dhcpConfig);
     allQosConfig.push(...parsed.qosConfig);
     allInterfaces.push(...parsed.interfaces);
@@ -389,9 +409,12 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
     ha_config: haConfig,
     screen_config: allScreenConfig,
     syslog_config: allSyslogConfig,
+    snmp_config: allSnmpConfig,
+    aaa_config: allAaaConfig,
     dhcp_config: allDhcpConfig,
     qos_config: allQosConfig,
     interfaces: allInterfaces,
+    lag_interfaces: parseSrxLagInterfaces(tree, []),
     routing_contexts: routingContexts,
     static_routes: allStaticRoutes,
     bgp_config: allBgpConfig,
@@ -418,6 +441,8 @@ function parseMultiContextSrx(tree, setCommands, lsNode, lsNames, tenantNode, te
       interface_count: allInterfaces.length,
       vpn_tunnel_count: allVpnTunnels.length,
       syslog_server_count: allSyslogConfig.length,
+      snmp_config_count: allSnmpConfig.length,
+      aaa_config_count: allAaaConfig.length,
       dhcp_config_count: allDhcpConfig.length,
       qos_profile_count: allQosConfig.length,
       routing_context_count: routingContexts.length,
@@ -461,6 +486,8 @@ function parseContextSubTree(subTree, setCommands, ctxLabel, ctxName, warnings) 
   const vpnTunnels = parseSrxVpnConfig(subTree, warnings);
   const screenConfig = parseSrxScreenConfig(subTree, zones, warnings);
   const syslogConfig = parseSrxSyslogConfig(subTree, warnings);
+  const snmpConfig = parseSrxSnmpConfig(subTree, warnings);
+  const aaaConfig = parseSrxAaaConfig(subTree, warnings);
   const dhcpConfig = parseSrxDhcpConfig(subTree, warnings);
   const qosConfig = parseSrxQosConfig(subTree, warnings);
   const interfaces = parseSrxInterfaces(subTree, zones, warnings);
@@ -473,7 +500,7 @@ function parseContextSubTree(subTree, setCommands, ctxLabel, ctxName, warnings) 
     zones, addressObjects, addressGroups, serviceObjects, serviceGroups,
     policies, natRules, applications, schedules, staticRoutes,
     bgpConfig, ospfConfig, ospf3Config, evpnConfig, vxlanConfig,
-    vpnTunnels, screenConfig, syslogConfig, dhcpConfig, qosConfig,
+    vpnTunnels, screenConfig, syslogConfig, snmpConfig, aaaConfig, dhcpConfig, qosConfig,
     interfaces, bridgeDomains, l2Interfaces, decryptionRules, pbfRules,
   };
 }
@@ -2470,6 +2497,197 @@ function parseSrxSyslogConfig(tree, warnings) {
 
 
 // ---------------------------------------------------------------------------
+// SNMP Configuration Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses SRX SNMP configuration from the hierarchical tree.
+ * Extracts communities, trap groups, trap targets, contact/location, and v3 config.
+ */
+function parseSrxSnmpConfig(tree, warnings) {
+  const entries = [];
+  const snmp = tree.system?.snmp;
+  if (!snmp) return entries;
+
+  const contact = extractStringValue(snmp.contact) || '';
+  const location = extractStringValue(snmp.location) || '';
+  const engineId = extractStringValue(snmp['engine-id']) || '';
+
+  // Parse communities: set system snmp community <name> authorization <ro|rw>
+  const communities = snmp.community;
+  if (communities && typeof communities === 'object') {
+    for (const [name, cfg] of Object.entries(communities)) {
+      const auth = typeof cfg === 'object'
+        ? extractStringValue(cfg.authorization) || 'read-only'
+        : 'read-only';
+      const clients = [];
+      if (typeof cfg === 'object' && cfg.clients) {
+        for (const client of Object.keys(cfg.clients)) {
+          if (client !== 'restrict') clients.push(client);
+        }
+      }
+      entries.push({
+        type: 'community',
+        name,
+        authorization: auth,
+        clients,
+        contact,
+        location,
+      });
+    }
+  }
+
+  // Parse trap groups: set system snmp trap-group <name> targets <ip>
+  const trapGroups = snmp['trap-group'];
+  if (trapGroups && typeof trapGroups === 'object') {
+    for (const [groupName, groupCfg] of Object.entries(trapGroups)) {
+      if (typeof groupCfg !== 'object') continue;
+      const targets = [];
+      if (groupCfg.targets) {
+        if (typeof groupCfg.targets === 'string') {
+          targets.push(groupCfg.targets);
+        } else if (typeof groupCfg.targets === 'object') {
+          targets.push(...Object.keys(groupCfg.targets));
+        }
+      }
+      const categories = [];
+      if (groupCfg.categories && typeof groupCfg.categories === 'object') {
+        categories.push(...Object.keys(groupCfg.categories));
+      }
+      const version = extractStringValue(groupCfg.version) || 'v2';
+      entries.push({
+        type: 'trap-group',
+        name: groupName,
+        targets,
+        categories,
+        version,
+      });
+    }
+  }
+
+  // Parse v3 USM users if present
+  const v3 = snmp.v3;
+  if (v3 && typeof v3 === 'object') {
+    const usm = v3.usm?.['local-engine']?.user;
+    if (usm && typeof usm === 'object') {
+      for (const [userName, userCfg] of Object.entries(usm)) {
+        if (typeof userCfg !== 'object') continue;
+        const authProto = userCfg['authentication-sha'] ? 'sha' :
+                          userCfg['authentication-md5'] ? 'md5' : 'none';
+        const privProto = userCfg['privacy-aes128'] ? 'aes128' :
+                          userCfg['privacy-des'] ? 'des' : 'none';
+        entries.push({
+          type: 'v3-user',
+          name: userName,
+          auth_protocol: authProto,
+          privacy_protocol: privProto,
+          contact,
+          location,
+        });
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'snmp', `Parsed ${entries.length} SNMP configuration item(s)`, 'SNMP configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA Configuration Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses SRX AAA configuration from the hierarchical tree.
+ * Extracts RADIUS servers, TACACS+ servers, LDAP servers, and access profiles.
+ */
+function parseSrxAaaConfig(tree, warnings) {
+  const entries = [];
+  const access = tree.system?.access;
+  if (!access && !tree.access) return entries;
+
+  const accessNode = access || tree.access || {};
+
+  // Parse RADIUS servers: set system radius-server <ip>
+  // (can also be under access)
+  const radiusServers = tree.system?.['radius-server'] || accessNode['radius-server'];
+  if (radiusServers && typeof radiusServers === 'object') {
+    for (const [ip, cfg] of Object.entries(radiusServers)) {
+      if (typeof cfg !== 'object') continue;
+      entries.push({
+        type: 'radius',
+        name: `radius-${ip}`,
+        server: ip,
+        port: parseInt(extractStringValue(cfg.port) || '1812', 10),
+        secret: extractStringValue(cfg.secret) || '',
+        timeout: parseInt(extractStringValue(cfg.timeout) || '5', 10),
+        retry: parseInt(extractStringValue(cfg['retry-count'] || cfg.retry) || '3', 10),
+        source_address: extractStringValue(cfg['source-address']) || '',
+      });
+    }
+  }
+
+  // Parse TACACS+ servers: set system tacplus-server <ip>
+  const tacplusServers = tree.system?.['tacplus-server'] || accessNode['tacplus-server'];
+  if (tacplusServers && typeof tacplusServers === 'object') {
+    for (const [ip, cfg] of Object.entries(tacplusServers)) {
+      if (typeof cfg !== 'object') continue;
+      entries.push({
+        type: 'tacplus',
+        name: `tacplus-${ip}`,
+        server: ip,
+        port: parseInt(extractStringValue(cfg.port) || '49', 10),
+        secret: extractStringValue(cfg.secret) || '',
+        timeout: parseInt(extractStringValue(cfg.timeout) || '5', 10),
+        single_connection: !!cfg['single-connection'],
+        source_address: extractStringValue(cfg['source-address']) || '',
+      });
+    }
+  }
+
+  // Parse access profiles: set access profile <name>
+  const profiles = accessNode.profile;
+  if (profiles && typeof profiles === 'object') {
+    for (const [profileName, profileCfg] of Object.entries(profiles)) {
+      if (typeof profileCfg !== 'object') continue;
+      const authOrder = [];
+      if (profileCfg['authentication-order']) {
+        const order = profileCfg['authentication-order'];
+        if (typeof order === 'string') authOrder.push(order);
+        else if (typeof order === 'object') authOrder.push(...Object.keys(order));
+      }
+      entries.push({
+        type: 'profile',
+        name: profileName,
+        authentication_order: authOrder,
+      });
+    }
+  }
+
+  // Parse authentication-order: set system authentication-order
+  const authOrder = tree.system?.['authentication-order'];
+  if (authOrder) {
+    const order = typeof authOrder === 'string' ? [authOrder] :
+                  typeof authOrder === 'object' ? Object.keys(authOrder) : [];
+    if (order.length > 0) {
+      entries.push({
+        type: 'auth-order',
+        name: 'system-auth-order',
+        authentication_order: order,
+      });
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'aaa', `Parsed ${entries.length} AAA configuration item(s)`, 'AAA configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
 // DHCP Configuration Parser
 // ---------------------------------------------------------------------------
 
@@ -3121,4 +3339,88 @@ function parseSrxFlowMonitoring(tree, warnings) {
   }
 
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// LAG / ae Interface Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses SRX aggregate ethernet (ae) interfaces and their member assignments.
+ *
+ * SRX config patterns:
+ *   set interfaces ae0 aggregated-ether-options lacp active
+ *   set interfaces ae0 description "LAG to switch"
+ *   set interfaces ge-0/0/0 ether-options 802.3ad ae0
+ *   set chassis aggregated-devices ethernet device-count 4
+ *
+ * @param {Object} tree - Parsed set-command tree
+ * @param {Object[]} warnings - Warnings array
+ * @returns {Object[]} Array of lag_interfaces in intermediate schema format
+ */
+function parseSrxLagInterfaces(tree, warnings) {
+  const lagInterfaces = [];
+  const ifacesNode = tree?.interfaces || {};
+
+  // Collect ae interfaces
+  const aeInterfaces = {};
+  for (const [ifName, ifData] of Object.entries(ifacesNode)) {
+    if (!ifName.startsWith('ae') || typeof ifData !== 'object') continue;
+
+    const aeOpts = ifData['aggregated-ether-options'] || {};
+    const lacpNode = aeOpts.lacp || {};
+
+    let lacpMode = 'static';
+    if (lacpNode.active !== undefined) lacpMode = 'active';
+    else if (lacpNode.passive !== undefined) lacpMode = 'passive';
+
+    const lacpPriority = lacpNode['system-priority']
+      ? parseInt(extractStringValue(lacpNode['system-priority']), 10) || null
+      : null;
+
+    const description = extractStringValue(ifData?.description) || '';
+
+    aeInterfaces[ifName] = {
+      name: ifName,
+      source_name: ifName,
+      members: [],
+      source_members: [],
+      lacp_mode: lacpMode,
+      lacp_priority: lacpPriority,
+      description,
+    };
+  }
+
+  if (Object.keys(aeInterfaces).length === 0) return lagInterfaces;
+
+  // Find member assignments: ge-0/0/0 ether-options 802.3ad ae0
+  for (const [ifName, ifData] of Object.entries(ifacesNode)) {
+    if (ifName.startsWith('ae') || typeof ifData !== 'object') continue;
+
+    const etherOpts = ifData['ether-options'] || {};
+    const adRef = etherOpts['802.3ad'];
+    if (!adRef || typeof adRef !== 'object') continue;
+
+    // The ae interface name is a key under 802.3ad
+    const aeKeys = Object.keys(adRef).filter(k => k.startsWith('ae'));
+    for (const aeKey of aeKeys) {
+      if (aeInterfaces[aeKey]) {
+        aeInterfaces[aeKey].members.push(ifName);
+        aeInterfaces[aeKey].source_members.push(ifName);
+      }
+    }
+  }
+
+  for (const ae of Object.values(aeInterfaces)) {
+    lagInterfaces.push(ae);
+  }
+
+  if (lagInterfaces.length > 0) {
+    warnings.push(createWarning('info', 'lag',
+      `Parsed ${lagInterfaces.length} ae (LAG) interface(s) with ${lagInterfaces.reduce((s, l) => s + l.members.length, 0)} member(s)`,
+      'SRX ae interfaces detected for round-trip'));
+  }
+
+  return lagInterfaces;
 }

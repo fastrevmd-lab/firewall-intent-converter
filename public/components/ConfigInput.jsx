@@ -13,6 +13,7 @@
 import React, { useRef, useState } from 'react';
 import { SAMPLE_CONFIGS } from './sample-configs.jsx';
 import { GREENFIELD_TEMPLATES } from '../data/greenfield-templates.js';
+import PullModal from './PullModal.jsx';
 
 const TEMPLATE_ICONS = {
   building: (
@@ -115,6 +116,7 @@ export default function ConfigInput({
   const isGreenfield = selectedVendor === 'greenfield';
 
   const [uploadError, setUploadError] = useState('');
+  const [showPullModal, setShowPullModal] = useState(false);
 
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
@@ -180,6 +182,9 @@ export default function ConfigInput({
           <option value="checkpoint">Check Point R80+</option>
           <option value="sonicwall">SonicWall SonicOS</option>
           <option value="huawei_usg">Huawei USG</option>
+          <option value="aws_sg">AWS Security Groups</option>
+          <option value="azure_nsg">Azure NSG</option>
+          <option value="gcp_fw">GCP Firewall Rules</option>
         </select>
       </div>
 
@@ -290,18 +295,34 @@ export default function ConfigInput({
           /* ---- Normal import mode ---- */
           <>
             {/* File upload area */}
-            <div
-              className="file-upload-area"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <p>Click to upload config file (.xml, .txt)</p>
-              <p style={{ fontSize: '10px', marginTop: '4px' }}>or drag and drop</p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xml,.txt,.conf,.cfg,.json"
-                onChange={handleFileUpload}
-              />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div
+                className="file-upload-area"
+                style={{ flex: 1 }}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <p>Click to upload config file (.xml, .txt)</p>
+                <p style={{ fontSize: '10px', marginTop: '4px' }}>or drag and drop</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xml,.txt,.conf,.cfg,.json"
+                  onChange={handleFileUpload}
+                />
+              </div>
+              <div
+                className="file-upload-area"
+                style={{ width: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                onClick={() => setShowPullModal(true)}
+                title="Pull running config from a live SRX device via PyEZ Bridge"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: 4 }}>
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <p style={{ fontSize: '10px', textAlign: 'center' }}>Pull from Device</p>
+              </div>
             </div>
             {uploadError && (
               <div className="upload-error" style={{ color: 'var(--error, #e74c3c)', fontSize: 11, padding: '4px 8px', background: 'rgba(231,76,60,0.08)', borderRadius: 4 }}>
@@ -377,6 +398,16 @@ export default function ConfigInput({
           </>
         )}
       </div>
+
+      {showPullModal && (
+        <PullModal
+          onClose={() => setShowPullModal(false)}
+          onConfigPulled={(text) => {
+            onConfigChange(text);
+            setShowPullModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

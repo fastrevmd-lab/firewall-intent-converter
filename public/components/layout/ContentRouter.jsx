@@ -16,6 +16,9 @@ const VPNEditor = React.lazy(() => import('../VPNEditor.jsx'));
 const HAEditor = React.lazy(() => import('../HAEditor.jsx'));
 const ScreenEditor = React.lazy(() => import('../ScreenEditor.jsx'));
 const SyslogEditor = React.lazy(() => import('../SyslogEditor.jsx'));
+const SNMPEditor = React.lazy(() => import('../SNMPEditor.jsx'));
+const AAAEditor = React.lazy(() => import('../AAAEditor.jsx'));
+const BatchMigrationPanel = React.lazy(() => import('../BatchMigrationPanel.jsx'));
 const DHCPEditor = React.lazy(() => import('../DHCPEditor.jsx'));
 const QoSEditor = React.lazy(() => import('../QoSEditor.jsx'));
 const FlowMonitoringEditor = React.lazy(() => import('../FlowMonitoringEditor.jsx'));
@@ -24,6 +27,9 @@ const GreenfieldChat = React.lazy(() => import('../GreenfieldChat.jsx'));
 const SRXOutput = React.lazy(() => import('../SRXOutput.jsx'));
 const WarningsPanel = React.lazy(() => import('../WarningsPanel.jsx'));
 const DiffPanel = React.lazy(() => import('../DiffPanel.jsx'));
+const ConfigDiff = React.lazy(() => import('../ConfigDiff.jsx'));
+const MigrationChecklist = React.lazy(() => import('../MigrationChecklist.jsx'));
+const ConversionReport = React.lazy(() => import('../ConversionReport.jsx'));
 import SectionAcceptBar from '../shared/SectionAcceptBar.jsx';
 
 const LoadingTab = () => (
@@ -358,7 +364,7 @@ export default function ContentRouter({
   }
 
   // If no config loaded, show empty state
-  if (!activeConfig && editTab !== 'output' && editTab !== 'warnings' && editTab !== 'diff') {
+  if (!activeConfig && editTab !== 'output' && editTab !== 'warnings' && editTab !== 'diff' && editTab !== 'checklist' && editTab !== 'report') {
     return (
       <div className="center-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
         <div className="empty-state">
@@ -568,6 +574,18 @@ export default function ContentRouter({
     );
   }
 
+  if (editTab === 'dependency-graph') {
+    const PolicyDependencyGraph = React.lazy(() => import('../PolicyDependencyGraph.jsx'));
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <Suspense fallback={<LoadingTab />}>
+          <PolicyDependencyGraph intermediateConfig={activeConfig} />
+        </Suspense>
+      </div>
+    );
+  }
+
   // --- Editor components (all wrapped with platform bar) ---
   if (editTab === 'zones') {
     return (
@@ -669,6 +687,26 @@ export default function ContentRouter({
     );
   }
 
+  if (editTab === 'snmp') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <SectionAcceptBar sectionId="snmp" label="SNMP" />
+        <div style={{ flex: 1, overflow: 'auto' }}><SNMPEditor snmpConfig={activeConfig?.snmp_config || []} onSNMPUpdate={config.handleSNMPUpdate} viewMode={effectiveViewMode} /></div>
+      </div>
+    );
+  }
+
+  if (editTab === 'aaa') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <SectionAcceptBar sectionId="aaa" label="AAA" />
+        <div style={{ flex: 1, overflow: 'auto' }}><AAAEditor aaaConfig={activeConfig?.aaa_config || []} onAAAUpdate={config.handleAAAUpdate} viewMode={effectiveViewMode} /></div>
+      </div>
+    );
+  }
+
   if (editTab === 'dhcp') {
     return (
       <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -727,12 +765,64 @@ export default function ContentRouter({
   }
 
   if (editTab === 'diff') {
+    const [diffSubTab, setDiffSubTab] = [
+      ui.diffSubTab || 'policy',
+      (val) => uiDispatch({ type: 'SET_FIELD', field: 'diffSubTab', value: val }),
+    ];
     return (
       <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {renderPlatformBar()}
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          <DiffPanel sourcePolicies={intermediateConfig?.security_policies || []} translatedPolicies={srxTranslatedPolicies} />
+        <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
+          <button className={`format-btn ${diffSubTab === 'policy' ? 'active' : ''}`} onClick={() => setDiffSubTab('policy')}>Policy Diff</button>
+          <button className={`format-btn ${diffSubTab === 'config' ? 'active' : ''}`} onClick={() => setDiffSubTab('config')}>Config Diff</button>
         </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <Suspense fallback={<LoadingTab />}>
+            {diffSubTab === 'config'
+              ? <ConfigDiff currentOutput={srxOutput} />
+              : <DiffPanel sourcePolicies={intermediateConfig?.security_policies || []} translatedPolicies={srxTranslatedPolicies} />
+            }
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
+
+  if (editTab === 'checklist') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <Suspense fallback={<LoadingTab />}>
+          <MigrationChecklist intermediateConfig={intermediateConfig} siteName={cfg.siteName} />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (editTab === 'report') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <Suspense fallback={<LoadingTab />}>
+          <ConversionReport
+            intermediateConfig={intermediateConfig}
+            srxTranslatedPolicies={srxTranslatedPolicies}
+            srxOutput={srxOutput}
+            warnings={allWarnings}
+            conversionSummary={conversionSummary}
+            isParsed={!!intermediateConfig}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (editTab === 'batch') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Suspense fallback={<LoadingTab />}>
+          <BatchMigrationPanel />
+        </Suspense>
       </div>
     );
   }

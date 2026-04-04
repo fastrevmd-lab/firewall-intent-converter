@@ -98,6 +98,9 @@ export function parseFortigateConfig(configText) {
     }
   }
 
+  // Parse LAG / aggregate interfaces
+  const lagInterfaces = parseFortigateLagInterfaces(tree, interfaces, warnings);
+
   // Merge zone and interface data — FortiGate can use interfaces directly as zones
   const mergedZones = mergeZonesAndInterfaces(zones, interfaces, securityPolicies);
 
@@ -236,9 +239,12 @@ export function parseFortigateConfig(configText) {
     ha_config: haConfig,
     screen_config: screenConfig,
     syslog_config: syslogConfig,
+    snmp_config: parseFortigateSnmpConfig(tree, warnings),
+    aaa_config: parseFortigateAaaConfig(tree, warnings),
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
     interfaces: normalizedInterfaces,
+    lag_interfaces: lagInterfaces,
     transparent_mode: transparentMode,
     bridge_domains: l2BridgeDomains,
     l2_interfaces: l2Interfaces,
@@ -2561,4 +2567,241 @@ function parseFortiNetflow(tree, warnings) {
   }
 
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// LAG / Aggregate Interface Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses FortiGate aggregate/redundant interfaces and their members.
+ *
+ * FortiOS config format:
+ *   config system interface
+ *       edit "agg1"
+ *           set type aggregate
+ *           set member "port1" "port2"
+ *           set lacp-mode active
+ *       next
+ *   end
+ *
+ * @param {Object} tree - Parsed FortiOS config tree
+ * @param {Object[]} interfaces - Already-parsed interface list
+ * @param {Object[]} warnings - Warnings array
+ * @returns {Object[]} Array of lag_interfaces in intermediate schema format
+ */
+function parseFortigateLagInterfaces(tree, interfaces, warnings) {
+  const lagInterfaces = [];
+  const ifaceSection = tree['system interface'] || {};
+
+  let aeIndex = 0;
+
+  for (const [name, entry] of Object.entries(ifaceSection)) {
+    if (typeof entry !== 'object') continue;
+
+    const ifType = getString(entry['type']) || '';
+    if (ifType !== 'aggregate' && ifType !== 'redundant') continue;
+
+    // Parse member interfaces
+    const memberRaw = entry['member'];
+    let sourceMembers = [];
+    if (typeof memberRaw === 'string') {
+      sourceMembers = memberRaw.split(/\s+/).map(m => m.replace(/^"|"$/g, '')).filter(Boolean);
+    } else if (Array.isArray(memberRaw)) {
+      sourceMembers = memberRaw.map(m => String(m).replace(/^"|"$/g, '')).filter(Boolean);
+    }
+
+    // Parse LACP mode
+    const lacpModeRaw = getString(entry['lacp-mode']) || '';
+    let lacpMode = 'static';
+    if (lacpModeRaw === 'active') lacpMode = 'active';
+    else if (lacpModeRaw === 'passive') lacpMode = 'passive';
+    else if (ifType === 'redundant') lacpMode = 'static';
+
+    const description = getString(entry['alias']) || '';
+    const srxName = `ae${aeIndex}`;
+    aeIndex++;
+
+    lagInterfaces.push({
+      name: srxName,
+      source_name: name,
+      members: sourceMembers.map(m => m), // FortiGate member names are preserved as-is for mapping
+      source_members: sourceMembers,
+      lacp_mode: lacpMode,
+      lacp_priority: null,
+      description,
+    });
+  }
+
+  if (lagInterfaces.length > 0) {
+    warnings.push(createWarning('info', 'lag',
+      `Parsed ${lagInterfaces.length} aggregate/redundant interface(s) with ${lagInterfaces.reduce((s, l) => s + l.members.length, 0)} member(s)`,
+      'LAG interfaces will be converted to SRX ae interfaces'));
+  }
+
+  return lagInterfaces;
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Parser (FortiGate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses FortiGate SNMP configuration from config tree.
+ * FortiGate: config system snmp sysinfo / config system snmp community
+ */
+function parseFortigateSnmpConfig(tree, warnings) {
+  const entries = [];
+
+  // System SNMP info: config system snmp sysinfo
+  const sysinfo = tree['system snmp sysinfo'] || {};
+  const contact = sysinfo['contact-info'] || '';
+  const location = sysinfo.location || '';
+
+  // Communities: config system snmp community
+  const communitySection = tree['system snmp community'];
+  if (communitySection && communitySection._entries) {
+    for (const entry of communitySection._entries) {
+      const name = entry.name || '';
+      entries.push({
+        type: 'community',
+        name,
+        authorization: entry['query-v2c-status'] === 'disable' ? 'none' : 'read-only',
+        clients: [],
+        contact,
+        location,
+      });
+
+      // Trap hosts within community
+      if (entry._sub && entry._sub.hosts && entry._sub.hosts._entries) {
+        for (const host of entry._sub.hosts._entries) {
+          const ip = host.ip || host['ha-direct'] || '';
+          if (ip) {
+            entries.push({
+              type: 'trap-group',
+              name: `trap-${name}-${ip}`,
+              targets: [ip.split(/\s/)[0]],
+              categories: [],
+              version: entry['query-v2c-status'] !== 'disable' ? 'v2c' : 'v1',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Flat key approach: some FortiGate configs have flat set lines
+  for (const key of Object.keys(tree)) {
+    if (key === 'system snmp community') {
+      const sec = tree[key];
+      if (sec && !sec._entries) {
+        // Simple community string stored as value
+        const communityName = sec.name || sec.community || '';
+        if (communityName) {
+          entries.push({
+            type: 'community',
+            name: communityName,
+            authorization: 'read-only',
+            clients: [],
+            contact,
+            location,
+          });
+        }
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'snmp', `Parsed ${entries.length} SNMP configuration item(s)`, 'FortiGate SNMP configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA Configuration Parser (FortiGate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses FortiGate AAA configuration from config tree.
+ * FortiGate: config user radius / config user tacacs+ / config user ldap
+ */
+function parseFortigateAaaConfig(tree, warnings) {
+  const entries = [];
+
+  // RADIUS servers: config user radius
+  const radiusSection = tree['user radius'];
+  if (radiusSection && radiusSection._entries) {
+    for (const entry of radiusSection._entries) {
+      entries.push({
+        type: 'radius',
+        name: entry.name || '',
+        server: entry.server || '',
+        port: parseInt(entry['radius-port'] || '1812', 10),
+        secret: entry.secret || '',
+        timeout: parseInt(entry.timeout || '5', 10),
+        retry: 3,
+        source_address: entry['source-ip'] || '',
+      });
+    }
+  }
+
+  // TACACS+ servers: config user tacacs+
+  const tacplusSection = tree['user tacacs+'];
+  if (tacplusSection && tacplusSection._entries) {
+    for (const entry of tacplusSection._entries) {
+      entries.push({
+        type: 'tacplus',
+        name: entry.name || '',
+        server: entry.server || '',
+        port: parseInt(entry.port || '49', 10),
+        secret: entry.key || '',
+        timeout: parseInt(entry.timeout || '5', 10),
+        single_connection: false,
+        source_address: entry['source-ip'] || '',
+      });
+    }
+  }
+
+  // LDAP servers: config user ldap
+  const ldapSection = tree['user ldap'];
+  if (ldapSection && ldapSection._entries) {
+    for (const entry of ldapSection._entries) {
+      entries.push({
+        type: 'ldap',
+        name: entry.name || '',
+        server: entry.server || '',
+        port: parseInt(entry.port || '389', 10),
+        base_dn: entry.dn || '',
+        bind_dn: entry.username || '',
+        ssl: entry.secure === 'ldaps',
+      });
+    }
+  }
+
+  // Flat key fallback for simpler configs
+  for (const key of Object.keys(tree)) {
+    if (key === 'user radius' && tree[key] && !tree[key]._entries) {
+      const sec = tree[key];
+      if (sec.server) {
+        entries.push({
+          type: 'radius',
+          name: sec.name || 'radius-1',
+          server: sec.server,
+          port: parseInt(sec['radius-port'] || '1812', 10),
+          secret: sec.secret || '',
+          timeout: parseInt(sec.timeout || '5', 10),
+          retry: 3,
+          source_address: '',
+        });
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'aaa', `Parsed ${entries.length} AAA configuration item(s)`, 'FortiGate AAA configuration detected'));
+  }
+  return entries;
 }

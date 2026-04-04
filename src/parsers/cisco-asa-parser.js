@@ -59,6 +59,9 @@ export function parseCiscoAsaConfig(configText) {
   const transparentMode = detectCiscoTransparentMode(lines);
   const { bridgeDomains, l2Interfaces } = parseBridgeGroups(blocks, interfaces, warnings);
 
+  // Parse LAG / Port-channel interfaces
+  const lagInterfaces = parseCiscoLagInterfaces(blocks, lines, warnings);
+
   // Build zones from interfaces (ASA uses nameif + security-level as zones)
   const zones = buildZones(interfaces);
 
@@ -126,10 +129,13 @@ export function parseCiscoAsaConfig(configText) {
     ha_config: haConfig,
     screen_config: screenConfig,
     syslog_config: syslogConfig,
+    snmp_config: parseCiscoSnmpConfig(lines, warnings),
+    aaa_config: parseCiscoAaaConfig(lines, warnings),
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
     flow_monitoring_config: flowMonitoringConfig,
     interfaces: normalizedInterfaces,
+    lag_interfaces: lagInterfaces,
     routing_contexts: routingContexts,
     static_routes: staticRoutes,
     bgp_config: bgpConfig,
@@ -2533,4 +2539,286 @@ function parseCiscoFlowExport(lines, warnings) {
   }
 
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// LAG / Port-channel Interface Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Cisco ASA Port-channel (LAG) interfaces and their member assignments.
+ *
+ * Port-channel interfaces are defined as:
+ *   interface Port-channel1
+ *     nameif inside-lag
+ *     ...
+ *
+ * Members are assigned via channel-group on physical interfaces:
+ *   interface GigabitEthernet0/0
+ *     channel-group 1 mode active
+ *
+ * @param {Object[]} blocks - Parsed config blocks
+ * @param {string[]} lines - Raw config lines
+ * @param {Object[]} warnings - Warnings array
+ * @returns {Object[]} Array of lag_interfaces in intermediate schema format
+ */
+function parseCiscoLagInterfaces(blocks, lines, warnings) {
+  const lagInterfaces = [];
+
+  // First pass: find Port-channel interfaces
+  const portChannels = {};
+  for (const block of blocks) {
+    const m = block.command.match(/^interface\s+Port-channel(\d+)/i);
+    if (!m) continue;
+    const pcNum = m[1];
+    let description = '';
+    for (const child of block.children) {
+      if (child.startsWith('description ')) {
+        description = child.slice(12).trim();
+      }
+    }
+    portChannels[pcNum] = {
+      source_name: `Port-channel${pcNum}`,
+      description,
+      members: [],
+      lacp_mode: 'on',
+    };
+  }
+
+  if (Object.keys(portChannels).length === 0) return lagInterfaces;
+
+  // Second pass: find channel-group memberships on physical interfaces
+  for (const block of blocks) {
+    if (!block.command.startsWith('interface ')) continue;
+    const ifaceName = block.command.slice(10).trim();
+    if (/^Port-channel/i.test(ifaceName)) continue;
+
+    for (const child of block.children) {
+      const cgMatch = child.match(/^channel-group\s+(\d+)\s+mode\s+(\S+)/i);
+      if (cgMatch) {
+        const pcNum = cgMatch[1];
+        const mode = cgMatch[2].toLowerCase();
+        if (portChannels[pcNum]) {
+          portChannels[pcNum].members.push(ifaceName);
+          // LACP mode from first member assignment wins
+          if (mode === 'active' || mode === 'passive') {
+            portChannels[pcNum].lacp_mode = mode;
+          }
+        }
+      }
+    }
+  }
+
+  // Build output
+  let aeIndex = 0;
+  for (const [pcNum, pc] of Object.entries(portChannels)) {
+    lagInterfaces.push({
+      name: `ae${aeIndex}`,
+      source_name: pc.source_name,
+      members: pc.members,
+      source_members: [...pc.members],
+      lacp_mode: pc.lacp_mode,
+      lacp_priority: null,
+      description: pc.description,
+    });
+    aeIndex++;
+  }
+
+  if (lagInterfaces.length > 0) {
+    warnings.push(createWarning('info', 'lag',
+      `Parsed ${lagInterfaces.length} Port-channel (LAG) interface(s) with ${lagInterfaces.reduce((s, l) => s + l.members.length, 0)} member(s)`,
+      'Port-channel interfaces will be converted to SRX ae interfaces'));
+  }
+
+  return lagInterfaces;
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Parser (Cisco ASA)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Cisco ASA SNMP configuration from CLI lines.
+ * ASA: snmp-server community, snmp-server host, snmp-server contact, etc.
+ */
+function parseCiscoSnmpConfig(lines, warnings) {
+  const entries = [];
+  let contact = '';
+  let location = '';
+  const communities = new Map();
+  const trapHosts = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // snmp-server community <string>
+    const commMatch = trimmed.match(/^snmp-server\s+community\s+(\S+)/);
+    if (commMatch) {
+      communities.set(commMatch[1], 'read-only');
+      continue;
+    }
+
+    // snmp-server host <interface> <ip> [trap|poll] [community <str>] [version <v>]
+    const hostMatch = trimmed.match(/^snmp-server\s+host\s+(\S+)\s+(\d+\.\d+\.\d+\.\d+)(.*)$/);
+    if (hostMatch) {
+      const rest = hostMatch[3] || '';
+      const versionMatch = rest.match(/version\s+(\S+)/);
+      const communityMatch = rest.match(/community\s+(\S+)/);
+      trapHosts.push({
+        interface: hostMatch[1],
+        ip: hostMatch[2],
+        version: versionMatch ? versionMatch[1] : 'v2c',
+        community: communityMatch ? communityMatch[1] : '',
+      });
+      continue;
+    }
+
+    // snmp-server contact <string>
+    const contactMatch = trimmed.match(/^snmp-server\s+contact\s+(.+)$/);
+    if (contactMatch) {
+      contact = contactMatch[1];
+      continue;
+    }
+
+    // snmp-server location <string>
+    const locationMatch = trimmed.match(/^snmp-server\s+location\s+(.+)$/);
+    if (locationMatch) {
+      location = locationMatch[1];
+      continue;
+    }
+  }
+
+  // Emit community entries
+  for (const [name, auth] of communities) {
+    entries.push({
+      type: 'community',
+      name,
+      authorization: auth,
+      clients: [],
+      contact,
+      location,
+    });
+  }
+
+  // Emit trap host entries
+  if (trapHosts.length > 0) {
+    const grouped = new Map();
+    for (const th of trapHosts) {
+      const key = th.community || 'default';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(th.ip);
+    }
+    for (const [groupName, targets] of grouped) {
+      entries.push({
+        type: 'trap-group',
+        name: `trap-${groupName}`,
+        targets,
+        categories: [],
+        version: trapHosts[0].version || 'v2c',
+      });
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'snmp', `Parsed ${entries.length} SNMP configuration item(s)`, 'Cisco ASA SNMP configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA Configuration Parser (Cisco ASA)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Cisco ASA AAA configuration from CLI lines.
+ * ASA: aaa-server <group> (interface) host <ip>, aaa authentication
+ */
+function parseCiscoAaaConfig(lines, warnings) {
+  const entries = [];
+  const serverGroups = new Map();
+  const authMethods = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // aaa-server <group-tag> protocol <radius|tacacs+|ldap>
+    const protoMatch = trimmed.match(/^aaa-server\s+(\S+)\s+protocol\s+(radius|tacacs\+?|ldap)/i);
+    if (protoMatch) {
+      const groupName = protoMatch[1];
+      const protocol = protoMatch[2].toLowerCase().replace('+', 'plus');
+      if (!serverGroups.has(groupName)) {
+        serverGroups.set(groupName, { protocol: protocol === 'tacacs' ? 'tacplus' : protocol, servers: [] });
+      } else {
+        serverGroups.get(groupName).protocol = protocol === 'tacacs' ? 'tacplus' : protocol;
+      }
+      continue;
+    }
+
+    // aaa-server <group-tag> (<interface>) host <ip> [key <secret>]
+    const hostMatch = trimmed.match(/^aaa-server\s+(\S+)\s+\((\S+)\)\s+host\s+(\S+)/);
+    if (hostMatch) {
+      const groupName = hostMatch[1];
+      const ip = hostMatch[3];
+      if (!serverGroups.has(groupName)) {
+        serverGroups.set(groupName, { protocol: 'radius', servers: [] });
+      }
+      const group = serverGroups.get(groupName);
+
+      // Check for key on same line
+      const keyMatch = trimmed.match(/key\s+(\S+)/);
+      const timeoutMatch = trimmed.match(/timeout\s+(\d+)/);
+
+      group.servers.push({
+        ip,
+        interface: hostMatch[2],
+        secret: keyMatch ? keyMatch[1] : '',
+        timeout: timeoutMatch ? parseInt(timeoutMatch[1], 10) : 5,
+      });
+      continue;
+    }
+
+    // aaa authentication <service> <group-tag>
+    const authMatch = trimmed.match(/^aaa\s+authentication\s+(\S+)\s+(?:console\s+)?(\S+)/);
+    if (authMatch) {
+      authMethods.push({ service: authMatch[1], group: authMatch[2] });
+      continue;
+    }
+  }
+
+  // Convert server groups to entries
+  for (const [groupName, group] of serverGroups) {
+    for (const srv of group.servers) {
+      const defaultPort = group.protocol === 'tacplus' ? 49 : group.protocol === 'ldap' ? 389 : 1812;
+      entries.push({
+        type: group.protocol,
+        name: `${groupName}-${srv.ip}`,
+        server: srv.ip,
+        port: defaultPort,
+        secret: srv.secret,
+        timeout: srv.timeout,
+        retry: 3,
+        source_address: '',
+        ...(group.protocol === 'tacplus' ? { single_connection: false } : {}),
+        ...(group.protocol === 'ldap' ? { base_dn: '', bind_dn: '', ssl: false } : {}),
+      });
+    }
+  }
+
+  // Add auth order entry if found
+  if (authMethods.length > 0) {
+    const uniqueGroups = [...new Set(authMethods.map(m => m.group))];
+    entries.push({
+      type: 'profile',
+      name: 'asa-auth-profile',
+      authentication_order: uniqueGroups,
+    });
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'aaa', `Parsed ${entries.length} AAA configuration item(s)`, 'Cisco ASA AAA configuration detected'));
+  }
+  return entries;
 }

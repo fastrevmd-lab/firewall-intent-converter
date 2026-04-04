@@ -28,6 +28,9 @@ export async function parseConfig(configText) {
     checkpoint: () => import('../../src/parsers/checkpoint-parser.js'),
     sonicwall:  () => import('../../src/parsers/sonicwall-parser.js'),
     huawei_usg: () => import('../../src/parsers/huawei-parser.js'),
+    aws_sg:     () => import('../../src/parsers/aws-sg-parser.js'),
+    azure_nsg:  () => import('../../src/parsers/azure-nsg-parser.js'),
+    gcp_fw:     () => import('../../src/parsers/gcp-fw-parser.js'),
   };
 
   const fnNameMap = {
@@ -37,6 +40,9 @@ export async function parseConfig(configText) {
     checkpoint: 'parseCheckPointConfig',
     sonicwall:  'parseSonicWallConfig',
     huawei_usg: 'parseHuaweiConfig',
+    aws_sg:     'parseAwsSecurityGroups',
+    azure_nsg:  'parseAzureNsg',
+    gcp_fw:     'parseGcpFirewallRules',
   };
 
   if (parserMap[detection.vendor]) {
@@ -164,6 +170,10 @@ const STRUCTURAL_INTF_RE = /^(port\d+|wan\d*|lan\d*|dmz\d*|mgmt\d*|lo\d*|loopbac
 export function sanitizeConfig(configText) {
   if (!configText || typeof configText !== 'string') {
     throw new Error('configText is required and must be a string');
+  }
+  const MAX_SANITIZE_LENGTH = 10 * 1024 * 1024; // 10 MB
+  if (configText.length > MAX_SANITIZE_LENGTH) {
+    throw new Error(`Config too large to sanitize (${(configText.length / 1024 / 1024).toFixed(1)} MB, max ${MAX_SANITIZE_LENGTH / 1024 / 1024} MB)`);
   }
 
   const replacements = [];
