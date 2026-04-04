@@ -132,14 +132,25 @@ function generateChecklist(intermediateConfig) {
 
   // --- RADIUS / TACACS+ ---
   const hasRadius = allText.includes('radius') || allText.includes('tacacs');
+  const hasAaaConfig = (ic?.aaa_config || []).length > 0;
   if (hasRadius) {
-    items.push({
-      id: 'radius-config',
-      category: 'pre',
-      title: 'Configure RADIUS/TACACS+ server',
-      detail: 'Authentication server references detected. Configure the SRX system access profile with the correct server addresses and shared secrets.',
-      severity: 'required',
-    });
+    if (hasAaaConfig) {
+      items.push({
+        id: 'radius-config',
+        category: 'pre',
+        title: 'Verify AAA server shared secrets',
+        detail: 'AAA servers were auto-converted. Shared secrets may be sanitized — verify and replace with correct values before deployment.',
+        severity: 'required',
+      });
+    } else {
+      items.push({
+        id: 'radius-config',
+        category: 'pre',
+        title: 'Configure RADIUS/TACACS+ server',
+        detail: 'Authentication server references detected but no AAA config was extracted. Configure the SRX system access profile with the correct server addresses and shared secrets.',
+        severity: 'required',
+      });
+    }
     items.push({
       id: 'radius-test',
       category: 'post',

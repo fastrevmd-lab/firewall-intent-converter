@@ -28,6 +28,9 @@ export async function parseConfig(configText) {
     checkpoint: () => import('../../src/parsers/checkpoint-parser.js'),
     sonicwall:  () => import('../../src/parsers/sonicwall-parser.js'),
     huawei_usg: () => import('../../src/parsers/huawei-parser.js'),
+    aws_sg:     () => import('../../src/parsers/aws-sg-parser.js'),
+    azure_nsg:  () => import('../../src/parsers/azure-nsg-parser.js'),
+    gcp_fw:     () => import('../../src/parsers/gcp-fw-parser.js'),
   };
 
   const fnNameMap = {
@@ -37,6 +40,9 @@ export async function parseConfig(configText) {
     checkpoint: 'parseCheckPointConfig',
     sonicwall:  'parseSonicWallConfig',
     huawei_usg: 'parseHuaweiConfig',
+    aws_sg:     'parseAwsSecurityGroups',
+    azure_nsg:  'parseAzureNsg',
+    gcp_fw:     'parseGcpFirewallRules',
   };
 
   if (parserMap[detection.vendor]) {

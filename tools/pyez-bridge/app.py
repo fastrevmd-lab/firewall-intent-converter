@@ -593,6 +593,162 @@ def rollback(name):
 
 
 # ---------------------------------------------------------------------------
+# Pull Config (GET running config from device)
+# ---------------------------------------------------------------------------
+
+@app.route("/devices/<name>/pull-config", methods=["GET"])
+def pull_config(name):
+    """Pull the running configuration from an SRX device via NETCONF.
+
+    Query params:
+      format: 'set' (default) or 'xml'
+
+    Returns the full configuration as a text string that can be pasted
+    directly into the Firewall Intent Converter input panel.
+    """
+    dev_dict, _ = _find_device(name)
+    if not dev_dict:
+        return _error_response(f"Device '{name}' not found.", 404)
+
+    fmt = request.args.get("format", "set").lower()
+    if fmt not in ("set", "xml", "text"):
+        return _error_response("format must be 'set', 'xml', or 'text'.", 400)
+
+    dev = None
+    try:
+        dev = _connect(dev_dict)
+
+        if fmt == "set":
+            # 'display set' returns set-format commands
+            rpc_reply = dev.rpc.get_config(options={"format": "set"})
+            # etree element — extract text from <configuration-set>
+            config_text = rpc_reply.text or ""
+            if not config_text:
+                from lxml import etree
+                config_text = etree.tostring(rpc_reply, encoding="unicode")
+        elif fmt == "xml":
+            rpc_reply = dev.rpc.get_config(options={"format": "xml"})
+            from lxml import etree
+            config_text = etree.tostring(rpc_reply, pretty_print=True, encoding="unicode")
+        else:
+            rpc_reply = dev.rpc.get_config(options={"format": "text"})
+            config_text = rpc_reply.text or ""
+
+        dev.close()
+        dev = None
+
+        return jsonify({
+            "ok": True,
+            "config": config_text,
+            "format": fmt,
+            "hostname": dev_dict.get("name", name),
+            "host": dev_dict.get("host", ""),
+        })
+
+    except (ConnectError, ConnectAuthError, ConnectRefusedError, ConnectTimeoutError) as e:
+        return _error_response(f"Connection failed: {e}", 502)
+    except RpcError as e:
+        return _error_response(f"RPC error: {e}", 400, details=str(e))
+    except Exception as e:
+        if dev:
+            try:
+                dev.close()
+            except Exception:
+                pass
+        return _error_response(f"Unexpected error: {e}", 500)
+
+
+# ---------------------------------------------------------------------------
+# Pull Policy Hit Counts
+# ---------------------------------------------------------------------------
+
+@app.route("/devices/<name>/policy-stats", methods=["GET"])
+def policy_stats(name):
+    """Pull security policy hit count statistics from an SRX device.
+
+    Uses: show security policies statistics detail
+    Returns a list of policy stats with hit counts, last-hit timestamps, etc.
+    """
+    dev_dict, _ = _find_device(name)
+    if not dev_dict:
+        return _error_response(f"Device '{name}' not found.", 404)
+
+    dev = None
+    try:
+        dev = _connect(dev_dict)
+
+        # Run the RPC for security policy statistics
+        rpc_reply = dev.rpc.cli("show security policies statistics detail", format="text")
+        raw_output = rpc_reply.text or ""
+
+        dev.close()
+        dev = None
+
+        # Parse the text output into structured data
+        policies = []
+        current_policy = None
+
+        for line in raw_output.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Policy header: "Policy: <name>, State: enabled, Index: <n>"
+            if line.startswith("Policy:"):
+                if current_policy:
+                    policies.append(current_policy)
+                parts = line.split(",")
+                policy_name = parts[0].replace("Policy:", "").strip()
+                current_policy = {
+                    "name": policy_name,
+                    "hit_count": 0,
+                    "session_count": 0,
+                    "byte_count": 0,
+                    "last_hit": None,
+                }
+                continue
+
+            if current_policy:
+                if "Session count" in line:
+                    try:
+                        current_policy["session_count"] = int(line.split(":")[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+                elif "Policy count" in line or "Hit count" in line:
+                    try:
+                        current_policy["hit_count"] = int(line.split(":")[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+                elif "Byte count" in line:
+                    try:
+                        current_policy["byte_count"] = int(line.split(":")[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+
+        if current_policy:
+            policies.append(current_policy)
+
+        return jsonify({
+            "ok": True,
+            "policies": policies,
+            "count": len(policies),
+            "raw_output": raw_output[:10000],  # Cap raw output at 10KB
+        })
+
+    except (ConnectError, ConnectAuthError, ConnectRefusedError, ConnectTimeoutError) as e:
+        return _error_response(f"Connection failed: {e}", 502)
+    except RpcError as e:
+        return _error_response(f"RPC error: {e}", 400, details=str(e))
+    except Exception as e:
+        if dev:
+            try:
+                dev.close()
+            except Exception:
+                pass
+        return _error_response(f"Unexpected error: {e}", 500)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":

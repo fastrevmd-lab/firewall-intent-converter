@@ -6,6 +6,7 @@ const VENDOR_LABELS = {
   panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate',
   cisco_asa: 'Cisco ASA', checkpoint: 'Check Point',
   sonicwall: 'SonicWall', huawei_usg: 'Huawei USG',
+  aws_sg: 'AWS Security Groups', azure_nsg: 'Azure NSG', gcp_fw: 'GCP Firewall',
   greenfield: 'Greenfield', srx_healthcheck: 'SRX Best Practice',
 };
 

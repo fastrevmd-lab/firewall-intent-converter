@@ -124,6 +124,12 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   // Syslog
   buildSyslogXml(config.syslog_config, lines);
 
+  // SNMP
+  buildSnmpXml(config.snmp_config, lines);
+
+  // AAA
+  buildAaaXml(config.aaa_config, lines);
+
   // DHCP
   buildDhcpXml(config.dhcp_config, lines);
 
@@ -159,8 +165,10 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   // Unsupported feature notices
   lines.push('<!--');
   lines.push('  NOT CONVERTED — Manual Configuration Required');
-  lines.push('  AAA / Authentication (RADIUS, TACACS+, LDAP) — not converted by this tool.');
-  lines.push('  Configure manually: system authentication-order, access profile, etc.');
+  if (!config.aaa_config || config.aaa_config.length === 0) {
+    lines.push('  AAA / Authentication (RADIUS, TACACS+, LDAP) — no AAA config detected in source.');
+    lines.push('  If needed, configure manually: system authentication-order, access profile, etc.');
+  }
   lines.push('-->');
 
   // Close context wrapper
@@ -1780,6 +1788,154 @@ function buildSyslogXml(syslogConfig, lines) {
 
   lines.push('    </syslog>');
   lines.push('  </system>');
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP XML Builder
+// ---------------------------------------------------------------------------
+
+function buildSnmpXml(snmpConfig, lines) {
+  if (!snmpConfig || snmpConfig.length === 0) return;
+
+  lines.push('  <snmp>');
+
+  // Contact / location from first entry
+  const contactEntry = snmpConfig.find(e => e.contact);
+  const locationEntry = snmpConfig.find(e => e.location);
+  if (contactEntry?.contact) {
+    lines.push(`    <contact>${escapeXml(contactEntry.contact)}</contact>`);
+  }
+  if (locationEntry?.location) {
+    lines.push(`    <location>${escapeXml(locationEntry.location)}</location>`);
+  }
+
+  for (const entry of snmpConfig) {
+    if (entry.type === 'community') {
+      lines.push('    <community>');
+      lines.push(`      <name>${escapeXml(entry.name)}</name>`);
+      const auth = entry.authorization === 'read-write' ? 'read-write' : 'read-only';
+      lines.push(`      <authorization>${auth}</authorization>`);
+      if (entry.clients && entry.clients.length > 0) {
+        lines.push('      <clients>');
+        for (const client of entry.clients) {
+          lines.push(`        <name>${escapeXml(client)}</name>`);
+        }
+        lines.push('      </clients>');
+      }
+      lines.push('    </community>');
+    }
+
+    if (entry.type === 'trap-group') {
+      lines.push('    <trap-group>');
+      lines.push(`      <name>${escapeXml(entry.name)}</name>`);
+      if (entry.version) {
+        lines.push(`      <version>${escapeXml(entry.version)}</version>`);
+      }
+      for (const target of (entry.targets || [])) {
+        lines.push(`      <targets><name>${escapeXml(target)}</name></targets>`);
+      }
+      for (const cat of (entry.categories || [])) {
+        lines.push(`      <categories><${escapeXml(cat)}/></categories>`);
+      }
+      lines.push('    </trap-group>');
+    }
+
+    if (entry.type === 'v3-user') {
+      lines.push('    <v3>');
+      lines.push('      <usm>');
+      lines.push('        <local-engine>');
+      lines.push('          <user>');
+      lines.push(`            <name>${escapeXml(entry.name)}</name>`);
+      if (entry.auth_protocol && entry.auth_protocol !== 'none') {
+        lines.push(`            <authentication-${entry.auth_protocol}/>`);
+      }
+      if (entry.privacy_protocol && entry.privacy_protocol !== 'none') {
+        lines.push(`            <privacy-${entry.privacy_protocol}/>`);
+      }
+      lines.push('          </user>');
+      lines.push('        </local-engine>');
+      lines.push('      </usm>');
+      lines.push('    </v3>');
+    }
+  }
+
+  lines.push('  </snmp>');
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA XML Builder
+// ---------------------------------------------------------------------------
+
+function buildAaaXml(aaaConfig, lines) {
+  if (!aaaConfig || aaaConfig.length === 0) return;
+
+  const radiusServers = aaaConfig.filter(e => e.type === 'radius' && e.server);
+  const tacplusServers = aaaConfig.filter(e => e.type === 'tacplus' && e.server);
+  const profiles = aaaConfig.filter(e => e.type === 'profile');
+  const authOrders = aaaConfig.filter(e => e.type === 'auth-order');
+
+  if (radiusServers.length > 0 || tacplusServers.length > 0 || authOrders.length > 0) {
+    lines.push('  <system>');
+
+    for (const srv of radiusServers) {
+      lines.push('    <radius-server>');
+      lines.push(`      <name>${escapeXml(srv.server)}</name>`);
+      lines.push(`      <port>${srv.port || 1812}</port>`);
+      if (srv.secret) {
+        lines.push(`      <secret>${escapeXml(srv.secret)}</secret>`);
+      }
+      if (srv.timeout) {
+        lines.push(`      <timeout>${srv.timeout}</timeout>`);
+      }
+      if (srv.source_address) {
+        lines.push(`      <source-address>${escapeXml(srv.source_address)}</source-address>`);
+      }
+      lines.push('    </radius-server>');
+    }
+
+    for (const srv of tacplusServers) {
+      lines.push('    <tacplus-server>');
+      lines.push(`      <name>${escapeXml(srv.server)}</name>`);
+      lines.push(`      <port>${srv.port || 49}</port>`);
+      if (srv.secret) {
+        lines.push(`      <secret>${escapeXml(srv.secret)}</secret>`);
+      }
+      if (srv.timeout) {
+        lines.push(`      <timeout>${srv.timeout}</timeout>`);
+      }
+      if (srv.single_connection) {
+        lines.push('      <single-connection/>');
+      }
+      lines.push('    </tacplus-server>');
+    }
+
+    for (const ao of authOrders) {
+      if (ao.authentication_order) {
+        for (const method of ao.authentication_order) {
+          lines.push(`    <authentication-order>${escapeXml(method)}</authentication-order>`);
+        }
+      }
+    }
+
+    lines.push('  </system>');
+  }
+
+  if (profiles.length > 0) {
+    lines.push('  <access>');
+    for (const profile of profiles) {
+      lines.push('    <profile>');
+      lines.push(`      <name>${escapeXml(profile.name)}</name>`);
+      if (profile.authentication_order) {
+        for (const method of profile.authentication_order) {
+          lines.push(`      <authentication-order>${escapeXml(method)}</authentication-order>`);
+        }
+      }
+      lines.push('    </profile>');
+    }
+    lines.push('  </access>');
+  }
 }
 
 

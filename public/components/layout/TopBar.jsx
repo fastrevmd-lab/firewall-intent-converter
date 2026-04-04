@@ -66,6 +66,9 @@ const VENDOR_NAMES = {
   checkpoint: 'Check Point',
   sonicwall: 'SonicWall',
   huawei_usg: 'Huawei USG',
+  aws_sg: 'AWS Security Groups',
+  azure_nsg: 'Azure NSG',
+  gcp_fw: 'GCP Firewall',
 };
 
 export default function TopBar() {

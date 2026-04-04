@@ -756,6 +756,31 @@ export function detectVendor(configText) {
     return { vendor: 'huawei_usg', format: 'text', confidence: 0.85 };
   }
 
+  // Cloud firewall formats (JSON-based)
+  try {
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      const probe = trimmed.slice(0, 3000);
+      // AWS Security Groups: SecurityGroups array with GroupId, IpPermissions
+      if (probe.includes('"SecurityGroups"') && probe.includes('"GroupId"')) {
+        return { vendor: 'aws_sg', format: 'json', confidence: 0.95 };
+      }
+      if (probe.includes('"IpPermissions"') && probe.includes('"VpcId"')) {
+        return { vendor: 'aws_sg', format: 'json', confidence: 0.90 };
+      }
+      // Azure NSG: securityRules with priority, direction, access
+      if (probe.includes('"securityRules"') && (probe.includes('"priority"') || probe.includes('"direction"'))) {
+        return { vendor: 'azure_nsg', format: 'json', confidence: 0.95 };
+      }
+      // GCP Firewall Rules: array with allowed/denied, sourceRanges, network
+      if (probe.includes('"sourceRanges"') && (probe.includes('"allowed"') || probe.includes('"denied"'))) {
+        return { vendor: 'gcp_fw', format: 'json', confidence: 0.95 };
+      }
+      if (probe.includes('"IPProtocol"') && probe.includes('"network"')) {
+        return { vendor: 'gcp_fw', format: 'json', confidence: 0.85 };
+      }
+    }
+  } catch (e) { /* not JSON — continue */ }
+
   // Default: assume PAN-OS XML if it looks like XML
   if (trimmed.startsWith('<')) {
     return { vendor: 'panos', format: 'xml', confidence: 0.5 };

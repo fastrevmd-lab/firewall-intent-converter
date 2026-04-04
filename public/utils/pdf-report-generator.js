@@ -22,6 +22,7 @@ const VENDOR_LABELS = {
   panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate',
   cisco_asa: 'Cisco ASA', checkpoint: 'Check Point',
   sonicwall: 'SonicWall', huawei_usg: 'Huawei USG',
+  aws_sg: 'AWS Security Groups', azure_nsg: 'Azure NSG', gcp_fw: 'GCP Firewall',
   greenfield: 'Greenfield', srx_healthcheck: 'SRX Best Practice',
 };
 
@@ -601,6 +602,55 @@ function buildUnconverted(parseWarnings, convertWarnings) {
 }
 
 // ---------------------------------------------------------------------------
+// Audit Trail (per-command disposition)
+// ---------------------------------------------------------------------------
+
+function buildAuditTrail(intermediateConfig, srxTranslatedPolicies) {
+  const srcPolicies = arr(intermediateConfig?.security_policies);
+  if (srcPolicies.length === 0) {
+    return '<p class="empty">No source policies to audit.</p>';
+  }
+
+  const dstPolicies = arr(srxTranslatedPolicies);
+  const dstByName = {};
+  for (const p of dstPolicies) {
+    if (p.name) dstByName[p.name] = p;
+  }
+
+  const rows = srcPolicies.map((src, i) => {
+    const dst = dstByName[src.name];
+    let decision = '';
+    if (!dst && src._deleted_by === 'analysis') decision = 'Deleted by analysis';
+    else if (!dst && src._deleted_by === 'user') decision = 'Deleted by user';
+    else if (!dst && src._deleted_by === 'ai') decision = 'Deleted by AI';
+    else if (dst && dst._review_status === 'llm_reviewed') decision = 'Modified by AI';
+    else if (dst && dst._review_status === 'accepted') decision = 'Accepted';
+    else if (dst) decision = 'Direct conversion';
+    else decision = 'Not in output';
+
+    const comment = src._deletion_reason || dst?._translation_notes || '';
+    const zones = `${arr(src.src_zones).join(',')} → ${arr(src.dst_zones).join(',')}`;
+    const services = arr(src.services || src.applications).join(', ') || 'any';
+
+    return [
+      i + 1,
+      esc(src.name || `Rule ${i + 1}`),
+      src.action || '-',
+      esc(zones),
+      esc(services),
+      decision,
+      esc(comment),
+    ];
+  });
+
+  return table(
+    ['#', 'Rule Name', 'Action', 'Zone Flow', 'Services', 'Decision', 'Notes'],
+    rows,
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // Main generator
 // ---------------------------------------------------------------------------
 
@@ -642,6 +692,7 @@ export function generateFullPdfHtml(data) {
     section(5, 'User Changes', buildUserChanges(srxTranslatedPolicies, originalPolicies, sectionAcceptance), { accent: C.accent }),
     section(6, 'Final SRX Output', buildFinalOutput(srxOutput, outputFormat), { accent: C.juniper }),
     section(7, 'Unconverted / Unsupported Commands', buildUnconverted(parseWarnings, convertWarnings), { accent: C.error }),
+    section(8, 'Conversion Audit Trail', buildAuditTrail(intermediateConfig, srxTranslatedPolicies), { accent: C.caution }),
   ];
 
   return `<!DOCTYPE html>

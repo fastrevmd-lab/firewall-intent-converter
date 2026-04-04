@@ -265,6 +265,16 @@ export default function useConfig() {
     configDispatch({ type: 'REVOKE_SECTION', sectionId: 'syslog' });
   }, [updateConfig, configDispatch]);
 
+  const handleSNMPUpdate = useCallback((snmpConfig) => {
+    updateConfig(prev => ({ ...prev, snmp_config: snmpConfig }));
+    configDispatch({ type: 'REVOKE_SECTION', sectionId: 'snmp' });
+  }, [updateConfig, configDispatch]);
+
+  const handleAAAUpdate = useCallback((aaaConfig) => {
+    updateConfig(prev => ({ ...prev, aaa_config: aaaConfig }));
+    configDispatch({ type: 'REVOKE_SECTION', sectionId: 'aaa' });
+  }, [updateConfig, configDispatch]);
+
   const handleDHCPUpdate = useCallback((dhcpConfig) => {
     updateConfig(prev => ({ ...prev, dhcp_config: dhcpConfig }));
     configDispatch({ type: 'REVOKE_SECTION', sectionId: 'dhcp' });
@@ -326,6 +336,8 @@ export default function useConfig() {
     handleHAUpdate,
     handleScreenUpdate,
     handleSyslogUpdate,
+    handleSNMPUpdate,
+    handleAAAUpdate,
     handleDHCPUpdate,
     handleQoSUpdate,
     handleConfigUpdate,

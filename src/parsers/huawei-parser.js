@@ -1662,6 +1662,8 @@ export function parseHuaweiConfig(configText) {
     ha_config: haConfig,
     screen_config: [],
     syslog_config: [],
+    snmp_config: parseHuaweiSnmpConfig(allLines, warnings),
+    aaa_config: parseHuaweiAaaConfig(allLines, sections, warnings),
     dhcp_config: [],
     qos_config: [],
     flow_monitoring_config: parseHuaweiNetstream(sections, allLines, warnings),
@@ -1926,4 +1928,180 @@ function parseHuaweiLagInterfaces(sections, warnings) {
   }
 
   return lagInterfaces;
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Parser (Huawei USG)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Huawei USG SNMP configuration from CLI lines.
+ * Huawei: snmp-agent community, snmp-agent target-host, snmp-agent sys-info, etc.
+ */
+function parseHuaweiSnmpConfig(allLines, warnings) {
+  const entries = [];
+  let contact = '';
+  let location = '';
+  const communities = new Map();
+  const trapHosts = [];
+
+  for (const line of allLines) {
+    const trimmed = line.trim();
+
+    // snmp-agent community read <string> / snmp-agent community write <string>
+    const commMatch = trimmed.match(/^snmp-agent\s+community\s+(read|write)\s+(\S+)/);
+    if (commMatch) {
+      communities.set(commMatch[2], commMatch[1] === 'write' ? 'read-write' : 'read-only');
+      continue;
+    }
+
+    // snmp-agent target-host trap address udp-domain <ip> [udp-port <port>] params securityname <str>
+    const targetMatch = trimmed.match(/^snmp-agent\s+target-host\s+trap\s+address\s+udp-domain\s+(\S+)/);
+    if (targetMatch) {
+      const portMatch = trimmed.match(/udp-port\s+(\d+)/);
+      const secMatch = trimmed.match(/securityname\s+(\S+)/);
+      trapHosts.push({
+        ip: targetMatch[1],
+        port: portMatch ? parseInt(portMatch[1], 10) : 162,
+        community: secMatch ? secMatch[1] : '',
+      });
+      continue;
+    }
+
+    // snmp-agent sys-info contact <string>
+    const contactMatch = trimmed.match(/^snmp-agent\s+sys-info\s+contact\s+(.+)$/);
+    if (contactMatch) {
+      contact = contactMatch[1];
+      continue;
+    }
+
+    // snmp-agent sys-info location <string>
+    const locationMatch = trimmed.match(/^snmp-agent\s+sys-info\s+location\s+(.+)$/);
+    if (locationMatch) {
+      location = locationMatch[1];
+      continue;
+    }
+  }
+
+  for (const [name, auth] of communities) {
+    entries.push({
+      type: 'community',
+      name,
+      authorization: auth,
+      clients: [],
+      contact,
+      location,
+    });
+  }
+
+  if (trapHosts.length > 0) {
+    entries.push({
+      type: 'trap-group',
+      name: 'trap-default',
+      targets: trapHosts.map(th => th.ip),
+      categories: [],
+      version: 'v2c',
+    });
+  }
+
+    if (entries.length > 0) {
+    warnings.push(createWarning('info', 'snmp', `Parsed ${entries.length} SNMP configuration item(s)`, 'Huawei SNMP configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA Configuration Parser (Huawei USG)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses Huawei USG AAA configuration from CLI lines and sections.
+ * Huawei: radius-server template, hwtacacs-server template, aaa
+ */
+function parseHuaweiAaaConfig(allLines, sections, warnings) {
+  const entries = [];
+
+  // Parse radius-server template sections
+  for (const sec of sections) {
+    const radiusMatch = sec.header.match(/^radius-server\s+template\s+(\S+)/i);
+    if (radiusMatch) {
+      const templateName = radiusMatch[1];
+      let server = '';
+      let port = 1812;
+      let secret = '';
+
+      for (const line of sec.lines) {
+        const trimmed = line.trim();
+        const authMatch = trimmed.match(/radius-server\s+authentication\s+(\S+)\s+(\d+)/);
+        if (authMatch) { server = authMatch[1]; port = parseInt(authMatch[2], 10); }
+        const keyMatch = trimmed.match(/radius-server\s+shared-key\s+(?:cipher\s+)?(\S+)/);
+        if (keyMatch) secret = keyMatch[1];
+      }
+
+      if (server) {
+        entries.push({
+          type: 'radius',
+          name: templateName,
+          server,
+          port,
+          secret,
+          timeout: 5,
+          retry: 3,
+          source_address: '',
+        });
+      }
+    }
+
+    // hwtacacs-server template
+    const tacMatch = sec.header.match(/^hwtacacs-server\s+template\s+(\S+)/i);
+    if (tacMatch) {
+      const templateName = tacMatch[1];
+      let server = '';
+      let port = 49;
+      let secret = '';
+
+      for (const line of sec.lines) {
+        const trimmed = line.trim();
+        const authMatch = trimmed.match(/hwtacacs-server\s+authentication\s+(\S+)(?:\s+(\d+))?/);
+        if (authMatch) { server = authMatch[1]; if (authMatch[2]) port = parseInt(authMatch[2], 10); }
+        const keyMatch = trimmed.match(/hwtacacs-server\s+shared-key\s+(?:cipher\s+)?(\S+)/);
+        if (keyMatch) secret = keyMatch[1];
+      }
+
+      if (server) {
+        entries.push({
+          type: 'tacplus',
+          name: templateName,
+          server,
+          port,
+          secret,
+          timeout: 5,
+          single_connection: false,
+          source_address: '',
+        });
+      }
+    }
+
+    // aaa section with authentication-scheme, domain, etc.
+    if (sec.header.match(/^aaa\s*$/i)) {
+      for (const line of sec.lines) {
+        const trimmed = line.trim();
+        const schemeMatch = trimmed.match(/authentication-scheme\s+(\S+)/);
+        if (schemeMatch) {
+          entries.push({
+            type: 'profile',
+            name: schemeMatch[1],
+            authentication_order: ['radius'],
+          });
+        }
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'aaa', `Parsed ${entries.length} AAA configuration item(s)`, 'Huawei AAA configuration detected'));
+  }
+  return entries;
 }

@@ -225,6 +225,8 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   convertScreenConfig(config.screen_config, commands, warnings, summary);
   convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary);
   convertSyslogConfig(config.syslog_config, commands, warnings, summary);
+  convertSnmpConfig(config.snmp_config, commands, warnings, summary);
+  convertAaaConfig(config.aaa_config, commands, warnings, summary);
   convertDhcpConfig(config.dhcp_config, commands, warnings, summary);
   convertQosConfig(config.qos_config, commands, warnings, summary);
   convertL2Config(config, commands, warnings, summary, interfaceMappings);
@@ -240,13 +242,15 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // in policy match but never defined as a custom or predefined application
   autoGenerateMissingAppDefinitions(commands);
 
-  // Unsupported feature notices
-  commands.push('# =============================================');
-  commands.push('# NOT CONVERTED — Manual Configuration Required');
-  commands.push('# =============================================');
-  commands.push('# AAA / Authentication (RADIUS, TACACS+, LDAP) — not converted by this tool');
-  commands.push('# Configure manually: set system authentication-order, set access profile, etc.');
-  commands.push('');
+  // Unsupported feature notices (only if AAA was not auto-converted)
+  if (!config.aaa_config || config.aaa_config.length === 0) {
+    commands.push('# =============================================');
+    commands.push('# NOT CONVERTED — Manual Configuration Required');
+    commands.push('# =============================================');
+    commands.push('# AAA / Authentication (RADIUS, TACACS+, LDAP) — no AAA config detected in source');
+    commands.push('# If needed, configure manually: set system authentication-order, set access profile, etc.');
+    commands.push('');
+  }
 
   summary.total_warnings = warnings.length;
 
@@ -3273,6 +3277,175 @@ function convertSyslogConfig(syslogConfig, commands, warnings, summary) {
 
 
 // ---------------------------------------------------------------------------
+// AAA Configuration Converter
+// ---------------------------------------------------------------------------
+
+function convertAaaConfig(aaaConfig, commands, warnings, summary) {
+  if (!aaaConfig || aaaConfig.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# AAA / Authentication Configuration');
+  commands.push('# =============================================');
+
+  let radiusCount = 0;
+  let tacplusCount = 0;
+  let profileCount = 0;
+
+  for (const entry of aaaConfig) {
+    if (entry.type === 'radius') {
+      if (!entry.server) continue;
+      commands.push(`set system radius-server ${entry.server} port ${entry.port || 1812}`);
+      if (entry.secret) {
+        commands.push(`set system radius-server ${entry.server} secret "${entry.secret}"`);
+      } else {
+        commands.push(`# set system radius-server ${entry.server} secret "<SHARED-SECRET>" /* requires manual configuration */`);
+      }
+      if (entry.timeout) {
+        commands.push(`set system radius-server ${entry.server} timeout ${entry.timeout}`);
+      }
+      if (entry.retry) {
+        commands.push(`set system radius-server ${entry.server} retry ${entry.retry}`);
+      }
+      if (entry.source_address) {
+        commands.push(`set system radius-server ${entry.server} source-address ${entry.source_address}`);
+      }
+      radiusCount++;
+    }
+
+    if (entry.type === 'tacplus') {
+      if (!entry.server) continue;
+      commands.push(`set system tacplus-server ${entry.server} port ${entry.port || 49}`);
+      if (entry.secret) {
+        commands.push(`set system tacplus-server ${entry.server} secret "${entry.secret}"`);
+      } else {
+        commands.push(`# set system tacplus-server ${entry.server} secret "<SHARED-SECRET>" /* requires manual configuration */`);
+      }
+      if (entry.timeout) {
+        commands.push(`set system tacplus-server ${entry.server} timeout ${entry.timeout}`);
+      }
+      if (entry.single_connection) {
+        commands.push(`set system tacplus-server ${entry.server} single-connection`);
+      }
+      if (entry.source_address) {
+        commands.push(`set system tacplus-server ${entry.server} source-address ${entry.source_address}`);
+      }
+      tacplusCount++;
+    }
+
+    if (entry.type === 'ldap') {
+      // SRX uses LDAP via access profile, emit as comments for manual configuration
+      commands.push(`# LDAP server: ${entry.server}:${entry.port || 389} (base-dn: ${entry.base_dn || 'N/A'})`);
+      commands.push(`# Configure via: set access profile <name> ldap-server ${entry.server}`);
+    }
+
+    if (entry.type === 'profile') {
+      const profileName = sanitizeJunosName(entry.name);
+      if (entry.authentication_order && entry.authentication_order.length > 0) {
+        for (const method of entry.authentication_order) {
+          const normalized = method.toLowerCase().includes('tacacs') ? 'tacplus' :
+                            method.toLowerCase().includes('radius') ? 'radius' :
+                            method.toLowerCase().includes('ldap') ? 'ldap' :
+                            method.toLowerCase() === 'password' ? 'password' : method;
+          commands.push(`set access profile ${profileName} authentication-order ${normalized}`);
+        }
+      }
+      profileCount++;
+    }
+
+    if (entry.type === 'auth-order') {
+      if (entry.authentication_order && entry.authentication_order.length > 0) {
+        for (const method of entry.authentication_order) {
+          commands.push(`set system authentication-order ${method}`);
+        }
+      }
+    }
+  }
+
+  // Add note about shared secrets
+  if (radiusCount > 0 || tacplusCount > 0) {
+    commands.push('# NOTE: Shared secrets are sanitized. Verify and replace before deployment.');
+  }
+
+  summary.aaa_radius_servers_converted = radiusCount;
+  summary.aaa_tacplus_servers_converted = tacplusCount;
+  summary.aaa_profiles_converted = profileCount;
+
+  commands.push('');
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Converter
+// ---------------------------------------------------------------------------
+
+function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
+  if (!snmpConfig || snmpConfig.length === 0) return;
+
+  commands.push('# =============================================');
+  commands.push('# SNMP Configuration');
+  commands.push('# =============================================');
+
+  let communityCount = 0;
+  let trapGroupCount = 0;
+
+  // Emit contact/location from first entry that has them
+  const contactEntry = snmpConfig.find(e => e.contact);
+  const locationEntry = snmpConfig.find(e => e.location);
+  if (contactEntry?.contact) {
+    commands.push(`set snmp contact "${contactEntry.contact}"`);
+  }
+  if (locationEntry?.location) {
+    commands.push(`set snmp location "${locationEntry.location}"`);
+  }
+
+  for (const entry of snmpConfig) {
+    if (entry.type === 'community') {
+      const auth = entry.authorization === 'read-write' ? 'read-write' : 'read-only';
+      commands.push(`set snmp community ${sanitizeJunosName(entry.name)} authorization ${auth}`);
+
+      // Restrict to specific clients if configured
+      if (entry.clients && entry.clients.length > 0) {
+        for (const client of entry.clients) {
+          commands.push(`set snmp community ${sanitizeJunosName(entry.name)} clients ${client}`);
+        }
+      }
+      communityCount++;
+    }
+
+    if (entry.type === 'trap-group') {
+      const groupName = sanitizeJunosName(entry.name);
+      if (entry.version) {
+        commands.push(`set snmp trap-group ${groupName} version ${entry.version}`);
+      }
+      for (const target of (entry.targets || [])) {
+        commands.push(`set snmp trap-group ${groupName} targets ${target}`);
+      }
+      for (const cat of (entry.categories || [])) {
+        commands.push(`set snmp trap-group ${groupName} categories ${cat}`);
+      }
+      trapGroupCount++;
+    }
+
+    if (entry.type === 'v3-user') {
+      const userName = sanitizeJunosName(entry.name);
+      commands.push(`set snmp v3 usm local-engine user ${userName}`);
+      if (entry.auth_protocol && entry.auth_protocol !== 'none') {
+        commands.push(`set snmp v3 usm local-engine user ${userName} authentication-${entry.auth_protocol}`);
+      }
+      if (entry.privacy_protocol && entry.privacy_protocol !== 'none') {
+        commands.push(`set snmp v3 usm local-engine user ${userName} privacy-${entry.privacy_protocol}`);
+      }
+    }
+  }
+
+  summary.snmp_communities_converted = communityCount;
+  summary.snmp_trap_groups_converted = trapGroupCount;
+
+  commands.push('');
+}
+
+
+// ---------------------------------------------------------------------------
 // DHCP Configuration Converter
 // ---------------------------------------------------------------------------
 
@@ -4031,6 +4204,22 @@ export function convertMergedToSrxSetCommands(configSlots, crossLsLinks = [], gl
     const sysCommands = [];
     convertSyslogConfig(globalConfig.syslog_config, sysCommands, allWarnings, {});
     allCommands.push(...sysCommands);
+    allCommands.push('');
+  }
+
+  // SNMP at chassis level
+  if (globalConfig.snmp_config && globalConfig.snmp_config.length > 0) {
+    const snmpCommands = [];
+    convertSnmpConfig(globalConfig.snmp_config, snmpCommands, allWarnings, {});
+    allCommands.push(...snmpCommands);
+    allCommands.push('');
+  }
+
+  // AAA at chassis level
+  if (globalConfig.aaa_config && globalConfig.aaa_config.length > 0) {
+    const aaaCommands = [];
+    convertAaaConfig(globalConfig.aaa_config, aaaCommands, allWarnings, {});
+    allCommands.push(...aaaCommands);
     allCommands.push('');
   }
 

@@ -16,6 +16,9 @@ const VPNEditor = React.lazy(() => import('../VPNEditor.jsx'));
 const HAEditor = React.lazy(() => import('../HAEditor.jsx'));
 const ScreenEditor = React.lazy(() => import('../ScreenEditor.jsx'));
 const SyslogEditor = React.lazy(() => import('../SyslogEditor.jsx'));
+const SNMPEditor = React.lazy(() => import('../SNMPEditor.jsx'));
+const AAAEditor = React.lazy(() => import('../AAAEditor.jsx'));
+const BatchMigrationPanel = React.lazy(() => import('../BatchMigrationPanel.jsx'));
 const DHCPEditor = React.lazy(() => import('../DHCPEditor.jsx'));
 const QoSEditor = React.lazy(() => import('../QoSEditor.jsx'));
 const FlowMonitoringEditor = React.lazy(() => import('../FlowMonitoringEditor.jsx'));
@@ -684,6 +687,26 @@ export default function ContentRouter({
     );
   }
 
+  if (editTab === 'snmp') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <SectionAcceptBar sectionId="snmp" label="SNMP" />
+        <div style={{ flex: 1, overflow: 'auto' }}><SNMPEditor snmpConfig={activeConfig?.snmp_config || []} onSNMPUpdate={config.handleSNMPUpdate} viewMode={effectiveViewMode} /></div>
+      </div>
+    );
+  }
+
+  if (editTab === 'aaa') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {renderPlatformBar()}
+        <SectionAcceptBar sectionId="aaa" label="AAA" />
+        <div style={{ flex: 1, overflow: 'auto' }}><AAAEditor aaaConfig={activeConfig?.aaa_config || []} onAAAUpdate={config.handleAAAUpdate} viewMode={effectiveViewMode} /></div>
+      </div>
+    );
+  }
+
   if (editTab === 'dhcp') {
     return (
       <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -789,6 +812,16 @@ export default function ContentRouter({
             conversionSummary={conversionSummary}
             isParsed={!!intermediateConfig}
           />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (editTab === 'batch') {
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Suspense fallback={<LoadingTab />}>
+          <BatchMigrationPanel />
         </Suspense>
       </div>
     );

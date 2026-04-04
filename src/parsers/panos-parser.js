@@ -308,6 +308,8 @@ export function parsePanosConfig(configText) {
     ha_config: haConfig,
     screen_config: screenConfig,
     syslog_config: syslogConfig,
+    snmp_config: parsePanosSnmpConfig(config, warnings),
+    aaa_config: parsePanosAaaConfig(config, warnings),
     dhcp_config: dhcpConfig,
     qos_config: qosConfig,
     flow_monitoring_config: parseNetflowConfig(config, warnings),
@@ -2811,4 +2813,192 @@ function normalizePanosIfaceToSrx(panosName) {
     return `ge-0/${slot}/${port}`;
   }
   return panosName;
+}
+
+
+// ---------------------------------------------------------------------------
+// SNMP Configuration Parser (PAN-OS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses PAN-OS SNMP configuration from XML config.
+ * PAN-OS path: deviceconfig > system > snmp-setting
+ */
+function parsePanosSnmpConfig(config, warnings) {
+  const entries = [];
+  const devices = getNestedValue(config, 'devices');
+  if (!devices) return entries;
+
+  const deviceEntries = Array.isArray(devices.entry) ? devices.entry : devices.entry ? [devices.entry] : [];
+  for (const device of deviceEntries) {
+    const snmpSection = getNestedValue(device, 'deviceconfig.system.snmp-setting');
+    if (!snmpSection) continue;
+
+    // SNMPv2c communities: snmp-setting > access-setting > version > v2c
+    const v2c = getNestedValue(snmpSection, 'access-setting.version.v2c');
+    if (v2c) {
+      const communityEntries = Array.isArray(v2c.entry) ? v2c.entry : v2c.entry ? [v2c.entry] : [];
+      for (const ce of communityEntries) {
+        const name = ce['@_name'] || ce.name || 'public';
+        entries.push({
+          type: 'community',
+          name,
+          authorization: 'read-only',
+          clients: [],
+          contact: getNestedValue(snmpSection, 'contact') || '',
+          location: getNestedValue(snmpSection, 'location') || '',
+        });
+      }
+    }
+
+    // SNMPv3 users: snmp-setting > access-setting > version > v3
+    const v3 = getNestedValue(snmpSection, 'access-setting.version.v3');
+    if (v3) {
+      const userEntries = Array.isArray(v3.entry) ? v3.entry : v3.entry ? [v3.entry] : [];
+      for (const ue of userEntries) {
+        const name = ue['@_name'] || ue.name || '';
+        const authProto = ue['auth-profile'] ? 'sha' : 'none';
+        const privProto = ue['priv-profile'] ? 'aes128' : 'none';
+        entries.push({
+          type: 'v3-user',
+          name,
+          auth_protocol: authProto,
+          privacy_protocol: privProto,
+          contact: getNestedValue(snmpSection, 'contact') || '',
+          location: getNestedValue(snmpSection, 'location') || '',
+        });
+      }
+    }
+
+    // Trap destinations: snmp-setting > snmp-system > trap-dest
+    const trapDest = getNestedValue(snmpSection, 'snmp-system.trap-dest');
+    if (trapDest) {
+      const trapEntries = Array.isArray(trapDest.entry) ? trapDest.entry : trapDest.entry ? [trapDest.entry] : [];
+      for (const te of trapEntries) {
+        const name = te['@_name'] || te.name || '';
+        entries.push({
+          type: 'trap-group',
+          name: `trap-${name}`,
+          targets: [name],
+          categories: [],
+          version: te.version || 'v2c',
+        });
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'snmp', `Parsed ${entries.length} SNMP configuration item(s)`, 'PAN-OS SNMP configuration detected'));
+  }
+  return entries;
+}
+
+
+// ---------------------------------------------------------------------------
+// AAA Configuration Parser (PAN-OS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses PAN-OS AAA configuration.
+ * PAN-OS path: shared > server-profile > radius / tacplus / ldap
+ */
+function parsePanosAaaConfig(config, warnings) {
+  const entries = [];
+  const devices = getNestedValue(config, 'devices');
+  if (!devices) return entries;
+
+  const deviceEntries = Array.isArray(devices.entry) ? devices.entry : devices.entry ? [devices.entry] : [];
+  for (const device of deviceEntries) {
+    // RADIUS server profiles: shared > server-profile > radius
+    const radiusProfiles = getNestedValue(device, 'vsys.entry.server-profile.radius') ||
+                           getNestedValue(device, 'shared.server-profile.radius');
+    if (radiusProfiles) {
+      const profileEntries = Array.isArray(radiusProfiles.entry) ? radiusProfiles.entry : radiusProfiles.entry ? [radiusProfiles.entry] : [];
+      for (const profile of profileEntries) {
+        const profileName = profile['@_name'] || profile.name || '';
+        const servers = profile.server;
+        const serverEntries = servers ? (Array.isArray(servers.entry) ? servers.entry : servers.entry ? [servers.entry] : []) : [];
+        for (const srv of serverEntries) {
+          entries.push({
+            type: 'radius',
+            name: `${profileName}-${srv['@_name'] || srv.name || ''}`,
+            server: srv['ip-address'] || '',
+            port: parseInt(srv.port || '1812', 10),
+            secret: srv.secret || '',
+            timeout: parseInt(srv.timeout || '3', 10),
+            retry: parseInt(srv.retry || '3', 10),
+            source_address: '',
+          });
+        }
+      }
+    }
+
+    // TACACS+ server profiles
+    const tacplusProfiles = getNestedValue(device, 'vsys.entry.server-profile.tacplus') ||
+                            getNestedValue(device, 'shared.server-profile.tacplus');
+    if (tacplusProfiles) {
+      const profileEntries = Array.isArray(tacplusProfiles.entry) ? tacplusProfiles.entry : tacplusProfiles.entry ? [tacplusProfiles.entry] : [];
+      for (const profile of profileEntries) {
+        const profileName = profile['@_name'] || profile.name || '';
+        const servers = profile.server;
+        const serverEntries = servers ? (Array.isArray(servers.entry) ? servers.entry : servers.entry ? [servers.entry] : []) : [];
+        for (const srv of serverEntries) {
+          entries.push({
+            type: 'tacplus',
+            name: `${profileName}-${srv['@_name'] || srv.name || ''}`,
+            server: srv.address || '',
+            port: parseInt(srv.port || '49', 10),
+            secret: srv.secret || '',
+            timeout: parseInt(srv.timeout || '3', 10),
+            single_connection: false,
+            source_address: '',
+          });
+        }
+      }
+    }
+
+    // LDAP server profiles
+    const ldapProfiles = getNestedValue(device, 'vsys.entry.server-profile.ldap') ||
+                         getNestedValue(device, 'shared.server-profile.ldap');
+    if (ldapProfiles) {
+      const profileEntries = Array.isArray(ldapProfiles.entry) ? ldapProfiles.entry : ldapProfiles.entry ? [ldapProfiles.entry] : [];
+      for (const profile of profileEntries) {
+        const profileName = profile['@_name'] || profile.name || '';
+        const servers = profile.server;
+        const serverEntries = servers ? (Array.isArray(servers.entry) ? servers.entry : servers.entry ? [servers.entry] : []) : [];
+        for (const srv of serverEntries) {
+          entries.push({
+            type: 'ldap',
+            name: `${profileName}-${srv['@_name'] || srv.name || ''}`,
+            server: srv.address || '',
+            port: parseInt(srv.port || '389', 10),
+            base_dn: profile['base-dn'] || '',
+            bind_dn: profile['bind-dn'] || '',
+            ssl: profile.ssl === 'yes',
+          });
+        }
+      }
+    }
+
+    // Authentication profile
+    const authProfiles = getNestedValue(device, 'vsys.entry.authentication-profile') ||
+                         getNestedValue(device, 'shared.authentication-profile');
+    if (authProfiles) {
+      const apEntries = Array.isArray(authProfiles.entry) ? authProfiles.entry : authProfiles.entry ? [authProfiles.entry] : [];
+      for (const ap of apEntries) {
+        const name = ap['@_name'] || ap.name || '';
+        const method = ap.method ? Object.keys(ap.method)[0] || '' : '';
+        entries.push({
+          type: 'profile',
+          name,
+          authentication_order: method ? [method] : [],
+        });
+      }
+    }
+  }
+
+  if (entries.length > 0) {
+    warnings.push(createWarning('info', 'aaa', `Parsed ${entries.length} AAA configuration item(s)`, 'PAN-OS AAA configuration detected'));
+  }
+  return entries;
 }

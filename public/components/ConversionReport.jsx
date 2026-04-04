@@ -873,6 +873,33 @@ function PerCommandTab({ intermediateConfig, srxTranslatedPolicies }) {
     });
   }, []);
 
+  const handleExportCsv = useCallback(() => {
+    if (rows.length === 0) return;
+    const headers = ['#', 'Rule Name', 'Action', 'Zone Flow', 'Decision', 'Decision Code', 'Comment', 'Disabled', 'Src Addresses', 'Dst Addresses', 'Services'];
+    const csvRows = rows.map(row => [
+      row.index + 1,
+      `"${(row.name || '').replace(/"/g, '""')}"`,
+      row.srcAction,
+      `"${(row.srcZones || '').replace(/"/g, '""')}"`,
+      `"${(row.decision || '').replace(/"/g, '""')}"`,
+      row.decisionCode,
+      `"${(row.comment || '').replace(/"/g, '""')}"`,
+      row.disabled ? 'yes' : 'no',
+      `"${(row.srcPolicy.src_addresses || ['any']).join('; ')}"`,
+      `"${(row.srcPolicy.dst_addresses || ['any']).join('; ')}"`,
+      `"${(row.srcPolicy.services || row.srcPolicy.applications || ['any']).join('; ')}"`,
+    ].join(','));
+    const csv = [headers.join(','), ...csvRows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `audit-trail-${ts}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [rows]);
+
   if (rows.length === 0) return <EmptyState tabId="per-command" />;
 
   const decisionColors = {
@@ -885,7 +912,12 @@ function PerCommandTab({ intermediateConfig, srxTranslatedPolicies }) {
 
   return (
     <div className="report-section">
-      <h3 style={{ marginBottom: 12, color: 'var(--text-primary)' }}>Per-Command Conversion Report</h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h3 style={{ color: 'var(--text-primary)', margin: 0 }}>Per-Command Conversion Report</h3>
+        <button className="btn btn-primary btn-sm" onClick={handleExportCsv} title="Export audit trail as CSV">
+          Export CSV
+        </button>
+      </div>
       <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
         Each source rule mapped to a conversion decision. Click a row to expand details.
       </p>
