@@ -46,14 +46,14 @@ Reference for the Firewall Intent Converter UI. Dark professional theme targetin
 
 | Variable | Value | Use |
 |----------|-------|-----|
-| `--llm-cloud` | `#f59e0b` | Cloud LLM features (orange) |
-| `--llm-local` | `#84cc16` | Local LLM features (lime) |
+| `--llm-cloud` | `#a78bfa` | Cloud LLM features (violet) |
+| `--llm-local` | `#db2777` | Local LLM features (plum/maroon) |
 
 ### App Analysis / Caution
 
 | Variable | Value | Use |
 |----------|-------|-----|
-| `--caution` | `#a78bfa` | App-driven analysis, warnings (violet) |
+| `--caution` | `#f59e0b` | App-driven analysis, warnings (orange) |
 | `--juniper-green` | `#90C641` | SRX model branding |
 
 ### Status Badges
@@ -63,7 +63,7 @@ Reference for the Firewall Intent Converter UI. Dark professional theme targetin
 | `--status-clean` | `#34d399` | `--success` |
 | `--status-warning` | `#fbbf24` | `--warning` |
 | `--status-unsupported` | `#f87171` | `--error` |
-| `--status-interview` | `#a78bfa` | `--caution` |
+| `--status-interview` | `#f59e0b` | `--caution` |
 
 ### Layout Tokens
 
@@ -82,9 +82,9 @@ These rules prevent visual confusion between LLM-driven and app-driven features.
 
 | Color | CSS Variable | Allowed Use | Forbidden Use |
 |-------|-------------|-------------|---------------|
-| Orange | `--llm-cloud` | LLM/cloud features ONLY (cloud LLM buttons, AI actions) | App-driven analysis, warnings, topology |
-| Violet | `--caution` | App-driven analysis, warnings, app-generated highlights | LLM features |
-| Lime | `--llm-local` | Local LLM features | App-driven features |
+| Violet | `--llm-cloud` | LLM/cloud features ONLY (cloud LLM buttons, AI actions) | App-driven analysis, warnings, topology |
+| Orange | `--caution` | App-driven analysis, warnings, app-generated highlights | LLM features |
+| Plum/Maroon | `--llm-local` | Local LLM features | App-driven features |
 | Green | `--juniper-green` | SRX model branding, target platform labels | Semantic status (use `--success` instead) |
 | Teal | `--accent` | General UI accent, links, focus rings | Semantic warnings |
 

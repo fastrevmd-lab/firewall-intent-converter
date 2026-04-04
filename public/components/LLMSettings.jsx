@@ -52,7 +52,7 @@ const PROVIDERS = [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Stable)' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Stable)' },
   ]},
-  { id: 'ollama', name: 'Ollama (Local)', defaultModel: 'llama3', models: [] },
+  { id: 'ollama', name: 'Ollama (Local)', defaultModel: 'qwen2.5-coder:7b', models: [] },
   { id: 'lmstudio', name: 'LM Studio (Local)', defaultModel: 'local-model', models: [] },
   { id: 'custom', name: 'Custom OpenAI-Compatible', defaultModel: '', models: [] },
 ];
@@ -96,7 +96,7 @@ export default function LLMSettings({ onClose, initialTab }) {
         // If local-only mode and saved provider is cloud, switch to ollama
         if (localOnly && CLOUD_PROVIDER_IDS.includes(savedProvider)) {
           setProvider('ollama');
-          setModel('llama3');
+          setModel('qwen2.5-coder:7b');
           setBaseUrl('http://localhost:11434');
         } else {
           setProvider(savedProvider);

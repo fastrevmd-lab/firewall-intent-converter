@@ -24,12 +24,17 @@ const FETCH_TIMEOUT = 30000; // 30 seconds
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Normalize a bridge URL — ensure http:// or https:// prefix. */
+/** Normalize a bridge URL — ensure http:// or https:// prefix and valid origin. */
 function normalizeBridgeUrl(raw) {
   let url = (raw || '').trim().replace(/\/+$/, '');
   if (!url) return '';
   if (/^https?:\/[^/]/.test(url)) url = url.replace(/^(https?:\/)/, '$1/');
   if (!/^https?:\/\//.test(url)) url = 'http://' + url;
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    if (parsed.username || parsed.password) return '';
+  } catch { return ''; }
   return url;
 }
 

@@ -12,6 +12,7 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import vm from 'vm';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,20 +29,20 @@ if (!sampleKey) {
 // ---------------------------------------------------------------------------
 // 1. Extract sample config text from the JSX module
 // ---------------------------------------------------------------------------
-// We dynamically import the JSX file — Vite/React JSX won't work in plain
-// Node, but sample-configs.jsx only uses template literals and plain objects,
-// so we can eval it after stripping the export keyword.
+// The file is trusted project code — plain JS object with template literals,
+// no actual JSX. We evaluate it in a sandboxed context with no access to
+// Node built-ins (process, require, fs, etc.) to limit blast radius.
 const samplePath = resolve(projectRoot, 'public/components/sample-configs.jsx');
 const sampleSrc = readFileSync(samplePath, 'utf-8');
 
-// Strip "export const SAMPLE_CONFIGS = " and trailing semicolons to get the
-// object literal, then evaluate it.  The file is trusted project code.
 const objStart = sampleSrc.indexOf('{', sampleSrc.indexOf('SAMPLE_CONFIGS'));
-// Find the matching closing brace (the last "};" in the file)
 const objBody = sampleSrc.slice(objStart).replace(/;\s*$/, '');
 
-// Use Function constructor to evaluate in a clean scope
-const SAMPLE_CONFIGS = new Function(`return (${objBody})`)();
+const sandbox = Object.create(null);
+const SAMPLE_CONFIGS = vm.runInNewContext(`(${objBody})`, sandbox, {
+  filename: 'sample-configs.jsx',
+  timeout: 5000,
+});
 
 const sample = SAMPLE_CONFIGS[sampleKey];
 if (!sample) {

@@ -37,11 +37,11 @@
   --info: #60a5fa;
 
   /* LLM mode colors */
-  --llm-cloud: #f59e0b;
-  --llm-local: #84cc16;
+  --llm-cloud: #a78bfa;
+  --llm-local: #db2777;
 
-  /* Caution — warnings/analysis (distinct from LLM orange) */
-  --caution: #a78bfa;
+  /* Caution — app-driven analysis/warnings (orange) */
+  --caution: #f59e0b;
 
   /* Juniper SRX brand green (front panel color) */
   --juniper-green: #90C641;
@@ -50,7 +50,7 @@
   --status-clean: #34d399;
   --status-warning: #fbbf24;
   --status-unsupported: #f87171;
-  --status-interview: #a78bfa;
+  --status-interview: #f59e0b;
 
   /* Layout */
   --header-height: 52px;
@@ -81,14 +81,14 @@
   --warning: #d97706;
   --error: #dc2626;
   --info: #2563eb;
-  --llm-cloud: #d97706;
-  --llm-local: #65a30d;
-  --caution: #7c3aed;
+  --llm-cloud: #7c3aed;
+  --llm-local: #be185d;
+  --caution: #d97706;
   --juniper-green: #65a30d;
   --status-clean: #059669;
   --status-warning: #d97706;
   --status-unsupported: #dc2626;
-  --status-interview: #7c3aed;
+  --status-interview: #d97706;
   --border-color: #c9cdd4;
 }
 
@@ -111,14 +111,14 @@
     --warning: #d97706;
     --error: #dc2626;
     --info: #2563eb;
-    --llm-cloud: #d97706;
-    --llm-local: #65a30d;
-    --caution: #7c3aed;
+    --llm-cloud: #7c3aed;
+    --llm-local: #be185d;
+    --caution: #d97706;
     --juniper-green: #65a30d;
     --status-clean: #059669;
     --status-warning: #d97706;
     --status-unsupported: #dc2626;
-    --status-interview: #7c3aed;
+    --status-interview: #d97706;
     --border-color: #c9cdd4;
   }
 }
