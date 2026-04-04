@@ -15,6 +15,7 @@
  *   8. Rollback Plan Generation
  */
 import React, { useState, useMemo, useCallback } from 'react';
+import ExportPdfButton from './ExportPdfButton.jsx';
 
 /* ── Tab definitions ──────────────────────────────────────────────── */
 const TABS = [
@@ -143,22 +144,25 @@ export default function ConversionReport({
       {/* Tab bar */}
       <div style={{
         display: 'flex',
-        gap: '2px',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         padding: '8px 12px',
         borderBottom: '1px solid var(--border-color)',
         flexShrink: 0,
-        overflowX: 'auto',
       }}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            className={`format-btn ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-            style={{ whiteSpace: 'nowrap', fontSize: '12px' }}
-          >
-            {tab.label}
-          </button>
-        ))}
+        <div style={{ display: 'flex', gap: '2px', overflowX: 'auto' }}>
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              className={`format-btn ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+              style={{ whiteSpace: 'nowrap', fontSize: '12px' }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <ExportPdfButton />
       </div>
 
       {/* Tab content */}
