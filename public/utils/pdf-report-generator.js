@@ -243,18 +243,35 @@ function buildAnalysisChanges(intermediateConfig, originalPolicies) {
   }
 
   const ACTION_LABELS = {
-    include: 'Include', exclude: 'Exclude / Remove', keep_all: 'Keep All',
+    include: 'Keep All', exclude: 'Remove', keep_all: 'Keep All (Annotate)',
     consolidate: 'Consolidate', remove: 'Remove', remove_all: 'Remove All',
     disable: 'Disable', include_disabled: 'Keep Disabled', include_enabled: 'Re-enable',
     enable_logging: 'Enable Logging', enable_all: 'Enable All', report_only: 'Report Only',
   };
+
+  // Determine per-item effective status based on bulk action + per-item overrides
+  const REMOVE_ACTIONS = new Set(['exclude', 'remove', 'remove_all']);
+  const MODIFY_ACTIONS = new Set(['enable_all', 'include_enabled', 'consolidate']);
+
+  function getItemStatus(finding, item) {
+    const override = (finding.itemOverrides || {})[item.key];
+    const bulkRemove = REMOVE_ACTIONS.has(finding.selected);
+    const bulkModify = MODIFY_ACTIONS.has(finding.selected);
+
+    if (override === 'exclude') return { label: 'Removed (override)', color: C.error };
+    if (override === 'include' || override === 'include_enabled') return { label: 'Kept (override)', color: C.success };
+
+    if (bulkRemove) return { label: 'Removed', color: C.error };
+    if (bulkModify) return { label: ACTION_LABELS[finding.selected] || 'Modified', color: C.caution };
+    return { label: 'Kept', color: C.success };
+  }
 
   let html = '';
 
   // Summary table
   const summaryRows = findings.filter(f => f.count > 0).map(f => {
     const action = ACTION_LABELS[f.selected] || f.selected || 'No action';
-    const isRemove = ['exclude', 'remove', 'remove_all'].includes(f.selected);
+    const isRemove = REMOVE_ACTIONS.has(f.selected);
     const actionHtml = isRemove
       ? `<span style="color:${C.error};font-weight:600;">${esc(action)}</span>`
       : esc(action);
@@ -268,50 +285,32 @@ function buildAnalysisChanges(intermediateConfig, originalPolicies) {
   });
   html += table(['Finding Category', 'Count', 'Action Taken'], summaryRows);
 
-  // Removed rules detail
-  const removedFindings = findings.filter(f =>
-    f.count > 0 && ['exclude', 'remove', 'remove_all'].includes(f.selected),
-  );
-  if (removedFindings.length) {
-    html += `<h3 style="color:${C.error};">Removed Items</h3>`;
-    for (const f of removedFindings) {
-      const label = f.id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      html += `<h4 style="font-size:11px;margin:8px 0 4px;">${esc(label)} — ${f.count} item${f.count !== 1 ? 's' : ''} removed</h4>`;
-      // Check for per-item overrides that kept some items
-      const overrides = f.itemOverrides || {};
-      const rows = arr(f.items).map(item => {
-        const override = overrides[item.key];
-        const kept = override === 'include' || override === 'include_enabled';
-        const statusHtml = kept
-          ? `<span style="color:${C.success};font-weight:600;">Kept (override)</span>`
-          : `<span style="color:${C.error};">Removed</span>`;
-        return [
-          item.label || item.key || '-',
-          item.kind || '-',
-          { html: statusHtml },
-        ];
-      });
-      html += table(['Item', 'Type', 'Status'], rows);
-    }
-  }
+  // Detailed item list for EVERY finding with items
+  const activeFindings = findings.filter(f => f.count > 0 && arr(f.items).length > 0);
+  for (const f of activeFindings) {
+    const label = f.id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const isRemove = REMOVE_ACTIONS.has(f.selected);
+    const headerColor = isRemove ? C.error : MODIFY_ACTIONS.has(f.selected) ? C.caution : C.accent;
+    const actionLabel = ACTION_LABELS[f.selected] || f.selected || '';
 
-  // Modified rules (logging enabled, rules re-enabled, etc.)
-  const modifiedFindings = findings.filter(f =>
-    f.count > 0 && ['enable_all', 'include_enabled', 'consolidate'].includes(f.selected),
-  );
-  if (modifiedFindings.length) {
-    html += `<h3 style="color:${C.caution};">Modified Items</h3>`;
-    for (const f of modifiedFindings) {
-      const label = f.id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      const action = ACTION_LABELS[f.selected] || f.selected;
-      html += `<h4 style="font-size:11px;margin:8px 0 4px;">${esc(label)} — ${esc(action)} (${f.count} item${f.count !== 1 ? 's' : ''})</h4>`;
-      const rows = arr(f.items).slice(0, 50).map(item => [
+    html += `<h3 style="color:${headerColor};">${esc(label)} <span class="badge" style="background:${headerColor};">${f.count}</span></h3>`;
+    html += `<p class="meta">Action: ${esc(actionLabel)}</p>`;
+
+    const items = arr(f.items);
+    const displayItems = items.slice(0, 100);
+    const rows = displayItems.map(item => {
+      const status = getItemStatus(f, item);
+      const statusHtml = `<span style="color:${status.color};font-weight:600;">${esc(status.label)}</span>`;
+      return [
         item.label || item.key || '-',
         item.kind || '-',
-      ]);
-      if (f.items?.length > 50) rows.push(['... and ' + (f.items.length - 50) + ' more', '']);
-      html += table(['Item', 'Type'], rows);
+        { html: statusHtml },
+      ];
+    });
+    if (items.length > 100) {
+      rows.push([`... and ${items.length - 100} more items`, '', '']);
     }
+    html += table(['Item', 'Type', 'Status'], rows);
   }
 
   return html;
