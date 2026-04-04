@@ -17,6 +17,7 @@ const FINDING_LABELS = {
   logging_off: 'Logging Disabled',
   permissive: 'Overly Permissive',
   empty_groups: 'Empty Groups',
+  'never-hit': 'Never-Hit Policies',
 };
 
 const FINDING_SEVERITY = {
@@ -27,6 +28,7 @@ const FINDING_SEVERITY = {
   logging_off: 'warning',
   permissive: 'warning',
   empty_groups: 'info',
+  'never-hit': 'warning',
 };
 
 const FINDING_ACTIONS = {
@@ -58,6 +60,10 @@ const FINDING_ACTIONS = {
   empty_groups: [
     { value: 'include', label: 'Keep' },
     { value: 'exclude', label: 'Remove Empty' },
+  ],
+  'never-hit': [
+    { value: 'include', label: 'Keep All' },
+    { value: 'exclude', label: 'Remove Never-Hit' },
   ],
 };
 

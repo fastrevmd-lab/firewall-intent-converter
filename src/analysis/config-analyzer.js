@@ -35,6 +35,7 @@ export const AnalysisEngine = {
       await step('Checking logging coverage...', () => this._loggingOff(config)),
       await step('Checking for permissive rules...', () => this._permissivePolicies(config)),
       await step('Checking for empty groups...', () => this._emptyGroups(config)),
+      await step('Checking for never-hit policies...', () => this._neverHitPolicies(config)),
     ];
   },
 
@@ -465,5 +466,42 @@ export const AnalysisApplicator = {
       r.src_addresses = (r.src_addresses || []).map(a => remap[a] || a);
       r.dst_addresses = (r.dst_addresses || []).map(a => remap[a] || a);
     }
+  },
+
+  /**
+   * 8. Never-Hit Policies — policies annotated with hit_count === 0.
+   * Hit counts are populated from live device statistics via the PyEZ Bridge.
+   * Only fires if at least one policy has _hit_count annotated.
+   */
+  _neverHitPolicies(config) {
+    const policies = config.security_policies || [];
+    const annotated = policies.filter(p => typeof p._hit_count === 'number');
+    if (annotated.length === 0) {
+      return {
+        id: 'never-hit',
+        label: 'Never-Hit Policies',
+        icon: 'target',
+        severity: 'info',
+        items: [],
+        description: 'Policies with zero traffic hits. Pull hit counts from a live device to populate.',
+      };
+    }
+
+    const neverHit = annotated.filter(p => p._hit_count === 0 && !p.disabled && !p._implicit);
+    return {
+      id: 'never-hit',
+      label: 'Never-Hit Policies',
+      icon: 'target',
+      severity: 'warning',
+      items: neverHit.map(p => ({
+        type: 'policy',
+        name: p.name || `Rule ${p._rule_index || '?'}`,
+        message: `Policy "${p.name}" has never been hit (0 matches). Consider removing or reviewing.`,
+        element: p.name,
+        action: 'remove',
+        _rule_index: p._rule_index,
+      })),
+      description: `${neverHit.length} of ${annotated.length} annotated policies have zero hits.`,
+    };
   },
 };

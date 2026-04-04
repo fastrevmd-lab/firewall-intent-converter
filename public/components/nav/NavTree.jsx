@@ -79,6 +79,8 @@ const NAV_STRUCTURE = [
     { id: 'ha', label: 'HA', countFn: (ic) => ic?.ha_config?.enabled ? 1 : 0 },
     { id: 'qos', label: 'QoS', countKey: 'qos_config' },
     { id: 'syslog', label: 'Syslog', countKey: 'syslog_config' },
+    { id: 'snmp', label: 'SNMP', countKey: 'snmp_config' },
+    { id: 'aaa', label: 'AAA', countKey: 'aaa_config' },
   ]},
   { id: 'output', label: 'Output', icon: 'export', children: [
     { id: 'output', label: 'SRX Config' },
@@ -99,6 +101,9 @@ const NAV_STRUCTURE = [
       return count;
     }},
     { id: 'report', label: 'Report' },
+  ]},
+  { id: 'tools', label: 'Tools', icon: 'tool', children: [
+    { id: 'batch', label: 'Batch Migration' },
   ]},
 ];
 

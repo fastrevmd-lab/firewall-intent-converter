@@ -106,6 +106,8 @@ export function parseCheckPointConfig(configText) {
     ha_config: null,
     screen_config: [],
     syslog_config: [],
+    snmp_config: [],
+    aaa_config: [],
     dhcp_config: [],
     qos_config: [],
     flow_monitoring_config: { collectors: [], sampling: { input_rate: 1000, run_length: 0, interfaces: [] }, templates: [] },
