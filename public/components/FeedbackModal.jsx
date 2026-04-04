@@ -19,6 +19,10 @@ export default function FeedbackModal({ onClose }) {
     const issueBody = encodeURIComponent(description);
     const labels = encodeURIComponent(cat.ghLabel);
     const url = `${REPO_URL}/issues/new?title=${issueTitle}&body=${issueBody}&labels=${labels}`;
+    try {
+      const parsed = new URL(url);
+      if (parsed.origin !== new URL(REPO_URL).origin) return;
+    } catch { return; }
     window.open(url, '_blank', 'noopener');
     onClose();
   };

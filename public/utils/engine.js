@@ -165,6 +165,10 @@ export function sanitizeConfig(configText) {
   if (!configText || typeof configText !== 'string') {
     throw new Error('configText is required and must be a string');
   }
+  const MAX_SANITIZE_LENGTH = 10 * 1024 * 1024; // 10 MB
+  if (configText.length > MAX_SANITIZE_LENGTH) {
+    throw new Error(`Config too large to sanitize (${(configText.length / 1024 / 1024).toFixed(1)} MB, max ${MAX_SANITIZE_LENGTH / 1024 / 1024} MB)`);
+  }
 
   const replacements = [];
   const counter = {
