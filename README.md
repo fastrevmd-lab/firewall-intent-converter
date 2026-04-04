@@ -4,7 +4,7 @@
 
 <h1 align="center"><span style="color: #005b5a;">Firewall to Intent Converter</span></h1>
 
-<p align="center">A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports <b>PAN-OS XML</b>, <b>Junos SRX</b>, <b>FortiGate / FortiOS</b>, <b>Cisco ASA / FTD</b>, <b>Check Point R80+</b>, <b>SonicWall SonicOS</b>, and <b>Huawei USG</b> as source formats, plus a <b>Greenfield</b> mode that builds an SRX configuration from scratch via LLM-guided interview. Paste or upload a config (or start a greenfield interview), review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.</p>
+<p align="center">A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports <b>PAN-OS XML</b>, <b>Junos SRX</b>, <b>FortiGate / FortiOS</b>, <b>Cisco ASA / FTD</b>, <b>Check Point R80+</b>, <b>SonicWall SonicOS</b>, <b>Huawei USG</b>, <b>AWS Security Groups</b>, <b>Azure NSG</b>, and <b>GCP Firewall Rules</b> as source formats, plus a <b>Greenfield</b> mode that builds an SRX configuration from scratch via LLM-guided interview. Paste or upload a config (or start a greenfield interview), review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.</p>
 
 <p align="center">
   <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/"><img src="https://img.shields.io/badge/License-CC%20BY--NC--ND%204.0-lightgrey.svg" alt="License: CC BY-NC-ND 4.0"></a>
@@ -48,7 +48,7 @@ Produces a single-file bundle that works from `file://` with no server. LLM feat
 
 ### 1a. Load a Configuration (Import Mode)
 
-Select your source vendor from the dropdown (Junos SRX, PAN-OS, FortiGate, Cisco ASA/FTD, Check Point, SonicWall, or Huawei USG), then paste a configuration into the left panel or click one of the built-in sample configs. Then click **Parse**. The tool auto-detects the source format.
+Select your source vendor from the dropdown (Junos SRX, PAN-OS, FortiGate, Cisco ASA/FTD, Check Point, SonicWall, Huawei USG, AWS Security Groups, Azure NSG, or GCP Firewall Rules), then paste a configuration into the left panel or click one of the built-in sample configs. You can also **Pull from Device** to fetch the running config from a live SRX via the PyEZ Bridge. Then click **Parse**. The tool auto-detects the source format.
 
 ### 1b. Greenfield Mode (Build from Scratch)
 
@@ -163,7 +163,10 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Check Point R80+/R81+ parser** — Parses Check Point SmartConsole JSON export (`mgmt_cli show-access-rulebase`) including objects-dictionary with UID resolution, nested access-sections and inline layers, host/network/range/FQDN/group objects, service-tcp/udp/icmp objects, service groups, NAT rulebase (hide/static), and optional Gaia clish text for interfaces and static routes
 - **SonicWall SonicOS parser** — Parses SonicWall REST API JSON export (preferred) or CLI text fallback. Handles zones with security-type mapping, IPv4/IPv6 address objects (host/network/range/FQDN/MAC), address groups, service objects, service groups, access rules with priority ordering, NAT policies (source/destination/combined), interfaces, and route policies
 - **Huawei USG parser** — Parses Huawei VRP CLI (`display current-configuration`) including firewall zones with priority, `ip address-set` objects (type object and type group), `ip service-set` definitions, `security-policy` rules with zone-pair routing, `nat-policy` and `nat server` rules, `time-range` schedules, basic IKE/IPsec VPN detection, `hrp` HA configuration, and static routes
-- **Auto-detection** — Automatically identifies the source format (PAN-OS XML, Junos SRX, FortiOS, Cisco ASA, Check Point JSON, SonicWall JSON/CLI, or Huawei VRP) and routes to the correct parser
+- **AWS Security Groups parser** — Parses `aws ec2 describe-security-groups` JSON output. Maps VPCs to zones, Security Groups to address groups, IpPermissions/IpPermissionsEgress to inbound/outbound policies with CIDR-based address objects
+- **Azure NSG parser** — Parses `az network nsg show` JSON or ARM template format. Maps NSG security rules to policies ordered by priority, handles service tags (VirtualNetwork, AzureLoadBalancer) with placeholder warnings
+- **GCP Firewall Rules parser** — Parses `gcloud compute firewall-rules list --format=json` output. Maps VPC networks to zones, target/source tags to address groups, allowed/denied arrays to permit/deny policies with priority ordering
+- **Auto-detection** — Automatically identifies the source format (PAN-OS XML, Junos SRX, FortiOS, Cisco ASA, Check Point JSON, SonicWall JSON/CLI, Huawei VRP, AWS Security Group JSON, Azure NSG JSON, or GCP Firewall Rules JSON) and routes to the correct parser
 - **SRX output** — Generates Juniper SRX `set` commands or hierarchical XML, including zones, address books, application mappings, security policies, NAT rule-sets, schedulers, UTM profiles (anti-virus, web-filtering, content-filtering), IDP policies, and L2 bridge-domain/family-bridge config. FortiGate Application Control generates AppFW rule-set; FortiGate DLP notes ICAP integration requirement
 - **Implicit rules** — Automatically generates vendor-specific implicit rules (PAN-OS intra-zone allow + interzone deny, FortiGate intrazone per-zone + default deny, Cisco ASA security-level permits for unbound interfaces + default deny, SRX default deny). Implicit rules are visually distinguished in the UI (dimmed, italic, with "Implicit" chip) and tagged `added_by_fpic`
 - **FQDN support** — Parses FQDN/dns-name address objects from all vendors and converts to SRX `dns-name`. Cisco ASA `fqdn v4`/`v6` maps to SRX `ipv4-only`/`ipv6-only`. FortiGate wildcard-fqdn (`*.example.com`) generates a warning since SRX does not support wildcard dns-name
@@ -250,7 +253,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **LLM hints** — When LLM is enabled, app mapping results are injected as hints into the translation prompt to reduce hallucination
 
 ### Configuration Analysis Engine
-- **7 analysis checks** — Unused objects, shadowed policies, duplicates, disabled policies, logging disabled, overly permissive rules, empty groups. Analysis engine logic adapted from [fatcat-converter](https://github.com/fatcat/converter)
+- **8 analysis checks** — Unused objects, shadowed policies, duplicates, disabled policies, logging disabled, overly permissive rules, empty groups, never-hit policies (when hit counts are pulled from a live device). Analysis engine logic adapted from [fatcat-converter](https://github.com/fatcat/converter)
 - **Analysis button** — Runs analysis from any tab via the platform bar. Badge shows total finding count
 - **Card-based results** — Each finding category is a collapsible card with count badge, severity indicator, bulk action dropdown (Keep/Remove/Consolidate), and per-item override toggles
 - **Apply and review** — "Apply Analysis" cleans up the config based on selections and auto-switches to the SRX rules view for review before conversion
@@ -267,16 +270,35 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Rule optimization** — Shadow detection (fully shadowed rules), reorder recommendations (deny after broader permit), redundant rule detection (subset of earlier permit), mergeable rule suggestions (adjacent rules differing in one dimension), consolidation opportunities (3+ rules combinable with address groups)
 - **Static routes** — Virtual router routes, VRF/routing-instance support, blackhole routes
 - **VPN / IPsec** — IKE proposals/policies/gateways, IPsec proposals/policies/VPNs, traffic selectors, proxy IDs
-- **HA → Chassis Cluster / MNHA** — Active/passive and active/active HA to SRX chassis cluster with redundancy groups, or Multinode High Availability (MNHA) for SRX4700 and supported models (SRX1500, SRX1600, SRX4100/4120/4200/4300, SRX4600, SRX5400/5600/5800, vSRX). MNHA generates `set chassis high-availability` commands with ICL, liveness detection, and services redundancy groups. SRX4700 targets automatically require MNHA. Only 2-node MNHA is supported at this time
+- **HA → Chassis Cluster / MNHA** — Active/passive and active/active HA to SRX chassis cluster with redundancy groups, or Multinode High Availability (MNHA) for SRX4700 and supported models (SRX1500, SRX1600, SRX4100/4120/4200/4300, SRX4600, SRX5400/5600/5800, vSRX). MNHA generates `set chassis high-availability` commands with ICL, liveness detection, and services redundancy groups. SRX4700 targets automatically require MNHA. Supports 2-node, 3-node, and 4-node MNHA topologies
 - **Screens / DDoS** — Zone protection profiles, DoS policies, threat detection → SRX screen ids-option
+- **SNMP** — Community strings, trap groups, SNMPv3 users parsed from all vendors and converted to SRX `set snmp community`, `set snmp trap-group`, and `set snmp v3 usm` commands. Community strings pass through the sanitization pipeline
+- **AAA / Authentication** — RADIUS, TACACS+, and LDAP server configuration parsed from PAN-OS, FortiGate, Cisco ASA, Huawei USG, and SRX. Converted to SRX `set system radius-server`, `set system tacplus-server`, `set access profile`, and `set system authentication-order` commands. Shared secrets flagged for manual verification
 - **Syslog** — Syslog server forwarding, facility/severity mapping, TCP/TLS transport
 - **DHCP** — DHCP server pools, relay helpers, address assignment
 - **QoS / CoS** — Traffic shaping profiles, policy maps, scheduler maps, interface CoS bindings
 - **Schedules** — Time-based rule scheduling with day-of-week and time-range support
 - **User-ID / Identity policies** — `source_users` field extracted from all vendors (PAN-OS `<source-user>`, FortiGate FSSO users/groups, Cisco ASA IDFW, Check Point Access Roles, SonicWall user/group, Huawei source-user). Converted to SRX `source-identity` match conditions with JIMS service placeholder config
+- **LAG / LACP interfaces** — Aggregate/port-channel/Eth-Trunk interfaces parsed from all vendors (PAN-OS `<aggregate-ethernet>`, FortiGate `type aggregate`, Cisco ASA `Port-channel`, SRX `ae`, Huawei `Eth-Trunk`, SonicWall LAG, Check Point bonding). Converted to SRX `set chassis aggregated-devices` and `set interfaces ae{N} aggregated-ether-options lacp` commands
+
+### Export & Reporting
+- **Terraform export** — Generate Junos Terraform provider resources (`junos_security_policy`, `junos_security_zone`, `junos_security_global_address_book`) from converted SRX output
+- **Ansible export** — Generate `junos_config` playbooks wrapping the SRX set commands with YAML structure
+- **PDF report export** — All-in-one color-coded PDF covering 8 sections: migration overview, original config, analysis changes, LLM changes, user changes, final SRX output, unconverted commands, and conversion audit trail
+- **Conversion report** — 8-section tabbed report: rule count comparison, unused objects, shadowed rules, AI-disabled rules, migration delta dashboard, exportable summary, per-command conversion audit trail (with CSV export), and rollback plan
+- **Conversion audit trail** — Per-command disposition tracking (deleted by analysis, deleted by user, modified by AI, passed through) with CSV export for compliance teams
+- **Migration checklist** — Auto-generated pre/post migration checklist based on detected config features (certificates, JIMS, IDP, SecIntel, RADIUS, VPN, HA, syslog, NAT)
+- **Hardware capacity validation** — Post-conversion validation against target SRX model limits
+- **Config version diff** — Side-by-side LCS-based line diff comparing source vs converted output
+- **Policy dependency graph** — Interactive force-directed SVG showing zone-policy-object relationships
+- **Interface mapping templates** — Save/load interface mapping profiles per source-to-target model pair for reuse across sites
+- **Rollback script generation** — Auto-generated `delete` commands for every `set` command in the SRX output
 
 ### Push & Integration
 - **Push via PyEZ Bridge** — Connect to a local PyEZ Bridge server to push configurations directly to SRX devices via NETCONF. The bridge runs as a standalone Python process alongside the app (configurable in Settings)
+- **Pull from Device** — Fetch running configuration from a live SRX via NETCONF (set, XML, or hierarchical text format). Uses the same PyEZ Bridge connection as push. "Pull from Device" button is available next to the file upload area in the Config Input panel
+- **Policy Hit Count Analytics** — Pull security policy statistics from a live SRX via the PyEZ Bridge (`show security policies statistics detail`). Hit counts annotate policies in the analysis engine, flagging never-hit rules as candidates for removal
+- **Batch Migration** — Upload multiple config files for independent parallel conversion. Each file is auto-detected, parsed, and converted to SRX output independently. Summary dashboard shows per-file status, vendor, rule count, and warnings. Download individual outputs or all results combined
 - **Push to SDC** — Security Director Cloud integration (coming soon)
 - **Push to Mist** — Juniper Mist Cloud integration (coming soon)
 - **Convert confirmation** — Warning dialog when converting with unaccepted policies
@@ -286,12 +308,10 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 
 The following features are **not converted** by this tool and must be configured manually on the target SRX:
 
-- **AAA / Authentication** — RADIUS, TACACS+, LDAP server configuration and authentication policies
-- **User-ID / Identity Policies** — Parsed from all vendors (PAN-OS User-ID, FortiGate FSSO, Cisco IDFW, Check Point Access Role, SonicWall user/group, Huawei source-user) and converted to SRX `source-identity` match conditions with JIMS placeholder config. Requires manual JIMS server setup on the SRX.
+- **User-ID / Identity Policies** — Parsed from all vendors and converted to SRX `source-identity` match conditions with JIMS placeholder config. Requires manual JIMS server setup on the SRX
 - **SSL/TLS Decryption** — PAN-OS decryption rules are parsed, displayed in the SSL B&I tab, and used during LLM translation to set `_srx_decrypt` on matching security rules. However, full SRX SSL Proxy config generation (certificate management, PKI, proxy profiles) is not yet automated
 - **Policy-Based Forwarding** — PAN-OS PBF rules are parsed and displayed in the PBF tab but not converted to SRX filter-based forwarding
-- **NetFlow / Telemetry** — sFlow, traffic monitoring, streaming telemetry
-- **Management Access** — Admin users, SNMP communities, SSH/API access restrictions
+- **Management Access** — Admin users, SSH/API access restrictions (SNMP and AAA/RADIUS/TACACS+ are now converted)
 
 See [TODO.md](TODO.md) for the full roadmap and planned features.
 
@@ -326,13 +346,16 @@ firewall-intent-converter/
 │   │   ├── checkpoint-parser.js  # Check Point R80+/R81+ JSON → intermediate JSON
 │   │   ├── sonicwall-parser.js   # SonicWall SonicOS JSON/CLI → intermediate JSON
 │   │   ├── huawei-parser.js      # Huawei USG VRP CLI → intermediate JSON
+│   │   ├── aws-sg-parser.js     # AWS Security Groups JSON → intermediate JSON
+│   │   ├── azure-nsg-parser.js  # Azure NSG JSON / ARM template → intermediate JSON
+│   │   ├── gcp-fw-parser.js     # GCP VPC Firewall Rules JSON → intermediate JSON
 │   │   └── parser-utils.js       # Shared parsing helpers + vendor detection
 │   ├── converters/
 │   │   ├── srx-converter.js      # Intermediate JSON → SRX set commands
 │   │   └── srx-xml-builder.js    # Intermediate JSON → SRX XML
 │   ├── analysis/
 │   │   ├── shadow-detector.js    # Rule shadowing, optimization, and consolidation analysis
-│   │   └── config-analyzer.js    # Pre-conversion analysis engine (7 checks, adapted from fatcat)
+│   │   └── config-analyzer.js    # Pre-conversion analysis engine (8 checks, adapted from fatcat)
 │   ├── validators/
 │   │   └── srx-validator.js      # SRX output validation
 │   ├── utils/
