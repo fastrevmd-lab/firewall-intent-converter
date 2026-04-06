@@ -10,6 +10,21 @@
  * SRX samples:
  *   5. SRX Basic — SRX set commands: 3 zones, address objects, 6 security policies, source NAT
  *
+ * Azure NSG samples:
+ *   Simple — Basic web app: 6 rules, HTTPS/HTTP/SSH allow, LB probe, deny-all
+ *   Medium — 3-tier app: 14 rules, service tags, inter-tier restrictions, explicit outbound
+ *   Complex — Enterprise hub-spoke: 22 rules, PCI micro-segmentation, port ranges, ICMP, compliance denies
+ *
+ * AWS Security Group samples:
+ *   Simple — Single web-server SG: HTTP/HTTPS from internet, SSH from bastion, all egress
+ *   Medium — 3-tier app: web/app/db SGs with cross-SG UserIdGroupPairs, port ranges, prefix list
+ *   Complex — Enterprise 4-SG set: bastion, ALB, app, RDS; IPv6, PrefixLists, ICMP, ephemeral egress
+ *
+ * GCP Firewall Rules samples:
+ *   Simple — Default VPC: IAP SSH, HTTP/HTTPS to tagged instances, internal allow, deny-all
+ *   Medium — 3-tier app: web/app/db target tags, LB health checks, tag-to-tag rules, egress controls
+ *   Complex — Enterprise multi-VPC: service accounts, prod+mgmt networks, priority ordering, disabled rules, logging
+ *
  * Multi-context samples (for merge mode / auto-split):
  *   PAN-OS Multi-Vsys — 2 virtual systems (vsys1 + vsys2), triggers auto-split
  *   FortiGate Multi-VDOM — 2 VDOMs (root + guest), triggers auto-split
@@ -4848,5 +4863,1784 @@ set tenants TENANT-A security policies from-zone external to-zone internal polic
 set tenants TENANT-A security policies from-zone external to-zone internal policy Allow-Server-Access then permit
 set tenants TENANT-A security policies default-policy deny-all
 set tenants TENANT-A routing-options static route 0.0.0.0/0 next-hop 10.50.2.254`,
+  },
+
+  // =========================================================================
+  // SAMPLE: GCP Firewall Rules — Simple (Default VPC, Web Server)
+  // =========================================================================
+  gcp_fw_simple: {
+    vendor: 'gcp_fw',
+    label: 'Simple (6 rules)',
+    description: 'GCP VPC: default-network web server — IAP SSH, HTTP/HTTPS to tagged instances, internal allow, ICMP, deny-all ingress fallback',
+    xml: `[
+  {
+    "name": "allow-iap-ssh",
+    "description": "Allow SSH from Google IAP tunnel range to all instances",
+    "network": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["35.235.240.0/20"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["22"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "allow-http-to-web-servers",
+    "description": "Allow HTTP from internet to instances tagged http-server",
+    "network": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["http-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["80"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-https-to-web-servers",
+    "description": "Allow HTTPS from internet to instances tagged https-server",
+    "network": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["https-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-internal",
+    "description": "Allow all traffic between instances on the default VPC subnet ranges",
+    "network": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["10.128.0.0/9"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["0-65535"] },
+      { "IPProtocol": "udp", "ports": ["0-65535"] },
+      { "IPProtocol": "icmp" }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-icmp",
+    "description": "Allow ICMP from anywhere for diagnostics and ping",
+    "network": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "icmp" }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "deny-all-ingress",
+    "description": "Implicit deny-all ingress fallback — lower priority than all allow rules",
+    "network": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/default",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "denied": [
+      { "IPProtocol": "all" }
+    ],
+    "logConfig": { "enable": true }
+  }
+]`,
+  },
+
+  // =========================================================================
+  // SAMPLE: GCP Firewall Rules — Medium (3-Tier App with Tags)
+  // =========================================================================
+  gcp_fw_medium: {
+    vendor: 'gcp_fw',
+    label: 'Medium (11 rules)',
+    description: 'GCP VPC: 3-tier app with target tags — IAP, LB health checks, tag-to-tag web→app→db, NTP/DNS egress, deny-all fallbacks',
+    xml: `[
+  {
+    "name": "allow-iap-ssh-all-tiers",
+    "description": "Allow SSH via Google IAP to all application tiers",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 500,
+    "disabled": false,
+    "sourceRanges": ["35.235.240.0/20"],
+    "targetTags": ["web-server", "app-server", "db-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["22"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "allow-lb-health-check-to-web",
+    "description": "Allow Google Cloud Load Balancer health check probes to web tier",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["130.211.0.0/22", "35.191.0.0/16"],
+    "targetTags": ["web-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["80", "443", "8080"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-internet-to-web",
+    "description": "Allow HTTPS from internet to web tier instances",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["web-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["80", "443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-web-to-app",
+    "description": "Allow web tier to reach app tier on application ports",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceTags": ["web-server"],
+    "targetTags": ["app-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["8080", "8443"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "allow-lb-health-check-to-app",
+    "description": "Allow GCP internal load balancer health checks to app tier",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["130.211.0.0/22", "35.191.0.0/16"],
+    "targetTags": ["app-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["8080"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-app-to-db",
+    "description": "Allow app tier to reach Cloud SQL / Postgres on db tier",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceTags": ["app-server"],
+    "targetTags": ["db-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["5432", "3306"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "allow-app-egress-google-apis",
+    "description": "Allow app tier outbound to Google APIs (storage, pubsub, monitoring)",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "EGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "targetTags": ["app-server"],
+    "destinationRanges": ["199.36.153.8/30", "199.36.153.4/30"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-ntp-egress",
+    "description": "Allow NTP time synchronization egress to Google time servers",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "EGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "targetTags": [],
+    "destinationRanges": ["216.239.35.0/24"],
+    "allowed": [
+      { "IPProtocol": "udp", "ports": ["123"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "allow-dns-egress",
+    "description": "Allow DNS queries to Google public DNS and internal resolvers",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "EGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "targetTags": [],
+    "destinationRanges": ["8.8.8.8/32", "8.8.4.4/32", "169.254.169.254/32"],
+    "allowed": [
+      { "IPProtocol": "udp", "ports": ["53"] },
+      { "IPProtocol": "tcp", "ports": ["53"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "deny-all-ingress-fallback",
+    "description": "Deny-all ingress fallback — must come after all allow rules",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "denied": [
+      { "IPProtocol": "all" }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "deny-all-egress-fallback",
+    "description": "Deny-all egress fallback — explicit allow rules above take precedence",
+    "network": "https://www.googleapis.com/compute/v1/projects/prod-project/global/networks/app-vpc",
+    "direction": "EGRESS",
+    "priority": 65534,
+    "disabled": false,
+    "targetTags": [],
+    "destinationRanges": ["0.0.0.0/0"],
+    "denied": [
+      { "IPProtocol": "all" }
+    ],
+    "logConfig": { "enable": true }
+  }
+]`,
+  },
+
+  // =========================================================================
+  // SAMPLE: GCP Firewall Rules — Complex (Enterprise Multi-VPC)
+  // =========================================================================
+  gcp_fw_complex: {
+    vendor: 'gcp_fw',
+    label: 'Complex (18 rules)',
+    description: 'GCP VPC: enterprise prod+mgmt networks — service accounts, priority ordering, disabled rules, Cloud Armor, VPC peering, logging, ICMP, ephemeral ports',
+    xml: `[
+  {
+    "name": "prod-allow-iap-ssh",
+    "description": "Allow SSH via IAP to all prod instances — only path for interactive access",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 100,
+    "disabled": false,
+    "sourceRanges": ["35.235.240.0/20"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["22"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "prod-allow-lb-health-checks",
+    "description": "Allow GCP LB and health check probes to frontend and backend MIGs",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 200,
+    "disabled": false,
+    "sourceRanges": ["130.211.0.0/22", "35.191.0.0/16", "209.85.152.0/22", "209.85.204.0/22"],
+    "targetTags": ["allow-health-check"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["80", "443", "8080", "8443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-allow-https-frontend",
+    "description": "Allow HTTPS from internet to frontend load balancer backends",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["frontend"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["443"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "prod-allow-frontend-to-backend-sa",
+    "description": "Allow frontend service account to reach backend service account on app port",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceServiceAccounts": ["frontend-sa@enterprise-prod.iam.gserviceaccount.com"],
+    "targetServiceAccounts": ["backend-sa@enterprise-prod.iam.gserviceaccount.com"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["8443"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "prod-allow-backend-to-cloudsql-sa",
+    "description": "Allow backend SA to reach Cloud SQL Auth Proxy on localhost — proxy egress to SQL",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceServiceAccounts": ["backend-sa@enterprise-prod.iam.gserviceaccount.com"],
+    "targetServiceAccounts": ["cloudsql-sa@enterprise-prod.iam.gserviceaccount.com"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["5432", "3306", "1433"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "prod-allow-redis-from-backend",
+    "description": "Allow backend tier to reach Memorystore Redis (VPC-native peering range)",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceTags": ["backend"],
+    "targetTags": ["redis-client"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["6379", "6380"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-allow-internal-peering",
+    "description": "Allow all traffic from VPC peering with shared-services VPC",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["10.20.0.0/14"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["0-65535"] },
+      { "IPProtocol": "udp", "ports": ["0-65535"] },
+      { "IPProtocol": "icmp" }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-allow-icmp-monitoring",
+    "description": "Allow ICMP from Cloud Monitoring and on-prem monitoring subnet for uptime checks",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["35.199.192.0/19", "10.0.0.0/8"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "icmp" }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-allow-egress-google-apis-restricted",
+    "description": "Allow egress to restricted.googleapis.com VIP for private Google API access",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "EGRESS",
+    "priority": 500,
+    "disabled": false,
+    "targetTags": [],
+    "destinationRanges": ["199.36.153.4/30"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-allow-egress-artifact-registry",
+    "description": "Allow container image pulls from Artifact Registry (private VIP)",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "EGRESS",
+    "priority": 600,
+    "disabled": false,
+    "targetTags": ["backend", "frontend"],
+    "destinationRanges": ["199.36.153.8/30"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-allow-egress-cloud-logging",
+    "description": "Allow log export to Cloud Logging and Cloud Monitoring via Ops Agent",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "EGRESS",
+    "priority": 700,
+    "disabled": false,
+    "targetTags": [],
+    "destinationRanges": ["169.254.169.254/32", "169.254.8.129/32"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["443", "8443"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "prod-deny-egress-to-internet",
+    "description": "Deny direct internet egress — all internet traffic must route through Cloud NAT or proxy",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "EGRESS",
+    "priority": 65000,
+    "disabled": false,
+    "targetTags": [],
+    "destinationRanges": ["0.0.0.0/0"],
+    "denied": [
+      { "IPProtocol": "all" }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "prod-deny-all-ingress-fallback",
+    "description": "Deny all remaining ingress — implicit GCP deny made explicit with logging",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/prod-vpc",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "denied": [
+      { "IPProtocol": "all" }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "mgmt-allow-iap-rdp",
+    "description": "Allow RDP via IAP to management Windows instances",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/mgmt-vpc",
+    "direction": "INGRESS",
+    "priority": 100,
+    "disabled": false,
+    "sourceRanges": ["35.235.240.0/20"],
+    "targetTags": ["windows-mgmt"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["3389"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "mgmt-allow-vpn-admin",
+    "description": "Allow admin access from on-prem site via Cloud VPN tunnel",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/mgmt-vpc",
+    "direction": "INGRESS",
+    "priority": 500,
+    "disabled": false,
+    "sourceRanges": ["192.168.100.0/24", "192.168.101.0/24"],
+    "targetTags": ["mgmt-server"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["22", "443", "8443"] },
+      { "IPProtocol": "icmp" }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "mgmt-allow-monitoring-scrape",
+    "description": "Allow Prometheus scrape from monitoring server to all mgmt instances",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/mgmt-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": false,
+    "sourceRanges": ["10.20.1.0/28"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["9090", "9100", "9091"] }
+    ],
+    "logConfig": { "enable": false }
+  },
+  {
+    "name": "mgmt-allow-winrm-disabled",
+    "description": "WinRM access — DISABLED, preserved for break-glass use only",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/mgmt-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "disabled": true,
+    "sourceRanges": ["10.20.1.0/28"],
+    "targetTags": ["windows-mgmt"],
+    "allowed": [
+      { "IPProtocol": "tcp", "ports": ["5985", "5986"] }
+    ],
+    "logConfig": { "enable": true }
+  },
+  {
+    "name": "mgmt-deny-all-ingress-fallback",
+    "description": "Deny all ingress to mgmt VPC — stricter than prod, no implicit traffic allowed",
+    "network": "https://www.googleapis.com/compute/v1/projects/enterprise-prod/global/networks/mgmt-vpc",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "disabled": false,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "denied": [
+      { "IPProtocol": "all" }
+    ],
+    "logConfig": { "enable": true }
+  }
+]`,
+  },
+
+  // =========================================================================
+  // SAMPLE: AWS Security Groups — Simple (Single Web Server)
+  // =========================================================================
+  aws_sg_simple: {
+    vendor: 'aws_sg',
+    label: 'Simple (1 SG, 5 rules)',
+    description: 'AWS SG: single web-server security group — HTTP/HTTPS from internet, SSH from bastion, all egress allowed',
+    xml: `{
+  "SecurityGroups": [
+    {
+      "GroupId": "sg-0a1b2c3d4e5f67890",
+      "GroupName": "web-server-sg",
+      "Description": "Security group for public-facing web servers",
+      "VpcId": "vpc-0123456789abcdef0",
+      "Tags": [
+        { "Key": "Name", "Value": "web-server-sg" },
+        { "Key": "Environment", "Value": "production" },
+        { "Key": "App", "Value": "ecommerce-frontend" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS from internet" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "::/0", "Description": "HTTPS from internet (IPv6)" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 80,
+          "ToPort": 80,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTP from internet (redirect to HTTPS)" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "::/0", "Description": "HTTP from internet (IPv6)" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 22,
+          "ToPort": 22,
+          "IpRanges": [
+            { "CidrIp": "10.10.0.5/32", "Description": "SSH from bastion host only" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "-1",
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "Allow all outbound" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "::/0", "Description": "Allow all outbound IPv6" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    }
+  ]
+}`,
+  },
+
+  // =========================================================================
+  // SAMPLE: AWS Security Groups — Medium (3-Tier Application)
+  // =========================================================================
+  aws_sg_medium: {
+    vendor: 'aws_sg',
+    label: 'Medium (3 SGs, 12 rules)',
+    description: 'AWS SG: 3-tier app — web, app, and RDS SGs with cross-SG UserIdGroupPairs, port ranges, S3 prefix list egress',
+    xml: `{
+  "SecurityGroups": [
+    {
+      "GroupId": "sg-web-0011aabbcc",
+      "GroupName": "web-tier-sg",
+      "Description": "Web tier — accepts internet traffic, forwards to app tier",
+      "VpcId": "vpc-prod-0a1b2c3d",
+      "Tags": [
+        { "Key": "Name", "Value": "web-tier-sg" },
+        { "Key": "Tier", "Value": "web" },
+        { "Key": "Environment", "Value": "production" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS from internet" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "::/0", "Description": "HTTPS from internet (IPv6)" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 80,
+          "ToPort": 80,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTP redirect to HTTPS" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 22,
+          "ToPort": 22,
+          "IpRanges": [
+            { "CidrIp": "10.0.255.0/28", "Description": "SSH from bastion subnet" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 8080,
+          "ToPort": 8080,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-app-0022bbccdd", "Description": "Forward requests to app tier" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": [
+            { "PrefixListId": "pl-63a5400a", "Description": "HTTPS to S3 (Gateway endpoint)" }
+          ]
+        }
+      ]
+    },
+    {
+      "GroupId": "sg-app-0022bbccdd",
+      "GroupName": "app-tier-sg",
+      "Description": "App tier — accepts requests from web tier, connects to RDS",
+      "VpcId": "vpc-prod-0a1b2c3d",
+      "Tags": [
+        { "Key": "Name", "Value": "app-tier-sg" },
+        { "Key": "Tier", "Value": "app" },
+        { "Key": "Environment", "Value": "production" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 8080,
+          "ToPort": 8080,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-web-0011aabbcc", "Description": "Allow from web tier only" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 22,
+          "ToPort": 22,
+          "IpRanges": [
+            { "CidrIp": "10.0.255.0/28", "Description": "SSH from bastion subnet" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-db-0033ccddee", "Description": "PostgreSQL to RDS tier" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": [
+            { "PrefixListId": "pl-63a5400a", "Description": "HTTPS to S3 for app assets" }
+          ]
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS to AWS services (STS, SSM, CloudWatch)" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    },
+    {
+      "GroupId": "sg-db-0033ccddee",
+      "GroupName": "rds-tier-sg",
+      "Description": "RDS PostgreSQL — only accepts connections from app tier",
+      "VpcId": "vpc-prod-0a1b2c3d",
+      "Tags": [
+        { "Key": "Name", "Value": "rds-tier-sg" },
+        { "Key": "Tier", "Value": "database" },
+        { "Key": "Environment", "Value": "production" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-app-0022bbccdd", "Description": "PostgreSQL from app tier only" }
+          ],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS to AWS services (backup, monitoring)" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    }
+  ]
+}`,
+  },
+
+  // =========================================================================
+  // SAMPLE: AWS Security Groups — Complex (Enterprise 4-SG with IPv6 + Prefix Lists)
+  // =========================================================================
+  aws_sg_complex: {
+    vendor: 'aws_sg',
+    label: 'Complex (4 SGs, 24 rules)',
+    description: 'AWS SG: enterprise setup — bastion, ALB, ECS app, RDS; IPv6 dual-stack, managed prefix lists, ICMP, ephemeral port egress, cross-SG chaining',
+    xml: `{
+  "SecurityGroups": [
+    {
+      "GroupId": "sg-bastion-aabbcc001",
+      "GroupName": "bastion-host-sg",
+      "Description": "Bastion host — SSH/RDP access from corporate IP ranges only",
+      "VpcId": "vpc-enterprise-001",
+      "Tags": [
+        { "Key": "Name", "Value": "bastion-host-sg" },
+        { "Key": "Environment", "Value": "production" },
+        { "Key": "Compliance", "Value": "SOC2" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 22,
+          "ToPort": 22,
+          "IpRanges": [
+            { "CidrIp": "203.0.113.0/24", "Description": "SSH from HQ office" },
+            { "CidrIp": "198.51.100.0/26", "Description": "SSH from DR site" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "2001:db8::/32", "Description": "SSH from HQ IPv6 range" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 3389,
+          "ToPort": 3389,
+          "IpRanges": [
+            { "CidrIp": "203.0.113.0/24", "Description": "RDP from HQ office" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "icmp",
+          "FromPort": 8,
+          "ToPort": 0,
+          "IpRanges": [
+            { "CidrIp": "10.0.0.0/8", "Description": "ICMP echo-request from RFC1918" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 22,
+          "ToPort": 22,
+          "IpRanges": [
+            { "CidrIp": "10.0.0.0/8", "Description": "SSH to any internal host" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 3389,
+          "ToPort": 3389,
+          "IpRanges": [
+            { "CidrIp": "10.0.0.0/8", "Description": "RDP to any internal Windows host" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS to AWS services and package repos" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    },
+    {
+      "GroupId": "sg-alb-bbcc002233",
+      "GroupName": "alb-public-sg",
+      "Description": "Application Load Balancer — dual-stack internet-facing",
+      "VpcId": "vpc-enterprise-001",
+      "Tags": [
+        { "Key": "Name", "Value": "alb-public-sg" },
+        { "Key": "Environment", "Value": "production" },
+        { "Key": "Compliance", "Value": "PCI-DSS" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS from internet" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "::/0", "Description": "HTTPS from internet (IPv6)" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 80,
+          "ToPort": 80,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTP redirect to HTTPS" }
+          ],
+          "Ipv6Ranges": [
+            { "CidrIpv6": "::/0", "Description": "HTTP redirect (IPv6)" }
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 8443,
+          "ToPort": 8443,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-ecs-ccdd003344", "Description": "ALB to ECS tasks on HTTPS listener port" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 1024,
+          "ToPort": 65535,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-ecs-ccdd003344", "Description": "Ephemeral return ports to ECS targets" }
+          ],
+          "PrefixListIds": []
+        }
+      ]
+    },
+    {
+      "GroupId": "sg-ecs-ccdd003344",
+      "GroupName": "ecs-app-sg",
+      "Description": "ECS Fargate tasks — accepts from ALB, accesses RDS, ElastiCache, and AWS services",
+      "VpcId": "vpc-enterprise-001",
+      "Tags": [
+        { "Key": "Name", "Value": "ecs-app-sg" },
+        { "Key": "Environment", "Value": "production" },
+        { "Key": "Compliance", "Value": "SOC2" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 8443,
+          "ToPort": 8443,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-alb-bbcc002233", "Description": "HTTPS from ALB only" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 22,
+          "ToPort": 22,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-bastion-aabbcc001", "Description": "SSH from bastion for debugging" }
+          ],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-rds-ddee004455", "Description": "PostgreSQL to RDS Aurora cluster" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 6379,
+          "ToPort": 6380,
+          "IpRanges": [
+            { "CidrIp": "10.0.3.0/29", "Description": "Redis/Valkey ElastiCache cluster nodes" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": [
+            { "PrefixListId": "pl-63a5400a", "Description": "S3 Gateway endpoint (assets, logs)" },
+            { "PrefixListId": "pl-02cd2c6b", "Description": "DynamoDB Gateway endpoint (session store)" }
+          ]
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS to AWS APIs (SSM, Secrets Manager, ECR, CloudWatch)" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "udp",
+          "FromPort": 53,
+          "ToPort": 53,
+          "IpRanges": [
+            { "CidrIp": "10.0.0.2/32", "Description": "DNS to VPC resolver" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 587,
+          "ToPort": 587,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "SMTP submission to SES / transactional email" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    },
+    {
+      "GroupId": "sg-rds-ddee004455",
+      "GroupName": "rds-aurora-sg",
+      "Description": "Aurora PostgreSQL cluster — writer and reader endpoints, app tier access only",
+      "VpcId": "vpc-enterprise-001",
+      "Tags": [
+        { "Key": "Name", "Value": "rds-aurora-sg" },
+        { "Key": "Environment", "Value": "production" },
+        { "Key": "Compliance", "Value": "PCI-DSS" }
+      ],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            { "GroupId": "sg-ecs-ccdd003344", "Description": "PostgreSQL from ECS app tasks" }
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [
+            { "CidrIp": "10.0.255.0/28", "Description": "Direct DB access from bastion for DBA work" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "icmp",
+          "FromPort": 8,
+          "ToPort": 0,
+          "IpRanges": [
+            { "CidrIp": "10.0.0.0/8", "Description": "ICMP echo from monitoring system" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            { "CidrIp": "0.0.0.0/0", "Description": "HTTPS to AWS RDS services (backups, audit export)" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [
+            { "CidrIp": "10.0.2.0/28", "Description": "Aurora replication to read replica subnet" }
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    }
+  ]
+}`,
+  },
+
+  // =========================================================================
+  // SAMPLE: Azure NSG — Simple (Web App)
+  // =========================================================================
+  azure_nsg_simple: {
+    vendor: 'azure_nsg',
+    label: 'Simple (6 rules)',
+    description: 'Azure NSG: basic web app — allow HTTPS/HTTP inbound, SSH from mgmt IP, deny all inbound, allow outbound',
+    xml: `{
+  "name": "nsg-webapp-frontend",
+  "location": "eastus",
+  "tags": {
+    "environment": "production",
+    "app": "web-frontend"
+  },
+  "securityRules": [
+    {
+      "name": "Allow-HTTPS-Inbound",
+      "properties": {
+        "priority": 100,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "Internet",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.0.1.0/24",
+        "destinationPortRange": "443",
+        "description": "Allow HTTPS traffic from internet to web tier"
+      }
+    },
+    {
+      "name": "Allow-HTTP-Inbound",
+      "properties": {
+        "priority": 110,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "Internet",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.0.1.0/24",
+        "destinationPortRange": "80",
+        "description": "Allow HTTP for redirect to HTTPS"
+      }
+    },
+    {
+      "name": "Allow-SSH-From-Mgmt",
+      "properties": {
+        "priority": 200,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.10.0.5/32",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.0.1.0/24",
+        "destinationPortRange": "22",
+        "description": "Allow SSH from management jump host only"
+      }
+    },
+    {
+      "name": "Allow-AzureLoadBalancer",
+      "properties": {
+        "priority": 300,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "*",
+        "sourceAddressPrefix": "AzureLoadBalancer",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Allow Azure Load Balancer health probes"
+      }
+    },
+    {
+      "name": "Deny-All-Inbound",
+      "properties": {
+        "priority": 4000,
+        "direction": "Inbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "*",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Deny all other inbound traffic"
+      }
+    },
+    {
+      "name": "Allow-All-Outbound",
+      "properties": {
+        "priority": 100,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "*",
+        "sourceAddressPrefix": "10.0.1.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Allow all outbound traffic"
+      }
+    }
+  ]
+}`,
+  },
+
+  // =========================================================================
+  // SAMPLE: Azure NSG — Medium (3-Tier Application)
+  // =========================================================================
+  azure_nsg_medium: {
+    vendor: 'azure_nsg',
+    label: 'Medium (14 rules)',
+    description: 'Azure NSG: 3-tier app — web, app, and DB subnets with service tags, health probes, management access, and inter-tier restrictions',
+    xml: `{
+  "name": "nsg-app-tier",
+  "location": "eastus2",
+  "tags": {
+    "environment": "production",
+    "tier": "application",
+    "costcenter": "it-ops"
+  },
+  "securityRules": [
+    {
+      "name": "Allow-Web-To-App-HTTP",
+      "properties": {
+        "priority": 100,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.0.1.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.0.2.0/24",
+        "destinationPortRanges": ["8080", "8443"],
+        "description": "Allow web tier to reach app tier on app ports"
+      }
+    },
+    {
+      "name": "Allow-App-To-DB-SQL",
+      "properties": {
+        "priority": 110,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.0.2.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.0.3.0/24",
+        "destinationPortRange": "1433",
+        "description": "Allow app tier to reach SQL database"
+      }
+    },
+    {
+      "name": "Allow-App-To-DB-Redis",
+      "properties": {
+        "priority": 120,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.0.2.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.0.3.0/24",
+        "destinationPortRange": "6379",
+        "description": "Allow app tier to reach Redis cache"
+      }
+    },
+    {
+      "name": "Allow-SSH-From-Bastion",
+      "properties": {
+        "priority": 200,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.10.0.0/27",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "VirtualNetwork",
+        "destinationPortRange": "22",
+        "description": "Allow SSH from Azure Bastion subnet"
+      }
+    },
+    {
+      "name": "Allow-RDP-From-Bastion",
+      "properties": {
+        "priority": 210,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.10.0.0/27",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "VirtualNetwork",
+        "destinationPortRange": "3389",
+        "description": "Allow RDP from Azure Bastion subnet"
+      }
+    },
+    {
+      "name": "Allow-AzureMonitor-Outbound",
+      "properties": {
+        "priority": 300,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureMonitor",
+        "destinationPortRanges": ["443", "1886"],
+        "description": "Allow telemetry to Azure Monitor"
+      }
+    },
+    {
+      "name": "Allow-AzureStorage-Outbound",
+      "properties": {
+        "priority": 310,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "Storage",
+        "destinationPortRange": "443",
+        "description": "Allow access to Azure Blob Storage"
+      }
+    },
+    {
+      "name": "Allow-KeyVault-Outbound",
+      "properties": {
+        "priority": 320,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureKeyVault",
+        "destinationPortRange": "443",
+        "description": "Allow access to Azure Key Vault for secrets"
+      }
+    },
+    {
+      "name": "Allow-AzureActiveDirectory-Outbound",
+      "properties": {
+        "priority": 330,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureActiveDirectory",
+        "destinationPortRange": "443",
+        "description": "Allow AAD authentication traffic"
+      }
+    },
+    {
+      "name": "Allow-AzureLoadBalancer-Inbound",
+      "properties": {
+        "priority": 400,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "*",
+        "sourceAddressPrefix": "AzureLoadBalancer",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Allow Azure Load Balancer health probes"
+      }
+    },
+    {
+      "name": "Allow-NTP-Outbound",
+      "properties": {
+        "priority": 400,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Udp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "Internet",
+        "destinationPortRange": "123",
+        "description": "Allow NTP for time synchronization"
+      }
+    },
+    {
+      "name": "Allow-DNS-Outbound",
+      "properties": {
+        "priority": 410,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Udp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "168.63.129.16/32",
+        "destinationPortRange": "53",
+        "description": "Allow DNS to Azure DNS resolver"
+      }
+    },
+    {
+      "name": "Deny-Internet-Inbound",
+      "properties": {
+        "priority": 4000,
+        "direction": "Inbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "Internet",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Deny direct internet inbound — traffic must go through load balancer"
+      }
+    },
+    {
+      "name": "Deny-Internet-Outbound",
+      "properties": {
+        "priority": 4000,
+        "direction": "Outbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "*",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "Internet",
+        "destinationPortRange": "*",
+        "description": "Deny direct internet outbound — route through Azure Firewall"
+      }
+    }
+  ]
+}`,
+  },
+
+  // =========================================================================
+  // SAMPLE: Azure NSG — Complex (Enterprise Hub-Spoke)
+  // =========================================================================
+  azure_nsg_complex: {
+    vendor: 'azure_nsg',
+    label: 'Complex (22 rules)',
+    description: 'Azure NSG: enterprise hub-spoke — multiple workload subnets, service tags, ICMP, complex port ranges, micro-segmentation, compliance deny rules',
+    xml: `{
+  "name": "nsg-enterprise-workload",
+  "location": "westus2",
+  "tags": {
+    "environment": "production",
+    "compliance": "PCI-DSS",
+    "owner": "network-team",
+    "costcenter": "infra-shared"
+  },
+  "securityRules": [
+    {
+      "name": "Allow-AppGateway-V2-Inbound",
+      "properties": {
+        "priority": 100,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "GatewayManager",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "65200-65535",
+        "description": "Required for Azure Application Gateway v2 infrastructure communication"
+      }
+    },
+    {
+      "name": "Allow-HTTPS-From-AppGW",
+      "properties": {
+        "priority": 110,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.0.0.0/27",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.0.0/24",
+        "destinationPortRange": "443",
+        "description": "Allow HTTPS from Application Gateway subnet to web tier"
+      }
+    },
+    {
+      "name": "Allow-HTTP-From-AppGW",
+      "properties": {
+        "priority": 120,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.0.0.0/27",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.0.0/24",
+        "destinationPortRange": "80",
+        "description": "Allow HTTP from Application Gateway for redirect"
+      }
+    },
+    {
+      "name": "Allow-Web-To-App-Internal",
+      "properties": {
+        "priority": 200,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.1.0.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.1.0/24",
+        "destinationPortRanges": ["8080", "8443", "8000-8090"],
+        "description": "Allow web tier to internal app tier on application ports"
+      }
+    },
+    {
+      "name": "Allow-App-To-DB-Primary",
+      "properties": {
+        "priority": 210,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.1.1.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.2.0/28",
+        "destinationPortRanges": ["1433", "5432", "3306"],
+        "description": "Allow app tier to database subnet (MSSQL, PostgreSQL, MySQL)"
+      }
+    },
+    {
+      "name": "Allow-App-To-Cache",
+      "properties": {
+        "priority": 220,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.1.1.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.3.0/29",
+        "destinationPortRanges": ["6379", "6380"],
+        "description": "Allow app tier to Redis cache (non-TLS and TLS)"
+      }
+    },
+    {
+      "name": "Allow-App-To-ServiceBus",
+      "properties": {
+        "priority": 230,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.1.1.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "ServiceBus",
+        "destinationPortRanges": ["443", "5671", "5672"],
+        "description": "Allow AMQP and AMQPS to Azure Service Bus"
+      }
+    },
+    {
+      "name": "Allow-Hub-Firewall-Management",
+      "properties": {
+        "priority": 300,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.0.1.0/26",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "VirtualNetwork",
+        "destinationPortRanges": ["22", "3389", "5986"],
+        "description": "Allow management access from hub firewall subnet (SSH, RDP, WinRM)"
+      }
+    },
+    {
+      "name": "Allow-Monitoring-Outbound",
+      "properties": {
+        "priority": 310,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureMonitor",
+        "destinationPortRanges": ["443", "1886"],
+        "description": "Allow Azure Monitor, Log Analytics agent telemetry"
+      }
+    },
+    {
+      "name": "Allow-Backup-Outbound",
+      "properties": {
+        "priority": 320,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureBackup",
+        "destinationPortRange": "443",
+        "description": "Allow Azure Backup agent to Recovery Services Vault"
+      }
+    },
+    {
+      "name": "Allow-Storage-Outbound",
+      "properties": {
+        "priority": 330,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "Storage",
+        "destinationPortRange": "443",
+        "description": "Allow access to Azure Storage (blobs, queues, tables)"
+      }
+    },
+    {
+      "name": "Allow-KeyVault-Outbound",
+      "properties": {
+        "priority": 340,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureKeyVault",
+        "destinationPortRange": "443",
+        "description": "Allow secrets and certificate retrieval from Key Vault"
+      }
+    },
+    {
+      "name": "Allow-AAD-Outbound",
+      "properties": {
+        "priority": 350,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureActiveDirectory",
+        "destinationPortRange": "443",
+        "description": "Allow Entra ID (AAD) authentication and token acquisition"
+      }
+    },
+    {
+      "name": "Allow-DNS-Outbound",
+      "properties": {
+        "priority": 360,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Udp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "168.63.129.16/32",
+        "destinationPortRange": "53",
+        "description": "Allow DNS resolution via Azure DNS (168.63.129.16)"
+      }
+    },
+    {
+      "name": "Allow-NTP-Outbound",
+      "properties": {
+        "priority": 370,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Udp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "Internet",
+        "destinationPortRange": "123",
+        "description": "Allow NTP time synchronization"
+      }
+    },
+    {
+      "name": "Allow-ICMP-Internal",
+      "properties": {
+        "priority": 380,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "Icmp",
+        "sourceAddressPrefix": "10.0.0.0/8",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "VirtualNetwork",
+        "destinationPortRange": "*",
+        "description": "Allow ICMP ping within RFC1918 address space for diagnostics"
+      }
+    },
+    {
+      "name": "Allow-AzureLoadBalancer-Inbound",
+      "properties": {
+        "priority": 400,
+        "direction": "Inbound",
+        "access": "Allow",
+        "protocol": "*",
+        "sourceAddressPrefix": "AzureLoadBalancer",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Required: Azure Load Balancer health probe"
+      }
+    },
+    {
+      "name": "Deny-DB-From-Web-Direct",
+      "properties": {
+        "priority": 500,
+        "direction": "Inbound",
+        "access": "Deny",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.1.0.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.2.0/28",
+        "destinationPortRange": "*",
+        "description": "PCI compliance: deny web tier direct access to database subnet"
+      }
+    },
+    {
+      "name": "Deny-Lateral-Movement-Web",
+      "properties": {
+        "priority": 510,
+        "direction": "Inbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "10.1.0.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.0.0/24",
+        "destinationPortRange": "*",
+        "description": "Block lateral movement within web tier subnet"
+      }
+    },
+    {
+      "name": "Deny-Lateral-Movement-App",
+      "properties": {
+        "priority": 520,
+        "direction": "Inbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "10.1.1.0/24",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.1.1.0/24",
+        "destinationPortRange": "*",
+        "description": "Block lateral movement within app tier subnet"
+      }
+    },
+    {
+      "name": "Deny-All-Inbound",
+      "properties": {
+        "priority": 4000,
+        "direction": "Inbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "*",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Default deny all inbound — explicit allow rules above"
+      }
+    },
+    {
+      "name": "Deny-All-Outbound",
+      "properties": {
+        "priority": 4000,
+        "direction": "Outbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "*",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "*",
+        "destinationPortRange": "*",
+        "description": "Default deny all outbound — explicit allow rules above"
+      }
+    }
+  ]
+}`,
   },
 };
