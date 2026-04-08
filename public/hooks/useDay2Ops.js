@@ -47,6 +47,120 @@ async function fetchWithTimeout(url, options = {}, timeout = FETCH_TIMEOUT) {
 }
 
 // ---------------------------------------------------------------------------
+// Pure functions (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute summary statistics from annotated policies.
+ * Pure version — accepts app_sessions explicitly instead of reading React state.
+ *
+ * @param {Array} policies - array of policy objects
+ * @param {Array} [appSessions] - app session array from stats (for topApps)
+ * @returns {{ total, annotated, active, neverHit, activePercent, totalSessions, topApps }}
+ */
+export function computeSummaryPure(policies, appSessions = []) {
+  if (!Array.isArray(policies)) {
+    return { total: 0, annotated: 0, active: 0, neverHit: 0, activePercent: 0, totalSessions: 0, topApps: [] };
+  }
+
+  const total = policies.length;
+  const annotated = policies.filter(p => p._hit_count !== undefined).length;
+  const active = policies.filter(p => (p._hit_count ?? 0) > 0).length;
+  const neverHit = policies.filter(p => p._hit_count === 0 && !p.disabled).length;
+  const activePercent = annotated > 0 ? Math.round((active / annotated) * 100) : 0;
+  const totalSessions = policies.reduce((sum, p) => sum + (p._session_count ?? 0), 0);
+  const topApps = [...appSessions]
+    .sort((appA, appB) => (appB.sessions ?? 0) - (appA.sessions ?? 0))
+    .slice(0, 10);
+
+  return { total, annotated, active, neverHit, activePercent, totalSessions, topApps };
+}
+
+/**
+ * Annotate config policies with stats data (pure, no React/dispatch).
+ *
+ * @param {Array} configPolicies - security_policies array from intermediateConfig
+ * @param {object} statsData - { policies: [...], app_sessions: [...] }
+ * @returns {{ annotatedPolicies: Array, matchCount: number, matchRate: number }}
+ */
+export function annotateConfigPure(configPolicies, statsData) {
+  if (!Array.isArray(configPolicies) || !statsData?.policies) {
+    return { annotatedPolicies: configPolicies || [], matchCount: 0, matchRate: 1 };
+  }
+
+  const statsByName = new Map();
+  for (const policy of statsData.policies) {
+    statsByName.set(policy.name, policy);
+  }
+
+  const appSessionMap = new Map();
+  for (const appEntry of (statsData.app_sessions || [])) {
+    appSessionMap.set(appEntry.application, appEntry.sessions);
+  }
+
+  let matchCount = 0;
+  const timestamp = new Date().toISOString();
+
+  const annotatedPolicies = configPolicies.map(policy => {
+    const policyStats = statsByName.get(policy.name);
+    if (!policyStats) return policy;
+
+    matchCount++;
+
+    const policyApps = Array.isArray(policy.applications) ? policy.applications : [];
+    const matchedApps = policyApps.filter(app => appSessionMap.has(app));
+
+    return {
+      ...policy,
+      _hit_count: policyStats.hit_count ?? 0,
+      _session_count: policyStats.session_count ?? 0,
+      _byte_count: policyStats.byte_count ?? 0,
+      _matched_apps: matchedApps,
+      _stats_timestamp: timestamp,
+    };
+  });
+
+  const totalPolicies = configPolicies.length;
+  const matchRate = totalPolicies > 0 ? matchCount / totalPolicies : 1;
+
+  return { annotatedPolicies, matchCount, matchRate };
+}
+
+/**
+ * Disable policies where _hit_count === 0 and not already disabled (pure).
+ *
+ * @param {Array} policies - security_policies array
+ * @returns {Array} updated policies
+ */
+export function disableNeverHitRulesPure(policies) {
+  if (!Array.isArray(policies)) return [];
+  return policies.map(policy => {
+    if (policy._hit_count === 0 && !policy.disabled) {
+      return { ...policy, disabled: true };
+    }
+    return policy;
+  });
+}
+
+/**
+ * Replace 'any' application with matched apps for policies with actual usage (pure).
+ *
+ * @param {Array} policies - security_policies array
+ * @returns {Array} updated policies
+ */
+export function tightenPermissiveRulesPure(policies) {
+  if (!Array.isArray(policies)) return [];
+  return policies.map(policy => {
+    const hasAny = Array.isArray(policy.applications) && policy.applications.includes('any');
+    const hasMatchedApps = Array.isArray(policy._matched_apps) && policy._matched_apps.length > 0;
+    if (hasAny && hasMatchedApps) {
+      return { ...policy, applications: [...policy._matched_apps] };
+    }
+    return policy;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
