@@ -30,6 +30,7 @@ const DiffPanel = React.lazy(() => import('../DiffPanel.jsx'));
 const ConfigDiff = React.lazy(() => import('../ConfigDiff.jsx'));
 const MigrationChecklist = React.lazy(() => import('../MigrationChecklist.jsx'));
 const ConversionReport = React.lazy(() => import('../ConversionReport.jsx'));
+const Day2OpsPanel = React.lazy(() => import('../Day2OpsPanel.jsx'));
 import SectionAcceptBar from '../shared/SectionAcceptBar.jsx';
 
 const LoadingTab = () => (
@@ -234,6 +235,15 @@ export default function ContentRouter({
           </label>
         </>
       )}
+      <button
+        className={`platform-view-btn${editTab === 'day2ops' ? ' active' : ''}`}
+        onClick={() => uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'day2ops' })}
+        disabled={!activeConfig?.security_policies?.length}
+        title="Day 2 Operations — pull live stats from SRX device"
+        style={{ color: 'var(--caution)' }}
+      >
+        Day 2 Ops
+      </button>
       {platformView === 'srx' && (
         <div className="platform-view-actions">
           <select
@@ -599,6 +609,19 @@ export default function ContentRouter({
             hasConfig={!!activeConfig}
             onNavigate={(tab) => uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: tab })}
           />
+        </div>
+      </div>
+    );
+  }
+
+  if (editTab === 'day2ops') {
+    return (
+      <div className="editor-content">
+        {renderPlatformBar()}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <React.Suspense fallback={<LoadingTab />}>
+            <Day2OpsPanel />
+          </React.Suspense>
         </div>
       </div>
     );
