@@ -1,4 +1,4 @@
-import React, { Suspense, useMemo, useCallback } from 'react';
+import React, { Suspense, useMemo, useCallback, useState } from 'react';
 import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
 import { useUIContext, isDeterministicMode } from '../../contexts/UIContext.jsx';
@@ -143,6 +143,8 @@ export default function ContentRouter({
     });
   }, [warningStatuses, cfgDispatch]);
 
+  const [enforceLicense, setEnforceLicense] = useState(false);
+
   // --- Platform view bar (hoisted before early returns) ---
   const analysisCount = activeConfig?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0;
   const detMode = isDeterministicMode(ui.llmRiskAcceptance);
@@ -204,6 +206,34 @@ export default function ContentRouter({
       >
         {mergeMode ? 'Merge & Convert' : 'Convert to SRX'}
       </button>
+      {conv.srxOutput && (
+        <>
+          <button
+            className="platform-view-btn"
+            onClick={() => conversion.handleValidate(enforceLicense)}
+            disabled={ui.isLoading}
+            title="Run post-conversion validation checks"
+            style={{ color: 'var(--caution)' }}
+          >
+            {ui.isLoading && ui.loadingMessage?.includes('validation')
+              ? <><span className="spinner" /> Validating...</>
+              : <>Validate{conv.validationFindings?.length > 0 ? ` (${conv.validationFindings.length})` : ''}</>
+            }
+          </button>
+          <label
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)', marginLeft: 4, cursor: 'pointer' }}
+            title="When enabled, commands requiring a higher license tier are removed from the SRX output"
+          >
+            <input
+              type="checkbox"
+              checked={enforceLicense}
+              onChange={(e) => setEnforceLicense(e.target.checked)}
+              style={{ margin: 0 }}
+            />
+            Enforce license
+          </label>
+        </>
+      )}
       {platformView === 'srx' && (
         <div className="platform-view-actions">
           <select
