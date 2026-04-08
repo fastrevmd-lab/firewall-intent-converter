@@ -349,7 +349,7 @@
 - [ ] **Responsive layout for tablet/small screens** — Breakpoints below 1280px for auto-collapse
 - [x] **Config validation v2** — Post-conversion SRX output validator: hardware limits (7 checks), operational best practices (9 checks), compliance/hardening (12 checks), license gating toggle (warn-only vs strip+warn), on-demand Validate button in platform bar, WarningsPanel integration with source filter
 - [ ] **Force-directed topology layout upgrade** — d3-force with drag-to-rearrange and pan/zoom
-- [ ] **Live traffic / hit-count fusion** — Pull PAN-OS App-ID hit counts and annotate policies (Expedition-style)
+- [x] **Day 2 Operations / Live traffic fusion** — Connect to live SRX via PyEZ Bridge, pull per-policy hit counts and per-application session data (`/app-usage` endpoint), annotate policies with `_hit_count`/`_session_count`/`_byte_count`/`_matched_apps[]`, conditional Hits + Apps columns in PolicyTable with color coding, Day2OpsPanel dashboard (summary cards, top apps table, auto-refresh polling, quick actions: disable never-hit rules, tighten permissive rules), Live Traffic section in InterviewPanel with app-tightening suggestion, platform bar button
 
 ### Blocked — Waiting on Vendor APIs
 - [ ] **Push to SDC / SD On-Prem / Mist** — Direct deployment to Juniper management platforms. Requires HPE Juniper public REST APIs
