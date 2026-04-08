@@ -28,14 +28,16 @@ const STATUS_LABELS = {
 export default function WarningsPanel({ warnings, warningStatuses = {}, onWarningAction }) {
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
 
   // Count by severity and resolution status
   const counts = useMemo(() => {
-    const c = { all: 0, warning: 0, unsupported: 0, interview_required: 0, info: 0, unresolved: 0, resolved: 0 };
+    const c = { all: 0, warning: 0, unsupported: 0, interview_required: 0, info: 0, unresolved: 0, resolved: 0, validation: 0 };
     for (let i = 0; i < (warnings || []).length; i++) {
       const w = warnings[i];
       c.all++;
       if (c[w.severity] !== undefined) c[w.severity]++;
+      if (w._source === 'validation') c.validation++;
       if (warningStatuses[i]) {
         c.resolved++;
       } else {
@@ -57,10 +59,12 @@ export default function WarningsPanel({ warnings, warningStatuses = {}, onWarnin
       const isResolved = !!warningStatuses[i];
       if (statusFilter === 'unresolved' && isResolved) continue;
       if (statusFilter === 'resolved' && !isResolved) continue;
+      // Source filter
+      if (sourceFilter === 'validation' && w._source !== 'validation') continue;
       result.push({ warning: w, globalIndex: i });
     }
     return result;
-  }, [warnings, severityFilter, statusFilter, warningStatuses]);
+  }, [warnings, severityFilter, statusFilter, sourceFilter, warningStatuses]);
 
   if (!warnings || warnings.length === 0) {
     return (
@@ -132,6 +136,14 @@ export default function WarningsPanel({ warnings, warningStatuses = {}, onWarnin
             active={severityFilter === 'info'}
             onClick={() => setSeverityFilter(severityFilter === 'info' ? 'all' : 'info')}
             color="#38bdf8"
+          />
+        )}
+        {counts.validation > 0 && (
+          <FilterButton
+            label={`Validation (${counts.validation})`}
+            active={sourceFilter === 'validation'}
+            onClick={() => setSourceFilter(sourceFilter === 'validation' ? 'all' : 'validation')}
+            color="var(--caution)"
           />
         )}
       </div>
