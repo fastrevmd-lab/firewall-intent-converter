@@ -15,6 +15,7 @@ const initialState = {
   conversionSummary: null,
   outputFormat: 'set',
   targetContext: { type: 'none', name: '' },
+  validationFindings: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ function conversionReducer(state, action) {
         convertWarnings: action.warnings ?? [],
         conversionSummary: action.summary ?? null,
         outputFormat: action.format ?? state.outputFormat,
+        validationFindings: action.validationFindings ?? state.validationFindings,
       };
 
     // Clear all output state
@@ -43,6 +45,7 @@ function conversionReducer(state, action) {
         srxOutput: null,
         convertWarnings: [],
         conversionSummary: null,
+        validationFindings: [],
       };
 
     // Restore from a project file

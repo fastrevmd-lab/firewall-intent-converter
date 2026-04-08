@@ -27,6 +27,7 @@ export default function useConversion() {
     siteName,
     siteGroup,
     targetModel,
+    srxLicense,
   } = configState;
 
   const { targetContext } = conversionState;
@@ -160,6 +161,64 @@ export default function useConversion() {
   }, [mergeState, conversionDispatch, uiDispatch]);
 
   // -----------------------------------------------------------------------
+  // handleValidate — run SRX validation engine against current output
+  // -----------------------------------------------------------------------
+  const handleValidate = useCallback(async (enforceLicense = false) => {
+    const { srxOutput } = conversionState;
+    if (!srxOutput) return;
+
+    uiDispatch({ type: 'SET_LOADING', isLoading: true, message: 'Running validation checks...' });
+
+    try {
+      const [
+        { runValidation },
+        { SRX_MODELS, SRX_CAPACITY_LIMITS },
+      ] = await Promise.all([
+        import('../../src/validators/srx-validation-engine.js'),
+        import('../data/hardware-db.js'),
+      ]);
+
+      const result = runValidation({
+        intermediateConfig,
+        srxOutput: typeof srxOutput === 'string' ? srxOutput : srxOutput?.srxCommands || '',
+        targetModel,
+        srxLicense,
+        enforceLicense,
+        modelDb: SRX_MODELS,
+        capacityLimits: SRX_CAPACITY_LIMITS,
+        sourceModel: null,
+      });
+
+      // Replace previous validation warnings, keep non-validation warnings
+      const existingNonValidation = (conversionState.convertWarnings || []).filter(w => w._source !== 'validation');
+      const newWarnings = [...existingNonValidation, ...result.findings];
+
+      if (result.filteredOutput !== null) {
+        // License enforcement stripped commands — update output
+        const updatedOutput = typeof conversionState.srxOutput === 'string'
+          ? result.filteredOutput
+          : { ...conversionState.srxOutput, srxCommands: result.filteredOutput };
+        conversionDispatch({
+          type: 'SET_CONVERSION_RESULT',
+          output: updatedOutput,
+          warnings: newWarnings,
+          validationFindings: result.findings,
+        });
+      } else {
+        conversionDispatch({ type: 'SET_FIELD', field: 'convertWarnings', value: newWarnings });
+        conversionDispatch({ type: 'SET_FIELD', field: 'validationFindings', value: result.findings });
+      }
+
+      // Navigate to warnings panel
+      uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'warnings' });
+    } catch (err) {
+      uiDispatch({ type: 'SET_FIELD', field: 'error', value: `Validation error: ${err.message}` });
+    } finally {
+      uiDispatch({ type: 'SET_LOADING', isLoading: false });
+    }
+  }, [intermediateConfig, targetModel, srxLicense, conversionState, conversionDispatch, uiDispatch]);
+
+  // -----------------------------------------------------------------------
   // Return public API
   // -----------------------------------------------------------------------
   return {
@@ -170,5 +229,6 @@ export default function useConversion() {
     handleConvertClick,
     handleConvert,
     handleMergeConvert,
+    handleValidate,
   };
 }
