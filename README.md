@@ -202,7 +202,12 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Profile group expansion** — PAN-OS profile group references are automatically resolved into individual security profiles
 
 ### Interactive Editing
-- **IDE-style 4-panel layout** — Left sidebar navigation tree with collapsible groups (Import, Sanitized Objects, Security, Objects, Network, System, Output), resizable center panel, collapsible right inspector, bottom status bar. 39 keyboard shortcuts including Ctrl+P command palette, Ctrl+Z/Y undo/redo, Ctrl+B panel toggles
+- **IDE-style 4-panel layout** — Left sidebar navigation tree organized into 6 workflow stages (① Import → ② Review → ③ Configure → ④ Validate → ⑤ Export → ⑥ Operate), resizable center panel, collapsible right inspector, bottom status bar. 39 keyboard shortcuts including Ctrl+P command palette, Ctrl+Z/Y undo/redo, Ctrl+B panel toggles
+- **Decluttered header** — Consolidated stat badges (model + license in one badge, simplified warning and progress counters) with secondary actions (Models, Interfaces, Report, Theme, Tour, Feedback, Settings) moved to an overflow menu (⋯)
+- **4-bucket triage system** — Policies are auto-classified into triage buckets: ✓ Safe to Accept (green), ⚡ Needs Decision (yellow), ✕ Unsupported (red), ⏸ Blocked (gray). Filter bar with pill buttons above the policy table for quick triage filtering
+- **Expandable table rows** — SRX policy table shows compact summary rows (name, zones, src/dst addresses, apps/services, subscription icons, action, triage badge) with expandable detail panels for security profiles, logging, users, and warnings
+- **Security subscription icons** — Compact 2-letter colored badges in the policy table (IP=IPS, CS=Content Security, DE=Decrypt, AV=Flow-based AV, AM=Anti-malware, SI=SecIntel, SW=Secure Web Proxy, IC=ICAP Redirect) with a legend bar at the bottom
+- **Inspector pinned header** — Rule name, triage badge, and unsaved changes indicator pinned at top of the inspector panel. Warning banner shown below header. Reset Changes button to undo edits
 - **Inline table editing** — Double-click any cell in the policy table to edit directly
 - **Right panel rule details** — Full editable form for the selected rule: action, zones, addresses, applications, services, logging, security profiles, tags, description
 - **Schedule editor** — View, edit, add, and delete schedules from the Objects > Schedules tab. Each schedule shows its type (recurring/onetime), days, time range, and which rules reference it
@@ -227,8 +232,8 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 ### LLM Translation & Review Workflow
 - **Translate with LLM** — One-click translation of all source policies to optimized SRX format using vendor-aware, subscription-aware LLM prompts. The translation prompt includes vendor-specific migration pitfalls and cross-vendor gap analysis for all 6 supported source vendors
 - **Translation progress** — Real-time progress panel in the right pane showing elapsed time (live ticking timer), chunk progress, and estimated prompt/response token counts
-- **Review status tracking** — Every translated rule starts as *LLM Reviewed* and must be manually accepted. Status labels are color-coded: blue for LLM Reviewed, green for Accepted, grey for Disabled
-- **Status filtering** — Filter the policy table by review status (All / Unreviewed / LLM Reviewed / Accepted / Disabled) — available on the "to SRX" tab
+- **Review status tracking** — Every translated rule starts as *LLM Reviewed* and must be manually accepted. Rules are auto-triaged into 4 buckets (Safe/Decision/Unsupported/Blocked) with LLM review indicated by a violet dot overlay
+- **Triage filtering** — Filter the policy table by triage bucket (All / Safe / Decision / Unsupported / Blocked) with counts, plus Accepted counter — available on the "to SRX" tab
 - **Accept rules** — Click any rule to review its details and translation notes, then click Accept. A progress counter in the navbar tracks accepted vs LLM-reviewed policies (`Policies: X/Y accepted`)
 - **Warning review workflow** — Clickable warnings badge in the navbar shows unresolved/total count and switches to the Warnings tab on click. Each warning has Ack/Fixed/Ignore action buttons to track resolution. Resolved warnings are dimmed and filterable (All/Unresolved/Resolved). Badge turns green when all warnings are addressed
 - **Subscription-aware translation** — SRX subscription tier (Base/A1/A2/P1/P2) is passed to the LLM, which maps security profiles to the correct tier and flags features requiring upgrades in `_translation_notes`
@@ -400,7 +405,7 @@ firewall-intent-converter/
 │   │   │   ├── ResizeHandle.jsx  # Drag handle for panel borders
 │   │   │   └── CommandPalette.jsx # Ctrl+P fuzzy search overlay
 │   │   ├── nav/                  # Navigation tree components
-│   │   │   ├── NavTree.jsx       # Hierarchical nav with collapsible groups and count badges
+│   │   │   ├── NavTree.jsx       # Workflow-stage nav (6 stages) with collapsible groups and count badges
 │   │   │   └── NavTreeItem.jsx   # Single nav item with badge
 │   │   ├── shared/               # Reusable UI components
 │   │   │   ├── ConfirmModal.jsx  # Confirmation dialog with severity levels
@@ -435,6 +440,7 @@ firewall-intent-converter/
 │   │   ├── project-io.js         # Save/load project serialization, validation, migration
 │   │   ├── srx-view-transforms.js # SRX display transforms + license tier data
 │   │   ├── safe-json.js          # Prototype-pollution-safe JSON parsing
+│   │   ├── triage.js             # 4-bucket triage computation (safe/decision/unsupported/blocked)
 │   │   └── auto-split.js         # Multi-context auto-split and cross-LS detection
 │   └── data/
 │       ├── hardware-db.js        # 7-vendor model database (current + EOS)
