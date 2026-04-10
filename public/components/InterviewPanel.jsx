@@ -5,7 +5,7 @@
  * When a rule is selected, all fields are editable inline.
  * "Accept Rule" marks the rule as accepted in the review workflow.
  */
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   mapActionToSrx,
   mapActionToPanos,
@@ -14,6 +14,7 @@ import {
   getLicenseGaps,
   SRX_LICENSE_TIERS,
 } from '../utils/srx-view-transforms.js';
+import { computeTriageBucket, TRIAGE_CONFIG } from '../utils/triage.js';
 import AutocompleteInput from './shared/AutocompleteInput.jsx';
 import { getLLMStatus } from '../utils/llm-client.js';
 
@@ -82,6 +83,45 @@ export default function InterviewPanel({
 
   const isAccepted = selectedRule?._review_status === 'accepted';
   const zoneNames = (intermediateConfig?.zones || []).map(z => z.name);
+
+  // --- Change tracking ---
+  const snapshotRef = useRef(null);
+
+  // Take snapshot when a new rule is selected
+  useEffect(() => {
+    if (selectedRule) {
+      snapshotRef.current = JSON.stringify(selectedRule);
+    }
+  }, [selectedRule?.name, selectedRule?._rule_index]);
+
+  /** Count unsaved changes by comparing current rule to snapshot */
+  const unsavedCount = useMemo(() => {
+    if (!selectedRule || !snapshotRef.current) return 0;
+    try {
+      const original = JSON.parse(snapshotRef.current);
+      const trackFields = [
+        'name', 'action', 'disabled', 'description',
+        'src_zones', 'dst_zones', 'src_addresses', 'dst_addresses',
+        'negate_source', 'negate_destination',
+        'applications', 'services', 'source_users',
+        'log_start', 'log_end', 'security_profiles',
+      ];
+      let count = 0;
+      for (const field of trackFields) {
+        if (JSON.stringify(selectedRule[field]) !== JSON.stringify(original[field])) count++;
+      }
+      return count;
+    } catch { return 0; }
+  }, [selectedRule]);
+
+  /** Reset rule to its snapshot state */
+  const handleReset = useCallback(() => {
+    if (!snapshotRef.current || !onUpdateRule) return;
+    try {
+      const original = JSON.parse(snapshotRef.current);
+      onUpdateRule(original);
+    } catch { /* ignore */ }
+  }, [onUpdateRule]);
 
   const addressNames = useMemo(() => [
     ...(intermediateConfig?.address_objects || []).map(a => a.name),
@@ -289,18 +329,57 @@ export default function InterviewPanel({
   }
 
   // --- Rule detail view with editing ---
+  const triageBucket = (!isAccepted && !selectedRule.disabled)
+    ? computeTriageBucket(selectedRule, intermediateConfig)
+    : null;
+  const triageCfg = triageBucket ? TRIAGE_CONFIG[triageBucket] : null;
+
   return (
     <div className="panel interview-panel">
-      <div className="panel-header">
-        <h2>{isSrx ? 'Policy Details' : 'Rule Details'}</h2>
-        <span style={{ fontSize: '11px', color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
-          #{selectedRule._rule_index}
-        </span>
+      {/* Pinned sticky header */}
+      <div className="inspector-pinned-header">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+            {selectedRule.name}
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            #{selectedRule._rule_index}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          {isAccepted ? (
+            <span className="status-label status-accepted">Accepted</span>
+          ) : selectedRule.disabled ? (
+            <span className="status-label status-disabled">Disabled</span>
+          ) : triageCfg ? (
+            <span className={`triage-badge ${triageCfg.cssClass}`}>{triageCfg.icon} {triageCfg.label}</span>
+          ) : null}
+          {selectedRule._review_status === 'llm_reviewed' && (
+            <span className="llm-review-dot" title="LLM reviewed" />
+          )}
+          <span style={{ flex: 1 }} />
+          {unsavedCount > 0 && (
+            <span style={{ color: 'var(--caution)', fontSize: 10, fontWeight: 600 }}>
+              ● {unsavedCount} unsaved change{unsavedCount > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
       </div>
       <div className="panel-body">
+        {/* Warning banner */}
+        {ruleWarnings.length > 0 && (
+          <div className="inspector-warning-banner">
+            {ruleWarnings.map((w, i) => (
+              <div key={i} style={{ marginBottom: i < ruleWarnings.length - 1 ? 4 : 0 }}>
+                ⚠ {w.message || w.text || (typeof w === 'string' ? w : JSON.stringify(w))}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Review Action Bar — "to SRX" tab only */}
         {isToSrxTab && (
-          <div className="rule-review-actions">
+          <div className="rule-review-actions" style={{ display: 'flex', gap: 8 }}>
             <button
               className={`btn btn-sm ${isAccepted ? 'btn-accepted' : 'btn-accept'}`}
               onClick={() => onAcceptRule && onAcceptRule()}
@@ -308,6 +387,14 @@ export default function InterviewPanel({
             >
               {isAccepted ? 'Accepted' : 'Accept Policy'}
             </button>
+            {unsavedCount > 0 && (
+              <button
+                className="btn btn-sm btn-secondary"
+                onClick={handleReset}
+              >
+                Reset Changes
+              </button>
+            )}
           </div>
         )}
 

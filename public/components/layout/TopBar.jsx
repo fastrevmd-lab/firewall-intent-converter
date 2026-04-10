@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
 import { useUIContext, isDeterministicMode } from '../../contexts/UIContext.jsx';
@@ -108,6 +108,22 @@ export default function TopBar() {
   const showModal = (name) => uiDispatch({ type: 'SHOW_MODAL', name });
   const setTab = (tab) => uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: tab });
 
+  // Overflow menu state
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef(null);
+
+  // Close overflow on click outside
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const handler = (e) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target)) {
+        setOverflowOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [overflowOpen]);
+
   return (
     <div className="app-topbar">
       {/* Left: Brand */}
@@ -118,9 +134,10 @@ export default function TopBar() {
         </h1>
       </div>
 
-      {/* Center: Stats badges */}
+      {/* Center: Consolidated stat badges */}
       {displayStats && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
+          {/* Combined model + license + site badge */}
           {(sourceModel || greenfieldMode) && (
             <span
               className="stat-badge model-badge"
@@ -130,68 +147,42 @@ export default function TopBar() {
               {greenfieldMode ? 'Greenfield' : sourceModel}
               <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span>
               <span style={{ color: 'var(--juniper-green)' }}>{targetModel || '?'}</span>
+              {srxLicense && (
+                <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>·</span>
+              )}
+              {srxLicense && (
+                <span className="stat-value">{srxLicense}</span>
+              )}
             </span>
           )}
-          {srxLicense && (
-            <span
-              className="stat-badge license-badge"
-              onClick={() => showModal('modelSelector')}
-              style={{ cursor: 'pointer' }}
-            >
-              <span style={{ color: 'var(--accent)' }}>License</span> <span className="stat-value">{srxLicense}</span>
-            </span>
-          )}
-          {siteName && (
-            <span
-              className="stat-badge"
-              onClick={() => showModal('modelSelector')}
-              style={{ cursor: 'pointer' }}
-            >
-              Site <span className="stat-value">{siteName}</span>
-            </span>
-          )}
+
+          {/* Simplified warning badge */}
           {allWarnings.length > 0 && (
             <span
               className="stat-badge"
-              style={{ cursor: 'pointer', gap: 6 }}
+              style={{ cursor: 'pointer' }}
               onClick={() => setTab('warnings')}
             >
-              <span style={{ color: 'var(--caution)' }}>Warnings</span>{' '}
+              <span style={{ color: unresolvedWarningCount > 0 ? 'var(--caution)' : 'var(--success)' }}>⚠</span>
+              {' '}
               <span style={{ color: unresolvedWarningCount > 0 ? 'var(--caution)' : 'var(--text-muted)', fontWeight: 600 }}>
                 {unresolvedWarningCount}
               </span>
-              {(ackCount > 0 || fixedCount > 0 || ignoredCount > 0) && (
-                <span style={{ color: 'var(--accent)', margin: '0 2px' }}>&rarr;</span>
-              )}
-              {ackCount > 0 && (
-                <span style={{ color: 'var(--accent)', fontWeight: 600, fontSize: 11 }} title="Acknowledged">
-                  {ackCount} ack
-                </span>
-              )}
-              {fixedCount > 0 && (
-                <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: 11 }} title="Fixed">
-                  {fixedCount} fix
-                </span>
-              )}
-              {ignoredCount > 0 && (
-                <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11 }} title="Ignored">
-                  {ignoredCount} ign
-                </span>
-              )}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: 4 }}>warnings</span>
             </span>
           )}
-          {intermediateConfig && (
-            <span className="review-progress">
-              <span style={{ color: 'var(--caution)' }}>Policies</span> <span style={{ color: 'var(--caution)', fontWeight: 600 }}>{policyCount}</span>
-              <span style={{ color: 'var(--accent)', margin: '0 4px' }}>&rarr;</span>
-              <span style={{ color: 'var(--success)', fontWeight: 600 }}>
-                Accepted {accepted}
-              </span>
-              {llmReviewed > 0 && (
-                <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
-                  ({llmReviewed} LLM reviewed)
-                </span>
-              )}
+
+          {/* Simplified policy progress */}
+          {intermediateConfig && policyCount > 0 && (
+            <span
+              className="stat-badge"
+              onClick={() => setTab('rules')}
+              style={{ cursor: 'pointer' }}
+            >
+              <span style={{ color: 'var(--success)', fontWeight: 600 }}>{accepted}</span>
+              <span style={{ color: 'var(--text-muted)' }}>/</span>
+              <span style={{ color: 'var(--caution)', fontWeight: 600 }}>{policyCount}</span>
+              <span style={{ color: 'var(--text-secondary)', marginLeft: 4 }}>accepted</span>
             </span>
           )}
         </div>
@@ -200,36 +191,8 @@ export default function TopBar() {
       {/* Spacer when no stats */}
       {!displayStats && <div style={{ flex: 1 }} />}
 
-      {/* Right: Actions */}
+      {/* Right: Save, Load, Overflow */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', flexShrink: 0 }}>
-        {intermediateConfig && (
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => showModal('modelSelector')}
-            title="Change hardware models"
-          >
-            Models
-          </button>
-        )}
-        {intermediateConfig && targetModel && (
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => showModal('interfaceMapper')}
-            title="Edit interface mappings"
-          >
-            Interfaces
-          </button>
-        )}
-        {intermediateConfig && targetModel && (
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => showModal('reportModal')}
-            title="Generate migration report"
-          >
-            Report
-          </button>
-        )}
-
         {/* Save */}
         <button
           className="settings-btn"
@@ -253,7 +216,6 @@ export default function TopBar() {
         <button
           className="settings-btn"
           onClick={() => {
-            // Trigger file input — the actual file input lives in the parent shell
             const input = document.getElementById('topbar-project-file-input');
             if (input) input.click();
           }}
@@ -266,83 +228,59 @@ export default function TopBar() {
           </svg>
         </button>
 
-        {/* Theme toggle */}
-        <button
-          className="settings-btn"
-          onClick={toggleTheme}
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-        >
-          {theme === 'dark' ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="5" />
-              <line x1="12" y1="1" x2="12" y2="3" />
-              <line x1="12" y1="21" x2="12" y2="23" />
-              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-              <line x1="1" y1="12" x2="3" y2="12" />
-              <line x1="21" y1="12" x2="23" y2="12" />
-              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-            </svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-            </svg>
-          )}
-        </button>
-
-        {/* Tour */}
-        <button
-          className="settings-btn"
-          onClick={() => showModal('tour')}
-          title="Start guided tour"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-        </button>
-
-        {/* Feedback */}
-        <button
-          className="settings-btn"
-          onClick={() => showModal('feedback')}
-          title="Send feedback or suggest a feature"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-        </button>
-
-        {isDeterministicMode(ui.llmRiskAcceptance) && (
-          <button
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
-              background: 'var(--success)', color: '#fff',
-              border: 'none', cursor: 'pointer',
-            }}
-            title="Click to change AI mode"
-            onClick={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: null })}
-          >
-            No AI
-          </button>
-        )}
-
-        {/* Settings — hidden in deterministic mode (no LLM to configure) */}
-        {!isDeterministicMode(ui.llmRiskAcceptance) && (
+        {/* Overflow menu */}
+        <div ref={overflowRef} style={{ position: 'relative' }}>
           <button
             className="settings-btn"
-            onClick={() => showModal('settings')}
-            title="Settings"
+            onClick={() => setOverflowOpen(prev => !prev)}
+            title="More actions"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+              <circle cx="12" cy="5" r="1.5" fill="currentColor" />
+              <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+              <circle cx="12" cy="19" r="1.5" fill="currentColor" />
             </svg>
           </button>
-        )}
+          {overflowOpen && (
+            <div className="overflow-menu">
+              {intermediateConfig && (
+                <button className="overflow-item" onClick={() => { showModal('modelSelector'); setOverflowOpen(false); }}>
+                  Models
+                </button>
+              )}
+              {intermediateConfig && targetModel && (
+                <button className="overflow-item" onClick={() => { showModal('interfaceMapper'); setOverflowOpen(false); }}>
+                  Interfaces
+                </button>
+              )}
+              {intermediateConfig && targetModel && (
+                <button className="overflow-item" onClick={() => { showModal('reportModal'); setOverflowOpen(false); }}>
+                  Report
+                </button>
+              )}
+              {(intermediateConfig && (targetModel || sourceModel)) && <div className="overflow-divider" />}
+              <button className="overflow-item" onClick={() => { toggleTheme(); setOverflowOpen(false); }}>
+                {theme === 'dark' ? '☀ Light theme' : '🌙 Dark theme'}
+              </button>
+              <button className="overflow-item" onClick={() => { showModal('tour'); setOverflowOpen(false); }}>
+                Guided tour
+              </button>
+              <button className="overflow-item" onClick={() => { showModal('feedback'); setOverflowOpen(false); }}>
+                Feedback
+              </button>
+              <div className="overflow-divider" />
+              {isDeterministicMode(ui.llmRiskAcceptance) ? (
+                <button className="overflow-item" onClick={() => { uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: null }); setOverflowOpen(false); }}>
+                  <span style={{ color: 'var(--success)', fontWeight: 600 }}>No AI</span> — Change mode
+                </button>
+              ) : (
+                <button className="overflow-item" onClick={() => { showModal('settings'); setOverflowOpen(false); }}>
+                  Settings
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

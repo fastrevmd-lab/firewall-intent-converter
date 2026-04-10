@@ -487,6 +487,7 @@ export default function ContentRouter({
         <PolicyTable
           policies={policies}
           warnings={allWarnings}
+          intermediateConfig={intermediateConfig}
           selectedRule={selectedRule}
           onSelectRule={(r) => uiDispatch({ type: 'SET_FIELD', field: 'selectedRule', value: r })}
           onUpdateRule={isTranslated ? llm.handleUpdateTranslatedRule : config.handleUpdateRule}

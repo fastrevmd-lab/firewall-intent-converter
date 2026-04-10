@@ -6,35 +6,28 @@ import useSectionAcceptance from '../../hooks/useSectionAcceptance.js';
 
 /* ── Inline SVG Icons (16x16, stroke-based) ──────────────────────── */
 const ICONS = {
-  clipboard: (
+  import: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" />
-      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
     </svg>
   ),
-  shield: (
+  review: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   ),
-  box: (
+  configure: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
-      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-      <line x1="12" y1="22.08" x2="12" y2="12" />
+      <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
     </svg>
   ),
-  globe: (
+  validate: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
-    </svg>
-  ),
-  settings: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+      <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   ),
   export: (
@@ -44,49 +37,53 @@ const ICONS = {
       <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   ),
+  operate: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    </svg>
+  ),
 };
 
-/* ── Navigation structure ────────────────────────────────────────── */
+/* ── Stage numbers for workflow navigation ──────────────────────── */
+const STAGE_NUMBERS = ['①', '②', '③', '④', '⑤', '⑥'];
+
+/* ── Navigation structure (workflow-based) ──────────────────────── */
 const NAV_STRUCTURE = [
-  { id: 'import', label: 'Import / Config', icon: 'clipboard', leaf: true },
-  { id: 'sanitized', label: 'Sanitized Objects', icon: 'shield', leaf: true, sanitizedCount: true },
-  { id: 'security', label: 'Security', icon: 'shield', children: [
-    { id: 'rules', label: 'Policies', countKey: 'security_policies' },
+  { id: 'stage-import', label: 'Import', icon: 'import', stageIndex: 0, children: [
+    { id: 'import', label: 'Config Input' },
+    { id: 'sanitized', label: 'Sanitized Objects', sanitizedCount: true },
+  ]},
+  { id: 'stage-review', label: 'Review', icon: 'review', stageIndex: 1, children: [
+    { id: 'rules', label: 'Policies', countKey: 'security_policies', actionable: true },
     { id: 'nat', label: 'NAT Rules', countKey: 'nat_rules' },
     { id: 'zones', label: 'Zones', countKey: 'zones' },
-    { id: 'screen', label: 'Screens', countKey: 'screen_config' },
-    { id: 'decryption', label: 'SSL B&I', countKey: 'decryption_rules' },
-    { id: 'pbf', label: 'PBF', countKey: 'pbf_rules' },
-    { id: 'analysis', label: 'Analysis', countFn: (ic) => ic?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0 },
-    { id: 'dependency-graph', label: 'Dependency Graph' },
-  ]},
-  { id: 'objects', label: 'Objects', icon: 'box', children: [
-    { id: 'objects', label: 'Addr/Svc/App', countFn: (ic) =>
+    { id: 'objects', label: 'Objects', countFn: (ic) =>
       (ic?.address_objects?.length || 0) +
       (ic?.service_objects?.length || 0) +
       (ic?.applications?.length || 0)
     },
+    { id: 'analysis', label: 'Analysis', countFn: (ic) => ic?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0, actionable: true },
+    { id: 'dependency-graph', label: 'Dependency Graph' },
   ]},
-  { id: 'network', label: 'Network', icon: 'globe', children: [
-    { id: 'routing', label: 'Intf / Routing', countFn: (ic) =>
+  { id: 'stage-configure', label: 'Configure', icon: 'configure', stageIndex: 2, children: [
+    { id: 'routing', label: 'Interfaces & Routing', countFn: (ic) =>
       (ic?.interfaces?.length || 0) + (ic?.static_routes?.length || 0)
     },
     { id: 'vpn', label: 'VPN', countKey: 'vpn_tunnels' },
-    { id: 'dhcp', label: 'DHCP', countKey: 'dhcp_config' },
-    { id: 'flow-monitoring', label: 'Flow Monitoring', countFn: (ic) => ic?.flow_monitoring_config?.collectors?.length || 0 },
-  ]},
-  { id: 'system', label: 'System', icon: 'settings', children: [
+    { id: 'screen', label: 'Screens', countKey: 'screen_config' },
+    { id: 'decryption', label: 'SSL Decrypt', countKey: 'decryption_rules' },
+    { id: 'pbf', label: 'PBF', countKey: 'pbf_rules' },
     { id: 'ha', label: 'HA', countFn: (ic) => ic?.ha_config?.enabled ? 1 : 0 },
     { id: 'qos', label: 'QoS', countKey: 'qos_config' },
     { id: 'syslog', label: 'Syslog', countKey: 'syslog_config' },
     { id: 'snmp', label: 'SNMP', countKey: 'snmp_config' },
     { id: 'aaa', label: 'AAA', countKey: 'aaa_config' },
+    { id: 'dhcp', label: 'DHCP', countKey: 'dhcp_config' },
+    { id: 'flow-monitoring', label: 'Flow Monitoring', countFn: (ic) => ic?.flow_monitoring_config?.collectors?.length || 0 },
   ]},
-  { id: 'output', label: 'Output', icon: 'export', children: [
-    { id: 'output', label: 'SRX Config' },
-    { id: 'warnings', label: 'Warnings', warnCount: true },
-    { id: 'diff', label: 'Diff View' },
-    { id: 'checklist', label: 'Checklist', countFn: (ic) => {
+  { id: 'stage-validate', label: 'Validate', icon: 'validate', stageIndex: 3, children: [
+    { id: 'warnings', label: 'Warnings', warnCount: true, actionable: true },
+    { id: 'checklist', label: 'Checklist', actionable: true, countFn: (ic) => {
       if (!ic) return 0;
       let count = 0;
       const policies = ic.security_policies || [];
@@ -100,9 +97,14 @@ const NAV_STRUCTURE = [
       if ((ic.nat_rules || []).length > 0) count++;
       return count;
     }},
+    { id: 'diff', label: 'Diff View' },
+  ]},
+  { id: 'stage-export', label: 'Export', icon: 'export', stageIndex: 4, children: [
+    { id: 'output', label: 'SRX Config' },
     { id: 'report', label: 'Report' },
   ]},
-  { id: 'tools', label: 'Tools', icon: 'tool', children: [
+  { id: 'stage-operate', label: 'Operate', icon: 'operate', stageIndex: 5, children: [
+    { id: 'day2ops', label: 'Day 2 Ops' },
     { id: 'batch', label: 'Batch Migration' },
   ]},
 ];
@@ -133,10 +135,10 @@ export default function NavTree({ collapsed }) {
   // Restore expanded groups from localStorage, default to all expanded
   const [expandedGroups, setExpandedGroups] = useState(() => {
     try {
-      const saved = localStorage.getItem('nav-expanded-groups');
+      const saved = localStorage.getItem('nav-expanded-stages');
       if (saved) return new Set(JSON.parse(saved));
     } catch { /* ignore */ }
-    return new Set(NAV_STRUCTURE.filter(g => g.children).map(g => g.id));
+    return new Set(NAV_STRUCTURE.map(g => g.id));
   });
 
   const toggleGroup = useCallback((groupId) => {
@@ -144,7 +146,7 @@ export default function NavTree({ collapsed }) {
       const next = new Set(prev);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
-      try { localStorage.setItem('nav-expanded-groups', JSON.stringify([...next])); } catch { /* ignore */ }
+      try { localStorage.setItem('nav-expanded-stages', JSON.stringify([...next])); } catch { /* ignore */ }
       return next;
     });
   }, []);
@@ -159,29 +161,6 @@ export default function NavTree({ collapsed }) {
   return (
     <ul className="nav-tree">
       {NAV_STRUCTURE.map(group => {
-        // Top-level leaf item (e.g., Import, Sanitized Objects)
-        if (group.leaf) {
-          // Hide Sanitized Objects when there's nothing to show
-          if (group.sanitizedCount && sanitizedCount === 0) return null;
-
-          return (
-            <li key={group.id} className="nav-group">
-              <div
-                className={`nav-item${editTab === group.id ? ' active' : ''}`}
-                style={{ paddingLeft: 12 }}
-                onClick={() => setTab(group.id)}
-              >
-                <span className="nav-icon">{ICONS[group.icon]}</span>
-                <span>{group.label}</span>
-                {group.sanitizedCount && sanitizedCount > 0 && (
-                  <span className="nav-badge">{sanitizedCount}</span>
-                )}
-              </div>
-            </li>
-          );
-        }
-
-        // Group with children
         const isExpanded = expandedGroups.has(group.id);
         const groupReviewClass = acceptance.groups?.[group.id] === true ? ' nav-review-done'
           : acceptance.groups?.[`_${group.id}HasContent`] ? ' nav-review-pending'
@@ -194,15 +173,24 @@ export default function NavTree({ collapsed }) {
               onClick={() => toggleGroup(group.id)}
             >
               <span className="arrow">{'\u25BC'}</span>
+              <span className="stage-number">{STAGE_NUMBERS[group.stageIndex]}</span>
               <span className="group-icon">{ICONS[group.icon]}</span>
               <span>{group.label}</span>
             </button>
             <ul className="nav-group-items">
               {group.children.map(child => {
-                const count = child.warnCount ? warnCount : getCount(child, intermediateConfig);
+                // Hide Sanitized Objects when there's nothing to show
+                if (child.sanitizedCount && sanitizedCount === 0) return null;
+
+                const count = child.sanitizedCount
+                  ? sanitizedCount
+                  : child.warnCount ? warnCount : getCount(child, intermediateConfig);
                 const reviewClass = acceptance.items?.[child.id] === true ? ' nav-review-done'
                   : acceptance.hasContent?.[child.id] ? ' nav-review-pending'
                   : '';
+                const badgeClass = child.warnCount && warnCount > 0
+                  ? ' warn'
+                  : child.actionable ? ' actionable' : '';
                 return (
                   <li
                     key={child.id}
@@ -211,7 +199,7 @@ export default function NavTree({ collapsed }) {
                   >
                     <span>{child.label}</span>
                     {count > 0 && (
-                      <span className={`nav-badge${child.warnCount && warnCount > 0 ? ' warn' : ''}`}>
+                      <span className={`nav-badge${badgeClass}`}>
                         {count}
                       </span>
                     )}

@@ -71,22 +71,16 @@ export default function useSectionAcceptance() {
     // --- Parent group rollup (ALL children must be accepted) ---
     const groups = {};
 
-    const securityChildren = ['rules', 'nat', 'zones', 'screen', 'decryption', 'pbf'];
-    groups.security = securityChildren.every(id => items[id]);
+    // Workflow stage groupings
+    const reviewChildren = ['rules', 'nat', 'zones', 'objects'];
+    groups['stage-review'] = reviewChildren.every(id => items[id]);
 
-    groups.objects = !!items.objects;
-
-    const networkChildren = ['routing', 'vpn', 'dhcp', 'flow-monitoring'];
-    groups.network = networkChildren.every(id => items[id]);
-
-    const systemChildren = ['ha', 'qos', 'syslog'];
-    groups.system = systemChildren.every(id => items[id]);
+    const configureChildren = ['routing', 'vpn', 'screen', 'decryption', 'pbf', 'ha', 'qos', 'syslog', 'dhcp', 'flow-monitoring'];
+    groups['stage-configure'] = configureChildren.every(id => items[id]);
 
     // Parent groups always have content in SRX view (for teal coloring)
-    groups._securityHasContent = true;
-    groups._objectsHasContent = true;
-    groups._networkHasContent = true;
-    groups._systemHasContent = true;
+    groups['_stage-reviewHasContent'] = true;
+    groups['_stage-configureHasContent'] = true;
 
     return { items, hasContent, groups };
   }, [platformView, intermediateConfig, sectionAcceptance, srxTranslatedPolicies]);

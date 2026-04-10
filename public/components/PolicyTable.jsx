@@ -12,6 +12,7 @@
  */
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { mapActionToSrx, buildApplicationServices } from '../utils/srx-view-transforms.js';
+import { computeTriageBucket, computeTriageCounts, TRIAGE_CONFIG } from '../utils/triage.js';
 import useVirtualScroll from '../hooks/useVirtualScroll.js';
 import AutocompleteInput from './shared/AutocompleteInput.jsx';
 
@@ -32,6 +33,7 @@ function getHitCountColor(hitCount, disabled) {
 export default function PolicyTable({
   policies,
   warnings,
+  intermediateConfig,
   selectedRule,
   onSelectRule,
   onUpdateRule,
@@ -53,8 +55,10 @@ export default function PolicyTable({
   const [sortDir, setSortDir] = useState('asc');
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [triageFilter, setTriageFilter] = useState('all');
   const [editingCell, setEditingCell] = useState(null); // { index, field }
   const [editValue, setEditValue] = useState('');
+  const [expandedRows, setExpandedRows] = useState(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [editingGroupName, setEditingGroupName] = useState(null);
   const [newGroupNameValue, setNewGroupNameValue] = useState('');
@@ -117,6 +121,12 @@ export default function PolicyTable({
     unsupported: 'Unsupported — feature not available on target platform',
     interview: 'Needs review — manual input required to resolve',
   };
+
+  /** Triage counts for filter bar pills */
+  const triageCounts = useMemo(
+    () => computeTriageCounts(policies, intermediateConfig),
+    [policies, intermediateConfig]
+  );
 
   // --- Grouping helpers ---
   const hasGroups = ruleGroups && ruleGroups.length > 0;
@@ -210,9 +220,21 @@ export default function PolicyTable({
       );
     }
 
-    // Status filter
+    // Status filter (legacy dropdown)
     if (statusFilter !== 'all') {
       result = result.filter(p => getRuleStatus(p) === statusFilter);
+    }
+
+    // Triage filter (new pill buttons — SRX view only)
+    if (triageFilter !== 'all') {
+      if (triageFilter === 'accepted') {
+        result = result.filter(p => p._review_status === 'accepted');
+      } else {
+        result = result.filter(p =>
+          p._review_status !== 'accepted' &&
+          computeTriageBucket(p, intermediateConfig) === triageFilter
+        );
+      }
     }
 
     result.sort((a, b) => {
@@ -236,7 +258,7 @@ export default function PolicyTable({
     });
 
     return result;
-  }, [policies, filter, statusFilter, sortField, sortDir]);
+  }, [policies, filter, statusFilter, triageFilter, sortField, sortDir, intermediateConfig]);
 
   /** Build display groups: ordered list of { group_name, policies[], reasoning } */
   const displayGroups = useMemo(() => {
@@ -863,17 +885,13 @@ export default function PolicyTable({
   const renderSrxHeader = () => (
     <tr>
       {renderHeaderCheckbox()}
-      <th onClick={() => handleSort('_rule_index')} style={{ width: 52 }}>Seq{sortIndicator('_rule_index')}</th>
+      <th style={{ width: 32 }}></th>
+      <th onClick={() => handleSort('_rule_index')} style={{ width: 44 }}>#</th>
       <th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
-      <th>Sources</th>
-      <th>Destinations</th>
-      <th onClick={() => handleSort('applications')}>Applications / Ports{sortIndicator('applications')}</th>
-      {hasIdentityPolicies && <th>Source Identity</th>}
-      <th onClick={() => handleSort('action')} style={{ width: 100 }}>Action{sortIndicator('action')}</th>
-      {hasHitCounts && <th onClick={() => handleSort('_hit_count')} style={{ width: 70, cursor: 'pointer' }}>Hits{sortIndicator('_hit_count')}</th>}
-      {hasHitCounts && <th style={{ width: 90 }}>Apps</th>}
-      <th>Security Subscriptions</th>
-      <th style={{ width: 70 }}>Options</th>
+      <th onClick={() => handleSort('src_zones')}>Zones{sortIndicator('src_zones')}</th>
+      <th onClick={() => handleSort('action')} style={{ width: 80 }}>Action{sortIndicator('action')}</th>
+      <th>Triage</th>
+      <th style={{ width: 36 }}></th>
     </tr>
   );
 
@@ -1047,68 +1065,167 @@ export default function PolicyTable({
     );
   };
 
+  /** Toggle a row's expanded state */
+  const toggleRowExpand = useCallback((rowKey) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) next.delete(rowKey);
+      else next.add(rowKey);
+      return next;
+    });
+  }, []);
+
   const renderSrxRow = (policy, measureRef) => {
     const status = getRuleStatus(policy);
-    const warnStatus = getWarningStatus(policy);
     const isSelected = selectedRule?.name === policy.name && selectedRule?._rule_index === policy._rule_index;
     const realIndex = getRealIndex(policy);
+    const rowKey = `${policy.name}-${policy._rule_index}`;
+    const isExpanded = expandedRows.has(rowKey);
+    const isAccepted = status === 'accepted';
+    const ruleWarnings = warningsByRule[policy.name] || [];
+
+    // Compute triage bucket for non-accepted, non-disabled rules
+    const bucket = (status !== 'accepted' && status !== 'disabled')
+      ? computeTriageBucket(policy, intermediateConfig)
+      : null;
+    const triageCfg = bucket ? TRIAGE_CONFIG[bucket] : null;
+
+    const srxAction = mapActionToSrx(policy.action);
+    const actionColor = srxAction === 'permit' ? 'var(--success)' : srxAction === 'deny' ? 'var(--error)' : 'var(--warning)';
+
     return (
-      <tr
-        key={`${policy.name}-${policy._rule_index}`}
-        ref={measureRef}
-        className={buildRowClass(policy)}
-        onClick={(e) => handleRowClick(policy, isSelected, e)}
-        style={{ cursor: 'pointer' }}
-      >
-        {renderRowCheckbox(policy)}
-        <td><div className="srx-seq">{policy._rule_index}</div></td>
-        <td>
-          <div>
-            {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
-            {renderEditableCell(policy, 'name', <span style={{ fontWeight: 500 }}>{policy.name}</span>)}
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <span className={`status-label status-${status}`}>{statusLabels[status]}</span>
-            {warnStatus !== 'clean' && (
-              <span className={`status-dot ${warnStatus}`} data-tooltip={warningTooltips[warnStatus] || warnStatus} style={{ marginLeft: 4 }} />
+      <React.Fragment key={rowKey}>
+        {/* Collapsed summary row */}
+        <tr
+          ref={measureRef}
+          className={`${buildRowClass(policy)}${isExpanded ? ' expanded-row' : ''}${isAccepted ? ' accepted-row' : ''}`}
+          onClick={(e) => { handleRowClick(policy, isSelected, e); if (!isAccepted) toggleRowExpand(rowKey); }}
+          style={{ cursor: 'pointer' }}
+        >
+          {renderRowCheckbox(policy)}
+          <td style={{ textAlign: 'center', width: 32 }}>
+            {isAccepted ? (
+              <span style={{ color: 'var(--success)', fontSize: 12 }}>✓</span>
+            ) : (
+              <span
+                className="expand-chevron"
+                onClick={(e) => { e.stopPropagation(); toggleRowExpand(rowKey); }}
+              >
+                {isExpanded ? '▼' : '▶'}
+              </span>
             )}
-          </div>
-        </td>
-        <td>
-          <div className="editable-cell" onDoubleClick={(e) => { e.stopPropagation(); startEdit(realIndex, 'src_addresses', policy.src_addresses); }} title="Double-click to edit addresses">
-            {renderSrxSourceDest(policy, 'src')}
-          </div>
-        </td>
-        <td>
-          <div className="editable-cell" onDoubleClick={(e) => { e.stopPropagation(); startEdit(realIndex, 'dst_addresses', policy.dst_addresses); }} title="Double-click to edit addresses">
-            {renderSrxSourceDest(policy, 'dst')}
-          </div>
-        </td>
-        <td>
-          <div className="editable-cell" onDoubleClick={(e) => { e.stopPropagation(); startEdit(realIndex, 'applications', policy.applications); }} title="Double-click to edit">
-            {renderSrxApps(policy)}
-          </div>
-        </td>
-        {hasIdentityPolicies && <td>{renderCellValues(policy.source_users || [])}</td>}
-        <td>{renderSrxAction(policy)}</td>
-        {hasHitCounts && (
-          <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, color: getHitCountColor(policy._hit_count, policy.disabled) }}>
-            {typeof policy._hit_count === 'number' ? policy._hit_count.toLocaleString() : '—'}
           </td>
-        )}
-        {hasHitCounts && (
-          <td style={{ fontSize: 11 }} title={policy._matched_apps?.length ? policy._matched_apps.join(', ') : ''}>
-            {policy._matched_apps?.length > 0
-              ? <span className="chip" style={{ background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 8, fontSize: 10 }}>{policy._matched_apps.length} apps</span>
-              : <span style={{ color: 'var(--text-muted)' }}>—</span>
-            }
+          <td><div className="srx-seq">{policy._rule_index}</div></td>
+          <td>
+            {policy._implicit && <span className="cell-chip implicit-chip">Implicit</span>}
+            <span style={{ fontWeight: 500 }}>{policy.name}</span>
           </td>
+          <td style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
+            {(policy.src_zones || ['any']).join(', ')} → {(policy.dst_zones || ['any']).join(', ')}
+          </td>
+          <td>
+            <span style={{ color: actionColor, fontWeight: 600 }}>{srxAction}</span>
+          </td>
+          <td>
+            {isAccepted ? (
+              <span className="status-label status-accepted">Accepted</span>
+            ) : status === 'disabled' ? (
+              <span className="status-label status-disabled">Disabled</span>
+            ) : triageCfg ? (
+              <span className={`triage-badge ${triageCfg.cssClass}`}>{triageCfg.icon} {triageCfg.label}</span>
+            ) : null}
+            {policy._review_status === 'llm_reviewed' && (
+              <span className="llm-review-dot" title="LLM reviewed" style={{ marginLeft: 4 }} />
+            )}
+          </td>
+          <td style={{ textAlign: 'center' }}>
+            <button className="btn-icon btn-icon-danger" onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }} title="Delete policy">x</button>
+          </td>
+        </tr>
+
+        {/* Expanded detail row */}
+        {isExpanded && !isAccepted && (
+          <tr className="expanded-detail-row" key={`${rowKey}-detail`}>
+            <td colSpan={8} style={{ padding: 0 }}>
+              <div className="expanded-detail-panel">
+                <div className="expanded-detail-grid">
+                  <div className="expanded-detail-cell">
+                    <div className="expanded-detail-label">Source Addresses</div>
+                    <div className="editable-cell" onDoubleClick={(e) => { e.stopPropagation(); startEdit(realIndex, 'src_addresses', policy.src_addresses); }}>
+                      {(policy.src_addresses || ['any']).map((addr, i) => (
+                        <span key={i} className="cell-chip">{addr}</span>
+                      ))}
+                      {policy.negate_source && <span className="cell-chip negate-chip">NOT</span>}
+                    </div>
+                  </div>
+                  <div className="expanded-detail-cell">
+                    <div className="expanded-detail-label">Destination Addresses</div>
+                    <div className="editable-cell" onDoubleClick={(e) => { e.stopPropagation(); startEdit(realIndex, 'dst_addresses', policy.dst_addresses); }}>
+                      {(policy.dst_addresses || ['any']).map((addr, i) => (
+                        <span key={i} className="cell-chip">{addr}</span>
+                      ))}
+                      {policy.negate_destination && <span className="cell-chip negate-chip">NOT</span>}
+                    </div>
+                  </div>
+                  <div className="expanded-detail-cell">
+                    <div className="expanded-detail-label">Applications & Ports</div>
+                    <div className="editable-cell" onDoubleClick={(e) => { e.stopPropagation(); startEdit(realIndex, 'applications', policy.applications); }}>
+                      {(policy.applications || ['any']).map((app, i) => (
+                        <span key={i} className="cell-chip">{app}</span>
+                      ))}
+                      {(policy.services || []).filter(s => s !== 'any').map((svc, i) => (
+                        <span key={`svc-${i}`} className="cell-chip">{svc}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="expanded-detail-cell">
+                    <div className="expanded-detail-label">Security Profiles</div>
+                    <div>
+                      {policy.security_profiles && typeof policy.security_profiles === 'object'
+                        ? Object.entries(policy.security_profiles).map(([type, val]) => (
+                            val && <span key={type} className="cell-chip profile-chip">{type.toUpperCase()}</span>
+                          ))
+                        : (policy.profiles || []).map((p, i) => (
+                            <span key={i} className="cell-chip profile-chip">{p}</span>
+                          ))
+                      }
+                      {(!policy.security_profiles || Object.keys(policy.security_profiles).length === 0) && (!policy.profiles || policy.profiles.length === 0) && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>None</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="expanded-detail-cell">
+                    <div className="expanded-detail-label">Logging</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-primary)' }}>
+                      {policy.log_start && policy.log_end ? 'Start + End'
+                        : policy.log_start ? 'Start'
+                        : policy.log_end ? 'End'
+                        : 'Off'}
+                    </div>
+                  </div>
+                  {(policy.source_users || []).some(u => u !== 'any') && (
+                    <div className="expanded-detail-cell">
+                      <div className="expanded-detail-label">Users</div>
+                      <div>
+                        {policy.source_users.filter(u => u !== 'any').map((u, i) => (
+                          <span key={i} className="cell-chip">{u}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {ruleWarnings.length > 0 && (
+                  <div className="expanded-detail-warnings">
+                    {ruleWarnings.map((w, i) => (
+                      <div key={i} className="expanded-warning-item">⚠ {w.message || w.text || w}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </td>
+          </tr>
         )}
-        <td>{renderSrxSubscriptions(policy)}</td>
-        <td style={{ textAlign: 'center' }}>
-          <button className="btn-icon btn-icon-danger" onClick={(e) => { e.stopPropagation(); onDeleteRule(realIndex); }} title="Delete policy">x</button>
-        </td>
-      </tr>
+      </React.Fragment>
     );
   };
 
@@ -1586,6 +1703,32 @@ export default function PolicyTable({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      {/* Triage filter bar (SRX view) */}
+      {platformView === 'srx' && (
+        <div className="triage-filter-bar">
+          <span className="triage-filter-label">Filter:</span>
+          {[
+            { key: 'all', label: 'All', count: policies.length },
+            { key: 'safe', label: `${TRIAGE_CONFIG.safe.icon} Safe`, count: triageCounts.safe },
+            { key: 'decision', label: `${TRIAGE_CONFIG.decision.icon} Decision`, count: triageCounts.decision },
+            { key: 'unsupported', label: `${TRIAGE_CONFIG.unsupported.icon} Unsupported`, count: triageCounts.unsupported },
+            { key: 'blocked', label: `${TRIAGE_CONFIG.blocked.icon} Blocked`, count: triageCounts.blocked },
+          ].map(({ key, label, count }) => (
+            <button
+              key={key}
+              className={`triage-pill ${key === 'all' ? '' : TRIAGE_CONFIG[key]?.cssClass || ''}${triageFilter === key ? ' active' : ''}`}
+              onClick={() => setTriageFilter(key === triageFilter ? 'all' : key)}
+            >
+              {label} <span className="triage-pill-count">{count}</span>
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
+          <span className="triage-pill triage-accepted">
+            Accepted <span className="triage-pill-count">{triageCounts.accepted}</span>
+          </span>
+        </div>
+      )}
+
       {/* Filter bar */}
       <div className="filter-toolbar">
         <input
@@ -1595,18 +1738,6 @@ export default function PolicyTable({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        {platformView === 'srx' && (
-          <select
-            className="status-filter-select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="all">All Status</option>
-            <option value="unreviewed">Unreviewed</option>
-            <option value="accepted">Accepted</option>
-            <option value="disabled">Disabled</option>
-          </select>
-        )}
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           {displayPolicies.length} of {policies.length}
         </span>

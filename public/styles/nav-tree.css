@@ -88,6 +88,14 @@
   transform: rotate(-90deg);
 }
 
+.nav-group-header .stage-number {
+  font-size: 14px;
+  margin-right: 6px;
+  color: var(--accent);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
 .nav-group-header .group-icon {
   width: 16px;
   height: 16px;
@@ -154,7 +162,8 @@
   font-weight: 600;
 }
 
-.nav-item .nav-badge.warn {
+.nav-item .nav-badge.warn,
+.nav-item .nav-badge.actionable {
   color: var(--caution);
 }
 
@@ -198,7 +207,11 @@
 }
 
 /* --- Collapsed Sidebar State --- */
-.app-sidebar.collapsed .nav-tree .nav-group-header span:not(.group-icon) {
+.app-sidebar.collapsed .nav-tree .nav-group-header span:not(.group-icon):not(.stage-number) {
+  display: none;
+}
+
+.app-sidebar.collapsed .nav-tree .nav-group-header .stage-number {
   display: none;
 }
 
