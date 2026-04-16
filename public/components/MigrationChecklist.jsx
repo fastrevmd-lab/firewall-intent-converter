@@ -14,6 +14,7 @@
  * Checkbox state persists in localStorage keyed by site name.
  */
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { safeJsonParse } from '../utils/safe-json.js';
 
 /**
  * @typedef {Object} ChecklistItem
@@ -275,7 +276,7 @@ const STORAGE_KEY = 'migration-checklist-state';
 function loadCheckedState(siteName) {
   try {
     const raw = localStorage.getItem(`${STORAGE_KEY}-${siteName || 'default'}`);
-    return raw ? JSON.parse(raw) : {};
+    return raw ? safeJsonParse(raw) : {};
   } catch {
     return {};
   }

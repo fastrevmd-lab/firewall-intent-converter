@@ -27,6 +27,7 @@ import {
   CHECKPOINT_SOURCE_MODELS, SONICWALL_SOURCE_MODELS, HUAWEI_SOURCE_MODELS,
   getSrx4700Ports,
 } from '../data/hardware-db.js';
+import { safeJsonParse } from '../utils/safe-json.js';
 
 /** Look up the correct source model database for a given vendor */
 function getSourceModelDb(vendor) {
@@ -303,7 +304,7 @@ export default function InterfaceMapper({
   /** Get all saved templates from localStorage */
   const getSavedTemplates = () => {
     try {
-      return JSON.parse(localStorage.getItem(TEMPLATE_STORAGE_KEY) || '{}');
+      return safeJsonParse(localStorage.getItem(TEMPLATE_STORAGE_KEY) || '{}');
     } catch { return {}; }
   };
 

@@ -11,7 +11,7 @@ function cspPlugin() {
         "default-src 'self'",
         "script-src 'self'",
         "style-src 'self'",
-        "connect-src 'self' https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com http://localhost:* https://localhost:*",
+        "connect-src 'self' https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
         "img-src 'self' data:",
         "font-src 'self'",
         "object-src 'none'",

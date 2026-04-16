@@ -2,6 +2,7 @@ import React from 'react';
 import { useConfigContext } from '../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../contexts/ConversionContext.jsx';
 import { generateFullPdfHtml } from '../utils/pdf-report-generator.js';
+import { safeJsonParse } from '../utils/safe-json.js';
 import { PANOS_MODELS, SRX_MODELS } from '../data/hardware-db.js';
 
 /**
@@ -23,7 +24,7 @@ export default function ExportPdfButton() {
     // Detect if LLM is local (ollama/lmstudio)
     let isLocalLLM = false;
     try {
-      const llmSettings = JSON.parse(localStorage.getItem('llm-settings') || '{}');
+      const llmSettings = safeJsonParse(localStorage.getItem('llm-settings') || '{}');
       isLocalLLM = ['ollama', 'lmstudio'].includes(llmSettings.provider);
     } catch { /* ignore */ }
 
