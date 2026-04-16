@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-04-16
+
+### Added
+- Expanded `src/data/app-mappings.json` from 236 to 280+ canonical apps covering cloud SaaS (Adobe Creative Cloud, Apple APNs, Google FCM, Salesforce, ServiceNow, Dropbox, Box, GitHub, Bitbucket, Okta, Azure AD, AWS API, Google Workspace, Jira, Zendesk, HubSpot, Workday, Concur, Twilio, PagerDuty, Splunk Cloud, Datadog), collaboration (WeChat, Line, GoToMeeting), management/infrastructure (TACACS+, sFlow, DNS-over-TLS, DNS-over-HTTPS, syslog-TLS, LDAP-TLS, RADIUS Accounting), remote access/VPN (Cisco AnyConnect, GlobalProtect, Pulse Secure, FortiClient VPN, SSTP, IKEv2), database/middleware (ActiveMQ, NATS, ZooKeeper, ScyllaDB, Couchbase, Hazelcast, Pulsar, Hive), and industrial/ICS protocols (Modbus, DNP3, IEC-104, S7comm, BACnet, Niagara Fox).
+- Multi-vendor support broadened to include Check Point, SonicWall, and Huawei USG aliases on 40 core protocols (HTTP, HTTPS, SSH, DNS, LDAP, NTP, etc.) — previously these vendors had null fatcat keys and could not resolve anything against the mapping table.
+- New `getJunosEmission(appName, sourceVendor)` helper returning a discriminated union (`predefined` / `custom` / `null`) that powers concrete custom-application emission when a canonical entry has known ports but no Junos predefined equivalent.
+
+### Changed
+- Placeholder unmapped-application output now funnels into a single `INTERVIEW REQUIRED` block with `<name>-UNMAPPED` placeholders, instead of emitting a per-app `destination-port 1` definition line with a `Customfwic` suffix. Each unmapped app appears once with clearly-labeled sentinel values and a TODO comment naming the original vendor app.
+- `mapAppToJunos()` now passes through input names that are already valid Junos predefined applications (e.g. `junos-ldap` stays `junos-ldap` instead of being corrupted into `junos-ldapCustomfwic`).
+- Multi-port canonical apps (e.g. Apple APNs on 5223/2195/2196) emit an `application-set` with one sub-application per port, wrapped under a single canonical name the policy can reference.
+
+### Fixed
+- `_buildIndex()` in `src/utils/app-mappings.js` now tolerates vendor entries with `name: null`, required by the expanded schema that declares which vendors have no published signature for an app.
+- `autoGenerateMissingAppDefinitions()` check ordering: standard predefined Junos applications (`junos-https`, `junos-ldap`, etc.) are no longer incorrectly aliased as `custom-*` definitions.
+
 ## [1.1.0.0] - 2026-03-28
 
 ### Added
