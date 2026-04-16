@@ -134,5 +134,13 @@ for (const app of ['postgresql', 'mongodb', 'redis', 'memcached', 'cassandra', '
   });
 }
 
+console.log('--- Top-250 coverage: Industrial/ICS ---');
+for (const app of ['modbus', 'dnp3', 'iec-104', 's7comm', 'bacnet', 'niagara-fox']) {
+  test(`${app} (panos) resolves`, () => {
+    const r = getJunosEmission(app, 'panos');
+    assert(r !== null, `${app} should be mapped`);
+  });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

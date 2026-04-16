@@ -8496,6 +8496,254 @@
           "confidence": 0
         }
       }
+    },
+    {
+      "canonical": "modbus",
+      "description": "Modbus industrial protocol for serial communication",
+      "category": "ics",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "502"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "modbus",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "Modbus",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "Modbus",
+          "confidence": 0.85
+        },
+        "checkpoint": {
+          "name": "Modbus",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "modbus",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "dnp3",
+      "description": "DNP3 Distributed Network Protocol for SCADA systems",
+      "category": "ics",
+      "protocols": [
+        "TCP",
+        "UDP"
+      ],
+      "ports": [
+        "20000"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "dnp3",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "DNP3",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "DNP3",
+          "confidence": 0.9
+        },
+        "checkpoint": {
+          "name": "DNP3",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "dnp3",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "iec-104",
+      "description": "IEC 60870-5-104 telecontrol protocol over TCP/IP",
+      "category": "ics",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "2404"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "iec-104",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "IEC-104",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "IEC104",
+          "confidence": 0.85
+        },
+        "checkpoint": {
+          "name": "IEC-104",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "iec104",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "s7comm",
+      "description": "Siemens S7 PLC communication protocol",
+      "category": "ics",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "102"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "s7comm",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "S7",
+          "confidence": 0.85
+        },
+        "ftd": {
+          "name": "S7COMM",
+          "confidence": 0.9
+        },
+        "checkpoint": {
+          "name": "S7comm",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "s7comm",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "bacnet",
+      "description": "BACnet building automation and control network protocol",
+      "category": "ics",
+      "protocols": [
+        "UDP"
+      ],
+      "ports": [
+        "47808"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "bacnet",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "BACnet",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "BACnet",
+          "confidence": 0.85
+        },
+        "checkpoint": {
+          "name": "BACnet",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "bacnet",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "niagara-fox",
+      "description": "Tridium Niagara Framework Fox protocol for building systems",
+      "category": "ics",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "1911",
+        "4911"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "niagara-fox",
+          "confidence": 0.85
+        },
+        "fortios": {
+          "name": "Niagara-Fox",
+          "confidence": 0.8
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
     }
   ]
 }
