@@ -34,5 +34,22 @@ test('huawei vendor lookup resolves https (if alias present)', () => {
     `huawei_usg/https returned unexpected ${JSON.stringify(r)}`);
 });
 
+import { mapAppToJunos, JUNOS_PREDEFINED_APPS } from '../src/parsers/parser-utils.js';
+
+console.log('--- junos-* passthrough ---');
+test('junos-ldap passes through unchanged', () => {
+  const r = mapAppToJunos('junos-ldap', 'panos');
+  assert(r === 'junos-ldap', `expected junos-ldap, got ${r}`);
+});
+test('junos-https passes through unchanged', () => {
+  const r = mapAppToJunos('junos-https', 'fortigate');
+  assert(r === 'junos-https', `expected junos-https, got ${r}`);
+});
+test('junos-bogus (not a predefined) does NOT pass through', () => {
+  assert(!JUNOS_PREDEFINED_APPS.has('junos-bogus'), 'precondition failed');
+  const r = mapAppToJunos('junos-bogus', 'panos');
+  assert(r === null, `expected null for unknown junos-* name, got ${r}`);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

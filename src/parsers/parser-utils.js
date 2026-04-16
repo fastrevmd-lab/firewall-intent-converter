@@ -482,7 +482,10 @@ const APP_MAP = {
 export function mapAppToJunos(appName, sourceVendor = '') {
   if (!appName) return null;
 
-  // Try enhanced app-mappings.json first (if loaded, confidence >= 0.8)
+  // Rule 1: passthrough — input is already a valid Junos predefined application
+  if (JUNOS_PREDEFINED_APPS.has(appName)) return appName;
+
+  // Rule 2: enhanced app-mappings.json lookup (if loaded, confidence >= 0.8)
   if (sourceVendor) {
     try {
       const result = _mapVendorAppFn?.(appName, sourceVendor);
@@ -492,7 +495,7 @@ export function mapAppToJunos(appName, sourceVendor = '') {
     } catch (_) { /* app mappings not loaded yet, fall through */ }
   }
 
-  // Fall back to built-in APP_MAP (synchronous, always available)
+  // Rule 3: built-in APP_MAP (synchronous, always available)
   if (APP_MAP[appName]) return APP_MAP[appName];
   const normalized = appName.toLowerCase().trim();
   return APP_MAP[normalized] || null;
