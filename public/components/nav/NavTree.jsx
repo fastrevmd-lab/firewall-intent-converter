@@ -3,6 +3,7 @@ import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
 import { useUIContext } from '../../contexts/UIContext.jsx';
 import useSectionAcceptance from '../../hooks/useSectionAcceptance.js';
+import { safeJsonParse } from '../../utils/safe-json.js';
 
 /* ── Inline SVG Icons (16x16, stroke-based) ──────────────────────── */
 const ICONS = {
@@ -136,7 +137,7 @@ export default function NavTree({ collapsed }) {
   const [expandedGroups, setExpandedGroups] = useState(() => {
     try {
       const saved = localStorage.getItem('nav-expanded-stages');
-      if (saved) return new Set(JSON.parse(saved));
+      if (saved) return new Set(safeJsonParse(saved));
     } catch { /* ignore */ }
     return new Set(NAV_STRUCTURE.map(g => g.id));
   });
