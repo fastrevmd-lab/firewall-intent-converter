@@ -19,6 +19,7 @@
  */
 
 import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning, isPredefEquivalent, JUNOS_PREDEFINED_APPS } from '../parsers/parser-utils.js';
+import { getJunosEmission } from '../utils/app-mappings.js';
 
 /**
  * Returns the correct ANY address for NAT rules based on whether the rule
@@ -114,7 +115,8 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   }
 
   // Clear trackers from any previous conversion (module-level state)
-  customfwicApps.clear();
+  unmappedApps.clear();
+  concreteCustomApps.clear();
   predefServiceMap.clear();
   commaPortSetMap.clear();
   unresolvedServiceApps.clear();
@@ -146,28 +148,41 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
 
   convertSchedules(config.schedules, commands, warnings);
 
-  // Bug 4 fix: Run policy conversion into a temp buffer to populate customfwicApps,
-  // then emit placeholder app definitions BEFORE emitting the policy commands.
+  // Run policy conversion into a temp buffer to populate unmappedApps/concreteCustomApps,
+  // then emit application definitions BEFORE emitting the policy commands.
   // This ensures all custom applications are defined before policies reference them.
   const policyCommands = [];
   convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor, config._rule_groups);
 
-  if (customfwicApps.size > 0) {
+  // Tier 2 emission: concrete custom applications (known ports from canonical data)
+  if (concreteCustomApps.size > 0) {
     commands.push('# =============================================');
-    commands.push('# Placeholder Custom Applications (Customfwic)');
-    commands.push('# WARNING: These need manual protocol/port definitions');
+    commands.push('# Custom Applications (auto-generated from app-mappings canonical data)');
     commands.push('# =============================================');
-    for (const [customName, originalName] of customfwicApps) {
-      commands.push(`# TODO: Define "${originalName}" — set correct protocol and destination-port`);
-      commands.push(`set applications application ${customName} protocol tcp`);
-      commands.push(`set applications application ${customName} destination-port 1`);
-      commands.push(`set applications application ${customName} description "Placeholder for ${originalName} - REQUIRES MANUAL CONFIGURATION"`);
+    for (const [customName, info] of concreteCustomApps) {
+      const { protocol, ports, originalName, canonical } = info;
+      if (ports.length === 1) {
+        commands.push(`set applications application ${customName} protocol ${protocol}`);
+        commands.push(`set applications application ${customName} destination-port ${ports[0]}`);
+        commands.push(`set applications application ${customName} description "${originalName} (canonical: ${canonical})"`);
+      } else {
+        // Multi-port: customName becomes an application-set composed of per-port sub-apps
+        for (const port of ports) {
+          const subName = `${customName}-p${port}`;
+          commands.push(`set applications application ${subName} protocol ${protocol}`);
+          commands.push(`set applications application ${subName} destination-port ${port}`);
+        }
+        commands.push(`set applications application-set ${customName} description "${originalName} (canonical: ${canonical})"`);
+        for (const port of ports) {
+          const subName = `${customName}-p${port}`;
+          commands.push(`set applications application-set ${customName} application ${subName}`);
+        }
+      }
     }
     commands.push('');
   }
 
-  // Fix 4: Emit definitions for service references not already defined as applications.
-  // Build set of already-defined application names from prior commands.
+  // Existing Fix 4 logic: emit definitions for service references with inferable name patterns
   if (unresolvedServiceApps.size > 0) {
     const definedApps = new Set();
     for (const cmd of commands) {
@@ -176,34 +191,51 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
       const appSetMatch = cmd.match(/^set applications application-set (\S+)/);
       if (appSetMatch) definedApps.add(appSetMatch[1]);
     }
-    const needsDefinition = [];
+    const inferable = [];
+    const uninferable = [];
     for (const [safeName, originalName] of unresolvedServiceApps) {
       if (definedApps.has(safeName)) continue;
       if (JUNOS_PREDEFINED_APPS.has(safeName)) continue;
-      // Try to infer protocol/port from name pattern like "tcp-9090" or "udp-53"
-      const protoPortMatch = safeName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
-      if (protoPortMatch) {
-        const proto = protoPortMatch[1].toLowerCase();
-        const port = protoPortMatch[2];
-        needsDefinition.push({ safeName, originalName, proto, port });
-      } else {
-        needsDefinition.push({ safeName, originalName, proto: 'tcp', port: '1' });
-      }
+      const m = safeName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
+      if (m) inferable.push({ safeName, originalName, proto: m[1].toLowerCase(), port: m[2] });
+      else uninferable.push({ safeName, originalName });
     }
-    if (needsDefinition.length > 0) {
+    if (inferable.length > 0) {
       commands.push('# =============================================');
-      commands.push('# Auto-generated Application Definitions');
-      commands.push('# (referenced in policies but not defined by source config)');
+      commands.push('# Auto-inferred Application Definitions (from name pattern)');
       commands.push('# =============================================');
-      for (const { safeName, originalName, proto, port } of needsDefinition) {
+      for (const { safeName, proto, port } of inferable) {
         commands.push(`set applications application ${safeName} protocol ${proto}`);
         commands.push(`set applications application ${safeName} destination-port ${port}`);
-        if (port === '1') {
-          commands.push(`# WARNING: "${originalName}" — could not infer port, set to placeholder`);
-        }
       }
       commands.push('');
     }
+    for (const { safeName, originalName } of uninferable) {
+      unmappedApps.set(safeName, originalName);
+    }
+  }
+
+  // Tier 3 emission: single INTERVIEW REQUIRED block
+  if (unmappedApps.size > 0) {
+    commands.push('# =============================================================');
+    commands.push('# INTERVIEW REQUIRED: Unmapped Applications');
+    commands.push('# -----------------------------------------------------------');
+    commands.push('# The following applications were referenced in the source');
+    commands.push('# configuration but could not be mapped to a known Junos');
+    commands.push('# predefined application or canonical mapping entry.');
+    commands.push('#');
+    commands.push('# For each entry below, replace the placeholder with the real');
+    commands.push('# protocol and destination-port(s), or map it to an existing');
+    commands.push('# Junos predefined application in your policies.');
+    commands.push('# =============================================================');
+    for (const [placeholderName, originalName] of unmappedApps) {
+      commands.push(`# INTERVIEW: "${originalName}" — placeholder "${placeholderName}" emitted below with sentinel values.`);
+      commands.push(`set applications application ${placeholderName} protocol tcp`);
+      commands.push(`set applications application ${placeholderName} destination-port 1`);
+      commands.push(`set applications application ${placeholderName} description "INTERVIEW REQUIRED: ${originalName}"`);
+    }
+    commands.push('# =============================================================');
+    commands.push('');
   }
 
   commands.push(...policyCommands);
@@ -616,13 +648,14 @@ function autoGenerateMissingAppDefinitions(commands) {
       missing.push(app); // Always generate — may not exist on target
       continue;
     }
-    // For any junos-* app not in our known list, still generate a custom definition
-    // since vSRX and older platforms may lack many predefined apps
+    // Standard predefined apps are always available — no custom definition needed
+    if (JUNOS_PREDEFINED_APPS.has(app)) continue;
+    // For any junos-* app not in our known list and not a standard predefined,
+    // still generate a custom definition since vSRX and older platforms may lack it
     if (app.startsWith('junos-') && !PLATFORM_DEPENDENT_APPS[app]) {
       missing.push(app);
       continue;
     }
-    if (JUNOS_PREDEFINED_APPS.has(app)) continue;
     missing.push(app);
   }
 
@@ -1792,10 +1825,20 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 }
 
 /**
- * Tracks unmapped applications that received the Customfwic placeholder suffix.
- * Map of customName → originalName, used to generate placeholder definitions.
+ * Tracks unmapped applications — the name is unknown to our mapping data
+ * AND does not match any JUNOS_PREDEFINED_APPS entry. These produce the
+ * INTERVIEW REQUIRED block and a policy reference to <name>-UNMAPPED.
+ * Map of unmappedName → originalName.
  */
-const customfwicApps = new Map();
+const unmappedApps = new Map();
+
+/**
+ * Tracks applications with concrete protocol/port info sourced from
+ * app-mappings.json canonical entries that have no `junos` predefined.
+ * Emitted as real `set applications application ...` definitions.
+ * Map of customName → { protocol, ports: string[], originalName, canonical }.
+ */
+const concreteCustomApps = new Map();
 
 /**
  * Fix 4: Tracks service names referenced in policies that were not defined
@@ -1825,8 +1868,8 @@ const predefServiceMap = new Map();
  *
  * For SRX→SRX conversions, applications pass through 1:1 (already Junos names).
  * For other vendors, applications are mapped via mapAppToJunos().
- * Unmapped applications get a "Customfwic" suffix and a warning is generated
- * telling the user to create a custom application definition on the SRX.
+ * Unmapped applications get a "-UNMAPPED" suffix and a warning is generated
+ * pointing users to the INTERVIEW REQUIRED block for manual completion.
  *
  * SRX only has "application" in policy match — we unify both fields.
  */
@@ -1834,29 +1877,46 @@ function resolveApplications(applications, services, warnings, policyName, appGr
   const resolved = [];
   const isSrxSource = sourceVendor === 'srx' || sourceVendor === 'greenfield' || sourceVendor === 'srx_healthcheck';
 
-  // Helper to map a single app name to Junos (with Customfwic fallback)
+  // Helper to map a single app name to Junos using three-tier emission logic
   const mapSingleApp = (appName) => {
-    // SRX→SRX: pass through as-is (already a Junos application name)
     if (isSrxSource) {
       resolved.push(appName);
       return;
     }
+
+    // Tier 1: junos-* passthrough + APP_MAP + confident mapping
     const junosApp = mapAppToJunos(appName, sourceVendor);
     if (junosApp) {
       resolved.push(junosApp);
-    } else {
-      let customName = sanitizeJunosName(appName).replace(/\./g, '-') + 'Customfwic';
-      // Junos names must start with a letter
+      return;
+    }
+
+    // Tier 2: canonical with known ports but no junos predefined → concrete custom app
+    const emission = getJunosEmission(appName, sourceVendor);
+    if (emission?.kind === 'custom') {
+      let customName = sanitizeJunosName(appName).replace(/\./g, '-');
       if (/^\d/.test(customName)) customName = `app-${customName}`;
       resolved.push(customName);
-      customfwicApps.set(customName, appName);
-      warnings.push(createWarning(
-        'warning',
-        `policy/${policyName}`,
-        `Application "${appName}" has no predefined Junos equivalent — using placeholder "${customName}"`,
-        'Create a custom application on the SRX with the correct protocol/port definition for this application'
-      ));
+      concreteCustomApps.set(customName, {
+        protocol: emission.protocol,
+        ports: emission.ports,
+        originalName: appName,
+        canonical: emission.canonical,
+      });
+      return;
     }
+
+    // Tier 3: truly unknown — emit -UNMAPPED reference + add to INTERVIEW block
+    let unmappedName = sanitizeJunosName(appName).replace(/\./g, '-') + '-UNMAPPED';
+    if (/^\d/.test(unmappedName)) unmappedName = `app-${unmappedName}`;
+    resolved.push(unmappedName);
+    unmappedApps.set(unmappedName, appName);
+    warnings.push(createWarning(
+      'warning',
+      `policy/${policyName}`,
+      `Application "${appName}" has no known Junos equivalent — listed in INTERVIEW REQUIRED block`,
+      'Provide the correct protocol/port(s) for this application and replace the <name>-UNMAPPED placeholder.'
+    ));
   };
 
   // Map applications to Junos equivalents
