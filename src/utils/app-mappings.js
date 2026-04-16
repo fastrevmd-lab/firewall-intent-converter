@@ -11,9 +11,9 @@ const VENDOR_KEY_MAP = {
   fortigate: 'fortios',
   cisco_asa: 'ftd',
   srx: 'junos',
-  checkpoint: null,
-  sonicwall: null,
-  huawei_usg: null,
+  checkpoint: 'checkpoint',
+  sonicwall: 'sonicwall',
+  huawei_usg: 'huawei',
 };
 
 let _appData = null;
@@ -40,7 +40,7 @@ function _buildIndex() {
  */
 export async function loadAppMappings() {
   if (_appData) return _appData;
-  const mod = await import('../data/app-mappings.json');
+  const mod = await import('../data/app-mappings.json', { with: { type: 'json' } });
   _appData = mod.default || mod;
   _buildIndex();
   return _appData;
