@@ -86,5 +86,16 @@ test('salesforce (panos) resolves', () => {
   assert(r !== null, 'salesforce should be mapped');
 });
 
+console.log('--- Top-250 coverage: Communication ---');
+// ms-teams, webex, slack, skype, google-meet, ringcentral already existed pre-5b.
+// gotomeeting added in 5b (distinct from goto-meeting canonical).
+// wechat, line added in 5b as substitutes.
+for (const app of ['ms-teams', 'webex', 'slack', 'skype', 'google-meet', 'ringcentral', 'gotomeeting']) {
+  test(`${app} (panos) resolves`, () => {
+    const r = getJunosEmission(app, 'panos');
+    assert(r !== null, `${app} should be mapped`);
+  });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
