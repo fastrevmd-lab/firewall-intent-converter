@@ -3073,6 +3073,230 @@
         "panos": { "name": "netsuite", "confidence": 1.0 },
         "ftd": { "name": "NetSuite", "confidence": 1.0 }
       }
+    },
+    {
+      "canonical": "adobe-cloud",
+      "description": "Adobe Creative Cloud — sync, auth, update",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "adobe-cloud", "confidence": 0.95 },
+        "fortios":    { "name": "Adobe.Creative.Cloud", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Adobe_Creative_Cloud", "confidence": 0.8 },
+        "sonicwall":  { "name": "Adobe Creative Cloud", "confidence": 0.8 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "apple-push-notifications",
+      "description": "Apple Push Notification service (APNs) — iOS/macOS",
+      "category": "mobile",
+      "protocols": ["TCP"],
+      "ports": ["5223", "2195", "2196"],
+      "vendors": {
+        "panos":      { "name": "apple-push-notifications", "confidence": 0.95 },
+        "fortios":    { "name": "Apple.Push.Notification", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Apple_Push_Notification", "confidence": 0.8 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "google-push",
+      "description": "Google Firebase/Cloud Messaging push",
+      "category": "mobile",
+      "protocols": ["TCP"],
+      "ports": ["5228", "5229", "5230"],
+      "vendors": {
+        "panos":      { "name": "google-fcm", "confidence": 0.9 },
+        "fortios":    { "name": "Google.FCM", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": null, "confidence": 0.0 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "azure-ad-auth",
+      "description": "Microsoft Azure AD authentication",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "ms-office365-base", "confidence": 0.85 },
+        "fortios":    { "name": "Microsoft.Azure", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Microsoft_Azure", "confidence": 0.8 },
+        "sonicwall":  { "name": "Microsoft Azure", "confidence": 0.8 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "aws-api",
+      "description": "Amazon Web Services API",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "amazon-aws", "confidence": 0.9 },
+        "fortios":    { "name": "Amazon.AWS", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Amazon_AWS", "confidence": 0.8 },
+        "sonicwall":  { "name": "Amazon AWS", "confidence": 0.8 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "jira-confluence",
+      "description": "Atlassian Jira/Confluence cloud",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "jira", "confidence": 0.9 },
+        "fortios":    { "name": "Jira", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Atlassian_Jira", "confidence": 0.8 },
+        "sonicwall":  { "name": "Atlassian Jira", "confidence": 0.8 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "zendesk",
+      "description": "Zendesk customer support SaaS",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "zendesk", "confidence": 0.9 },
+        "fortios":    { "name": "Zendesk", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Zendesk", "confidence": 0.8 },
+        "sonicwall":  { "name": "Zendesk", "confidence": 0.8 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "hubspot",
+      "description": "HubSpot CRM and marketing platform",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "hubspot", "confidence": 0.9 },
+        "fortios":    { "name": "HubSpot", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "HubSpot", "confidence": 0.8 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "workday",
+      "description": "Workday HCM/ERP cloud",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "workday", "confidence": 0.9 },
+        "fortios":    { "name": "Workday", "confidence": 0.85 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Workday", "confidence": 0.8 },
+        "sonicwall":  { "name": "Workday", "confidence": 0.8 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "concur",
+      "description": "SAP Concur travel and expense SaaS",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "concur", "confidence": 0.85 },
+        "fortios":    { "name": "Concur", "confidence": 0.8 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": null, "confidence": 0.0 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "twilio",
+      "description": "Twilio communications cloud (voice/SMS API)",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443", "5060", "5061"],
+      "vendors": {
+        "panos":      { "name": "twilio", "confidence": 0.85 },
+        "fortios":    { "name": "Twilio", "confidence": 0.8 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": null, "confidence": 0.0 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "pagerduty",
+      "description": "PagerDuty incident management SaaS",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443"],
+      "vendors": {
+        "panos":      { "name": "pagerduty", "confidence": 0.85 },
+        "fortios":    { "name": "PagerDuty", "confidence": 0.8 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": null, "confidence": 0.0 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "splunk-cloud",
+      "description": "Splunk Cloud SIEM/logging SaaS",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443", "8089"],
+      "vendors": {
+        "panos":      { "name": "splunk", "confidence": 0.85 },
+        "fortios":    { "name": "Splunk", "confidence": 0.8 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": "Splunk", "confidence": 0.8 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
+    },
+    {
+      "canonical": "datadog",
+      "description": "Datadog cloud monitoring and observability SaaS",
+      "category": "cloud",
+      "protocols": ["TCP"],
+      "ports": ["443", "10516"],
+      "vendors": {
+        "panos":      { "name": "datadog", "confidence": 0.85 },
+        "fortios":    { "name": "DataDog", "confidence": 0.8 },
+        "ftd":        { "name": null, "confidence": 0.0 },
+        "checkpoint": { "name": null, "confidence": 0.0 },
+        "sonicwall":  { "name": null, "confidence": 0.0 },
+        "huawei":     { "name": null, "confidence": 0.0 },
+        "junos":      { "name": null, "confidence": 0.0 }
+      }
     }
   ]
 }

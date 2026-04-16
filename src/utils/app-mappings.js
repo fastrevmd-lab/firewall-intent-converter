@@ -26,7 +26,7 @@ function _buildIndex() {
     const map = new Map();
     for (const app of _appData.apps) {
       const vendorEntry = app.vendors[fatcatKey];
-      if (vendorEntry) {
+      if (vendorEntry && vendorEntry.name !== null) {
         map.set(vendorEntry.name.toLowerCase(), app);
       }
     }

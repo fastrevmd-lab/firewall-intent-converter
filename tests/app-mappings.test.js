@@ -70,5 +70,21 @@ test('custom-kind shape is { kind: custom, protocol, ports[] } when present', ()
   assert(r === null, 'shape probe expected null until Task 5');
 });
 
+console.log('--- Top-250 coverage: Cloud SaaS ---');
+test('adobe-cloud (panos) resolves to concrete custom app on 443/tcp', () => {
+  const r = getJunosEmission('adobe-cloud', 'panos');
+  assert(r?.kind === 'custom', `expected custom emission, got ${JSON.stringify(r)}`);
+  assert(r.protocol === 'tcp' && r.ports.includes('443'), 'expected tcp/443');
+});
+test('apple-push-notifications (panos) resolves multi-port', () => {
+  const r = getJunosEmission('apple-push-notifications', 'panos');
+  assert(r?.kind === 'custom', `expected custom emission, got ${JSON.stringify(r)}`);
+  assert(r.ports.includes('5223'), 'expected port 5223');
+});
+test('salesforce (panos) resolves', () => {
+  const r = getJunosEmission('salesforce', 'panos');
+  assert(r !== null, 'salesforce should be mapped');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
