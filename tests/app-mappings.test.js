@@ -3,7 +3,7 @@
  * Tests for src/utils/app-mappings.js multi-vendor coverage.
  * Run with: node tests/app-mappings.test.js
  */
-import { loadAppMappings, mapVendorApp, getJunosEmission, isLoaded } from '../src/utils/app-mappings.js';
+import { loadAppMappings, mapVendorApp, getJunosEmission } from '../src/utils/app-mappings.js';
 import { mapAppToJunos, JUNOS_PREDEFINED_APPS } from '../src/parsers/parser-utils.js';
 
 let passed = 0;
