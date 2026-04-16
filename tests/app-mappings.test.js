@@ -3,7 +3,7 @@
  * Tests for src/utils/app-mappings.js multi-vendor coverage.
  * Run with: node tests/app-mappings.test.js
  */
-import { loadAppMappings, mapVendorApp, getJunosEmission } from '../src/utils/app-mappings.js';
+import { loadAppMappings, mapVendorApp, getJunosEmission, getAppCount } from '../src/utils/app-mappings.js';
 import { mapAppToJunos, JUNOS_PREDEFINED_APPS } from '../src/parsers/parser-utils.js';
 
 let passed = 0;
@@ -141,6 +141,26 @@ for (const app of ['modbus', 'dnp3', 'iec-104', 's7comm', 'bacnet', 'niagara-fox
     assert(r !== null, `${app} should be mapped`);
   });
 }
+
+console.log('--- Backfilled vendor aliases ---');
+for (const app of ['http', 'https', 'ssh', 'dns', 'ldap', 'ntp']) {
+  test(`${app} resolves on checkpoint`, () => {
+    const r = mapVendorApp(app, 'checkpoint') || mapVendorApp(app.toUpperCase(), 'checkpoint');
+    assert(r !== null, `${app} missing checkpoint alias`);
+  });
+  test(`${app} resolves on sonicwall`, () => {
+    const r = mapVendorApp(app, 'sonicwall') || mapVendorApp(app.toUpperCase(), 'sonicwall');
+    assert(r !== null, `${app} missing sonicwall alias`);
+  });
+  test(`${app} resolves on huawei_usg`, () => {
+    const r = mapVendorApp(app, 'huawei_usg') || mapVendorApp(app.toUpperCase(), 'huawei_usg');
+    assert(r !== null, `${app} missing huawei alias`);
+  });
+}
+
+test('total canonical app count >= 250', () => {
+  assert(getAppCount() >= 250, `got ${getAppCount()} apps; expected >= 250`);
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

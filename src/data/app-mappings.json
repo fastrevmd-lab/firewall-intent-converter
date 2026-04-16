@@ -31,6 +31,18 @@
         "ftd": {
           "name": "HTTPS",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "HTTPS",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "HTTPS",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "https",
+          "confidence": 0.9
         }
       }
     },
@@ -60,6 +72,18 @@
         "ftd": {
           "name": "HTTP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "HTTP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "HTTP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "http",
+          "confidence": 0.9
         }
       }
     },
@@ -90,6 +114,18 @@
         "ftd": {
           "name": "DNS",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "DNS",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "DNS",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "dns",
+          "confidence": 0.9
         }
       }
     },
@@ -178,6 +214,18 @@
         "ftd": {
           "name": "SMTP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "SMTP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "SMTP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "smtp",
+          "confidence": 0.9
         }
       }
     },
@@ -207,6 +255,18 @@
         "ftd": {
           "name": "SSH",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "SSH",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "SSH",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "ssh",
+          "confidence": 0.9
         }
       }
     },
@@ -236,6 +296,18 @@
         "ftd": {
           "name": "RDP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "RDP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "RDP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "rdp",
+          "confidence": 0.9
         }
       }
     },
@@ -562,6 +634,18 @@
         "ftd": {
           "name": "NTP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "NTP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "NTP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "ntp",
+          "confidence": 0.9
         }
       }
     },
@@ -591,6 +675,18 @@
         "ftd": {
           "name": "FTP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "FTP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "FTP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "ftp",
+          "confidence": 0.9
         }
       }
     },
@@ -620,6 +716,18 @@
         "ftd": {
           "name": "SMB",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "CIFS",
+          "confidence": 0.8
+        },
+        "sonicwall": {
+          "name": "SMB",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "smb",
+          "confidence": 0.9
         }
       }
     },
@@ -650,6 +758,18 @@
         "ftd": {
           "name": "SIP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "SIP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "SIP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "sip",
+          "confidence": 0.9
         }
       }
     },
@@ -679,6 +799,18 @@
         "ftd": {
           "name": "SNMP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "SNMP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "SNMP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "snmp",
+          "confidence": 0.9
         }
       }
     },
@@ -708,6 +840,18 @@
         "ftd": {
           "name": "LDAP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "LDAP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "LDAP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "ldap",
+          "confidence": 0.9
         }
       }
     },
@@ -797,6 +941,18 @@
         "ftd": {
           "name": "IMAP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "IMAP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "IMAP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "imap",
+          "confidence": 0.9
         }
       }
     },
@@ -826,6 +982,18 @@
         "ftd": {
           "name": "POP3",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "POP3",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "POP3",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "pop3",
+          "confidence": 0.9
         }
       }
     },
@@ -856,6 +1024,18 @@
         "ftd": {
           "name": "DHCP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "DHCP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "DHCP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "dhcp",
+          "confidence": 0.9
         }
       }
     },
@@ -885,6 +1065,18 @@
         "ftd": {
           "name": "Telnet",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "TELNET",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "TELNET",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "telnet",
+          "confidence": 0.9
         }
       }
     },
@@ -914,6 +1106,18 @@
         "ftd": {
           "name": "MySQL",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "MySQL",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "MySQL",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "mysql",
+          "confidence": 0.9
         }
       }
     },
@@ -1060,6 +1264,18 @@
         "ftd": {
           "name": "Kerberos",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "Kerberos",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "Kerberos",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "kerberos",
+          "confidence": 0.9
         }
       }
     },
@@ -1090,6 +1306,18 @@
         "ftd": {
           "name": "RADIUS",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "RADIUS",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "RADIUS",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "radius",
+          "confidence": 0.9
         }
       }
     },
@@ -1119,6 +1347,18 @@
         "ftd": {
           "name": "TACACS",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "TACACS",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "TACACS",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "tacacs",
+          "confidence": 0.9
         }
       }
     },
@@ -1149,6 +1389,18 @@
         "ftd": {
           "name": "Syslog",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "SYSLOG",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "SYSLOG",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "syslog",
+          "confidence": 0.9
         }
       }
     },
@@ -1178,6 +1430,18 @@
         "ftd": {
           "name": "TFTP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "TFTP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "TFTP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "tftp",
+          "confidence": 0.9
         }
       }
     },
@@ -1324,6 +1588,18 @@
         "ftd": {
           "name": "RTSP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "RTSP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "RTSP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "rtsp",
+          "confidence": 0.9
         }
       }
     },
@@ -1354,6 +1630,18 @@
         "ftd": {
           "name": "IPsec",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "IKE",
+          "confidence": 0.8
+        },
+        "sonicwall": {
+          "name": "IKE",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "ike",
+          "confidence": 0.9
         }
       }
     },
@@ -1413,6 +1701,18 @@
         "ftd": {
           "name": "Oracle",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "Oracle",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "Oracle",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "oracle",
+          "confidence": 0.9
         }
       }
     },
@@ -1733,6 +2033,18 @@
         "ftd": {
           "name": "Skype",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "SKYPE_FOR_BUSINESS",
+          "confidence": 0.8
+        },
+        "sonicwall": {
+          "name": "Skype",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "skype",
+          "confidence": 0.9
         }
       }
     },
@@ -2289,6 +2601,18 @@
         "ftd": {
           "name": "NFS",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "NFS",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "NFS",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "nfs",
+          "confidence": 0.9
         }
       }
     },
@@ -2376,6 +2700,18 @@
         "ftd": {
           "name": "BGP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "BGP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "BGP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "bgp",
+          "confidence": 0.9
         }
       }
     },
@@ -2403,6 +2739,18 @@
         "ftd": {
           "name": "OSPF",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "OSPF",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "OSPF",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "ospf",
+          "confidence": 0.9
         }
       }
     },
@@ -2486,6 +2834,18 @@
         "ftd": {
           "name": "L2TP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "L2TP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "L2TP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "l2tp",
+          "confidence": 0.9
         }
       }
     },
@@ -2515,6 +2875,18 @@
         "ftd": {
           "name": "PPTP",
           "confidence": 1
+        },
+        "checkpoint": {
+          "name": "PPTP",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "PPTP",
+          "confidence": 0.9
+        },
+        "huawei": {
+          "name": "pptp",
+          "confidence": 0.9
         }
       }
     },
