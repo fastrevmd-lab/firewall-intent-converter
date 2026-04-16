@@ -125,5 +125,14 @@ for (const app of ['wireguard', 'openvpn', 'cisco-anyconnect', 'globalprotect', 
   });
 }
 
+console.log('--- Top-250 coverage: Database/Middleware ---');
+// All 8 specified DB/middleware apps existed pre-5e. 5e adds substitutes.
+for (const app of ['postgresql', 'mongodb', 'redis', 'memcached', 'cassandra', 'elasticsearch', 'rabbitmq', 'kafka']) {
+  test(`${app} (panos) resolves`, () => {
+    const r = getJunosEmission(app, 'panos');
+    assert(r !== null, `${app} should be mapped`);
+  });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

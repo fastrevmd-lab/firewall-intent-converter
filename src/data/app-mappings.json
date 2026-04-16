@@ -8156,6 +8156,346 @@
           "confidence": 0.95
         }
       }
+    },
+    {
+      "canonical": "activemq",
+      "description": "Apache ActiveMQ message broker",
+      "category": "middleware",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "61616",
+        "61613",
+        "8161"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "activemq",
+          "confidence": 0.85
+        },
+        "fortios": {
+          "name": "ActiveMQ",
+          "confidence": 0.8
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "nats",
+      "description": "NATS cloud-native messaging system",
+      "category": "middleware",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "4222",
+        "8222"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "nats",
+          "confidence": 0.85
+        },
+        "fortios": {
+          "name": null,
+          "confidence": 0
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "zookeeper",
+      "description": "Apache ZooKeeper distributed coordination service",
+      "category": "middleware",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "2181",
+        "2888",
+        "3888"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "zookeeper",
+          "confidence": 0.85
+        },
+        "fortios": {
+          "name": "ZooKeeper",
+          "confidence": 0.8
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "scylladb",
+      "description": "ScyllaDB high-performance NoSQL database (Cassandra-compatible)",
+      "category": "database",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "9042",
+        "9160",
+        "7000"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "scylladb",
+          "confidence": 0.8
+        },
+        "fortios": {
+          "name": null,
+          "confidence": 0
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "couchbase",
+      "description": "Couchbase distributed NoSQL database",
+      "category": "database",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "8091",
+        "8092",
+        "11210"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "couchbase",
+          "confidence": 0.85
+        },
+        "fortios": {
+          "name": "Couchbase",
+          "confidence": 0.8
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "hazelcast",
+      "description": "Hazelcast in-memory data grid and cache",
+      "category": "middleware",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "5701",
+        "5702"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "hazelcast",
+          "confidence": 0.8
+        },
+        "fortios": {
+          "name": null,
+          "confidence": 0
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "pulsar",
+      "description": "Apache Pulsar distributed messaging and streaming platform",
+      "category": "middleware",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "6650",
+        "8080"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "pulsar",
+          "confidence": 0.8
+        },
+        "fortios": {
+          "name": null,
+          "confidence": 0
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "hive",
+      "description": "Apache Hive data warehouse infrastructure for Hadoop",
+      "category": "database",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "10000",
+        "10002"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "hive",
+          "confidence": 0.8
+        },
+        "fortios": {
+          "name": null,
+          "confidence": 0
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": null,
+          "confidence": 0
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
     }
   ]
 }
