@@ -7616,6 +7616,293 @@
           "confidence": 0
         }
       }
+    },
+    {
+      "canonical": "tacacs-plus",
+      "description": "TACACS+ terminal access controller access control system",
+      "category": "auth",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "49"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "tacacs-plus",
+          "confidence": 0.95
+        },
+        "fortios": {
+          "name": "TACACS+",
+          "confidence": 0.95
+        },
+        "ftd": {
+          "name": "TACACS+",
+          "confidence": 0.9
+        },
+        "checkpoint": {
+          "name": "TACACS+",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "TACACS+",
+          "confidence": 0.85
+        },
+        "huawei": {
+          "name": "tacacs-plus",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": "junos:TACACS-DS",
+          "confidence": 0.85
+        }
+      }
+    },
+    {
+      "canonical": "sflow",
+      "description": "sFlow network traffic sampling protocol",
+      "category": "management",
+      "protocols": [
+        "UDP"
+      ],
+      "ports": [
+        "6343"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "sflow",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "sFlow",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "sflow",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "dns-over-tls",
+      "description": "DNS over TLS encrypted DNS resolution (DoT)",
+      "category": "management",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "853"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "dns-over-tls",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "DNS-over-TLS",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "DNS-over-TLS",
+          "confidence": 0.85
+        },
+        "checkpoint": {
+          "name": "DNS-over-TLS",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "dns-over-tls",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "dns-over-https",
+      "description": "DNS over HTTPS encrypted DNS resolution (DoH)",
+      "category": "management",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "443"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "dns-over-https",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "DNS-over-HTTPS",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "DNS-over-HTTPS",
+          "confidence": 0.85
+        },
+        "checkpoint": {
+          "name": "DNS-over-HTTPS",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "dns-over-https",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "syslog-tls",
+      "description": "Syslog over TLS secure log transport (RFC 5425)",
+      "category": "management",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "6514"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "syslog-tls",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "SYSLOG-TLS",
+          "confidence": 0.85
+        },
+        "ftd": {
+          "name": null,
+          "confidence": 0
+        },
+        "checkpoint": {
+          "name": null,
+          "confidence": 0
+        },
+        "sonicwall": {
+          "name": null,
+          "confidence": 0
+        },
+        "huawei": {
+          "name": "syslog-tls",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": null,
+          "confidence": 0
+        }
+      }
+    },
+    {
+      "canonical": "ldap-tls",
+      "description": "LDAPS / LDAP over TLS secure directory access",
+      "category": "auth",
+      "protocols": [
+        "TCP"
+      ],
+      "ports": [
+        "636"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "ldap-tls",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "LDAPS",
+          "confidence": 0.95
+        },
+        "ftd": {
+          "name": "LDAPS",
+          "confidence": 0.9
+        },
+        "checkpoint": {
+          "name": "LDAPS",
+          "confidence": 0.9
+        },
+        "sonicwall": {
+          "name": "LDAPS",
+          "confidence": 0.85
+        },
+        "huawei": {
+          "name": "ldap-ssl",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": "junos:LDAPS",
+          "confidence": 0.9
+        }
+      }
+    },
+    {
+      "canonical": "radius-acct",
+      "description": "RADIUS accounting protocol for network access",
+      "category": "auth",
+      "protocols": [
+        "UDP"
+      ],
+      "ports": [
+        "1813"
+      ],
+      "vendors": {
+        "panos": {
+          "name": "radius-acct",
+          "confidence": 0.9
+        },
+        "fortios": {
+          "name": "RADIUS-ACCT",
+          "confidence": 0.9
+        },
+        "ftd": {
+          "name": "RADIUS-ACCT",
+          "confidence": 0.85
+        },
+        "checkpoint": {
+          "name": "RADIUS-ACCOUNTING",
+          "confidence": 0.85
+        },
+        "sonicwall": {
+          "name": "RADIUS-ACCT",
+          "confidence": 0.8
+        },
+        "huawei": {
+          "name": "radius-acct",
+          "confidence": 0.85
+        },
+        "junos": {
+          "name": "junos:RADIUS-ACCT",
+          "confidence": 0.9
+        }
+      }
     }
   ]
 }

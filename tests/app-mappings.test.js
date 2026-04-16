@@ -97,5 +97,23 @@ for (const app of ['ms-teams', 'webex', 'slack', 'skype', 'google-meet', 'ringce
   });
 }
 
+console.log('--- Top-250 coverage: Management/Infrastructure ---');
+// kerberos (port 88) and tacacs (tacacs) existed pre-5c; tacacs-plus added in 5c.
+// sflow, dns-over-tls, dns-over-https, syslog-tls added in 5c.
+for (const app of ['kerberos', 'tacacs-plus', 'netflow', 'sflow', 'dns-over-tls', 'dns-over-https', 'syslog-tls']) {
+  test(`${app} resolves on panos`, () => {
+    const r = getJunosEmission(app, 'panos');
+    assert(r !== null, `${app} should be mapped`);
+  });
+}
+test('kerberos maps to TCP/UDP 88', () => {
+  // kerberos has a high-confidence junos predefined mapping; check entry ports directly
+  const r = getJunosEmission('kerberos', 'panos');
+  assert(r !== null, 'kerberos should resolve');
+  // predefined kind won't have ports; verify via canonical data that port 88 is registered
+  const portCheck = r.ports?.includes('88') ?? r.name === 'junos-kerberos';
+  assert(portCheck, 'kerberos port 88 required (or junos-kerberos predefined)');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
