@@ -167,12 +167,12 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
         commands.push(`set applications application ${customName} description "${originalName} (canonical: ${canonical})"`);
       } else {
         // Multi-port: customName becomes an application-set composed of per-port sub-apps
+        commands.push(`# ${originalName} (canonical: ${canonical})`);
         for (const port of ports) {
           const subName = `${customName}-p${port}`;
           commands.push(`set applications application ${subName} protocol ${protocol}`);
           commands.push(`set applications application ${subName} destination-port ${port}`);
         }
-        commands.push(`set applications application-set ${customName} description "${originalName} (canonical: ${canonical})"`);
         for (const port of ports) {
           const subName = `${customName}-p${port}`;
           commands.push(`set applications application-set ${customName} application ${subName}`);
@@ -652,7 +652,7 @@ function autoGenerateMissingAppDefinitions(commands) {
     if (JUNOS_PREDEFINED_APPS.has(app)) continue;
     // For any junos-* app not in our known list and not a standard predefined,
     // still generate a custom definition since vSRX and older platforms may lack it
-    if (app.startsWith('junos-') && !PLATFORM_DEPENDENT_APPS[app]) {
+    if (app.startsWith('junos-')) {
       missing.push(app);
       continue;
     }
