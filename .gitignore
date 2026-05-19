@@ -19,3 +19,6 @@ tmp/
 credentials.json
 secrets.json
 .gstack/
+
+# Local-only sample/customer configs — never commit
+docs/superpowers/plans/*.xml
