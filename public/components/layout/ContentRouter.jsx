@@ -23,6 +23,7 @@ const DHCPEditor = React.lazy(() => import('../DHCPEditor.jsx'));
 const QoSEditor = React.lazy(() => import('../QoSEditor.jsx'));
 const FlowMonitoringEditor = React.lazy(() => import('../FlowMonitoringEditor.jsx'));
 const AnalysisPanel = React.lazy(() => import('../AnalysisPanel.jsx'));
+const ReviewLanding = React.lazy(() => import('../ReviewLanding.jsx'));
 const GreenfieldChat = React.lazy(() => import('../GreenfieldChat.jsx'));
 const SRXOutput = React.lazy(() => import('../SRXOutput.jsx'));
 const WarningsPanel = React.lazy(() => import('../WarningsPanel.jsx'));
@@ -454,9 +455,8 @@ export default function ContentRouter({
                 if (cloned.security_policies?.length) {
                   cfgDispatch({ type: 'SET_TRANSLATED_POLICIES', policies: structuredClone(cloned.security_policies) });
                 }
-                // Auto-switch to SRX rules view
-                uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'srx' });
-                uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
+                // Land on Step 3 review decision panel
+                uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'review' });
               });
             }}
             onRunAnalysis={config.handleRunAnalysis}
@@ -466,6 +466,27 @@ export default function ContentRouter({
             onNavigate={(tab) => uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: tab })}
           />
         </div>
+      </div>
+    );
+  }
+
+  if (editTab === 'review') {
+    const reviewFindingsCount = activeConfig?._analysisFindings?.reduce((s, f) => s + f.count, 0) || 0;
+    return (
+      <div className="center-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Suspense fallback={<LoadingTab />}>
+          <ReviewLanding
+            findingsCount={reviewFindingsCount}
+            deterministic={detMode}
+            localOnly={localOnly}
+            onReview={llm.handleTranslateWithLLM}
+            onSkip={() => {
+              uiDispatch({ type: 'SET_FIELD', field: 'platformView', value: 'srx' });
+              uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'rules' });
+            }}
+            onEnableAI={() => uiDispatch({ type: 'SET_LLM_RISK_ACCEPTANCE', value: null })}
+          />
+        </Suspense>
       </div>
     );
   }
