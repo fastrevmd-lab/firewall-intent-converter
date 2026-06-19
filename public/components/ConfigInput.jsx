@@ -54,6 +54,40 @@ const TEMPLATE_ICONS = {
   ),
 };
 
+/**
+ * Source-selector tile metadata.
+ * `id` MUST match the existing selectedVendor values used by onParse, sample
+ * filtering and textarea placeholders — do not rename them.
+ * `color` is a brand color applied ONLY to the icon chip (tinted bg + glyph).
+ * `mono` is the short monogram shown in the chip.
+ * `group` controls which section the tile renders under.
+ * `secondary` is the descriptor shown in the selected-source header.
+ */
+const SOURCE_GROUPS = ['scratch', 'vendor', 'cloud'];
+
+const SOURCE_GROUP_LABELS = {
+  scratch: 'From scratch',
+  vendor: 'Firewall vendors',
+  cloud: 'Cloud',
+};
+
+const SOURCE_META = [
+  { id: 'greenfield',      label: 'Greenfield',        mono: 'GF',  color: 'var(--llm-cloud)', group: 'scratch', secondary: 'LLM-guided · start from a template', llm: true },
+  { id: 'srx_healthcheck', label: 'SRX Best Practice', mono: 'BP',  color: 'var(--juniper-green)', group: 'scratch', secondary: 'Audit an existing SRX config' },
+  { id: 'srx',             label: 'Junos SRX',         mono: 'SRX', color: 'var(--juniper-green)', group: 'vendor', secondary: 'Junos SRX config import' },
+  { id: 'panos',           label: 'PAN-OS',            mono: 'PA',  color: '#FA582D', group: 'vendor', secondary: 'PAN-OS XML import' },
+  { id: 'fortigate',       label: 'FortiGate',         mono: 'FG',  color: '#EE3124', group: 'vendor', secondary: 'FortiOS config import' },
+  { id: 'cisco_asa',       label: 'Cisco ASA/FTD',     mono: 'ASA', color: '#1BA0D7', group: 'vendor', secondary: 'ASA/FTD running-config import' },
+  { id: 'checkpoint',      label: 'Check Point R80+',  mono: 'CP',  color: '#E6097E', group: 'vendor', secondary: 'Check Point policy import' },
+  { id: 'sonicwall',       label: 'SonicWall',         mono: 'SW',  color: '#FF6C2C', group: 'vendor', secondary: 'SonicOS config import' },
+  { id: 'huawei_usg',      label: 'Huawei USG',        mono: 'HW',  color: '#E40012', group: 'vendor', secondary: 'Huawei VRP config import' },
+  { id: 'aws_sg',          label: 'AWS SG',            mono: 'AWS', color: '#FF9900', group: 'cloud',  secondary: 'AWS Security Groups import' },
+  { id: 'azure_nsg',       label: 'Azure NSG',         mono: 'AZ',  color: '#0078D4', group: 'cloud',  secondary: 'Azure NSG import' },
+  { id: 'gcp_fw',          label: 'GCP Firewall',      mono: 'GCP', color: '#4285F4', group: 'cloud',  secondary: 'GCP Firewall Rules import' },
+];
+
+const SOURCE_META_BY_ID = Object.fromEntries(SOURCE_META.map((meta) => [meta.id, meta]));
+
 const SANITIZE_TYPE_LABELS = {
   hash: 'Hash', key: 'Key', community: 'SNMP', username: 'User', public_ip: 'Public IP',
   certificate: 'Certificate', hostname: 'Hostname', bgp: 'BGP AS',
@@ -112,8 +146,19 @@ export default function ConfigInput({
   const fileInputRef = useRef(null);
   const [selectedVendor, setSelectedVendor] = useState(deterministicMode ? 'panos' : 'greenfield');
   const [showSanitizeTable, setShowSanitizeTable] = useState(false);
+  // Grid open on first load (nothing committed) so all sources are discoverable.
+  // Once parsed or in an active greenfield interview, a source is implicitly committed.
+  const [sourceCommitted, setSourceCommitted] = useState(false);
 
   const isGreenfield = selectedVendor === 'greenfield';
+  const selectorLocked = greenfieldMode || isParsed;
+  const showGrid = !sourceCommitted && !selectorLocked;
+  const selectedMeta = SOURCE_META_BY_ID[selectedVendor];
+
+  const commitSource = (id) => {
+    setSelectedVendor(id);
+    setSourceCommitted(true);
+  };
 
   const [uploadError, setUploadError] = useState('');
   const [showPullModal, setShowPullModal] = useState(false);
@@ -162,30 +207,6 @@ export default function ConfigInput({
     <div className="panel config-input-panel" data-tour="config-input" style={{ flex: 1, minHeight: 0 }}>
       <div className="panel-header">
         <h2>Source Configuration</h2>
-        <select
-          className="vendor-select"
-          value={selectedVendor}
-          onChange={(e) => setSelectedVendor(e.target.value)}
-          disabled={greenfieldMode || isParsed}
-          title={isGreenfield ? (llmLocalOnly ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM') : undefined}
-          style={isGreenfield ? {
-            borderColor: llmLocalOnly ? 'var(--llm-local)' : 'var(--llm-cloud)',
-            color: llmLocalOnly ? 'var(--llm-local)' : 'var(--llm-cloud)',
-          } : undefined}
-        >
-          {!deterministicMode && <option value="greenfield">Greenfield (New Config)</option>}
-          {!deterministicMode && <option value="srx_healthcheck">Junos SRX Best Practice</option>}
-          <option value="srx">Junos SRX</option>
-          <option value="panos">PAN-OS</option>
-          <option value="fortigate">FortiGate</option>
-          <option value="cisco_asa">Cisco ASA/FTD</option>
-          <option value="checkpoint">Check Point R80+</option>
-          <option value="sonicwall">SonicWall SonicOS</option>
-          <option value="huawei_usg">Huawei USG</option>
-          <option value="aws_sg">AWS Security Groups</option>
-          <option value="azure_nsg">Azure NSG</option>
-          <option value="gcp_fw">GCP Firewall Rules</option>
-        </select>
       </div>
 
       {/* Merge mode: slot tab bar */}
@@ -245,6 +266,51 @@ export default function ConfigInput({
               <span className="model-badge-label">Target</span>
               <span className="model-badge-value" style={{ color: 'var(--juniper-green)' }}>{targetModel || 'Not set'}</span>
             </div>
+          </div>
+        )}
+
+        {showGrid ? (
+          <div className="source-chooser">
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0 8px' }}>
+              Choose what you're converting from
+            </p>
+            {SOURCE_GROUPS.map((group) => {
+              const tiles = SOURCE_META.filter(
+                (meta) => meta.group === group && !(deterministicMode && group === 'scratch')
+              );
+              if (tiles.length === 0) return null;
+              return (
+                <React.Fragment key={group}>
+                  <div className="source-group-label">{SOURCE_GROUP_LABELS[group]}</div>
+                  <div className="source-tile-grid">
+                    {tiles.map((meta) => (
+                      <button
+                        key={meta.id}
+                        className={`source-tile ${selectedVendor === meta.id ? 'selected' : ''}`}
+                        onClick={() => commitSource(meta.id)}
+                        title={meta.llm ? (llmLocalOnly ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM') : meta.secondary}
+                      >
+                        <span className="source-tile-chip" style={{ '--chip-color': meta.color }}>{meta.mono}</span>
+                        <span>{meta.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        ) : (
+        <>
+        {selectedMeta && (
+          <div className="selected-source-header">
+            <span className="source-tile-chip" style={{ '--chip-color': selectedMeta.color }}>{selectedMeta.mono}</span>
+            <div>
+              <div className="ssh-name" style={selectedMeta.llm ? { color: llmLocalOnly ? 'var(--llm-local)' : 'var(--llm-cloud)' } : undefined}>{selectedMeta.label}</div>
+              <div className="ssh-sub">{selectedMeta.secondary}</div>
+            </div>
+            {!selectorLocked && (
+              <button className="selected-source-change" onClick={() => setSourceCommitted(false)}>Change</button>
+            )}
           </div>
         )}
 
@@ -396,6 +462,8 @@ export default function ConfigInput({
             />
 
           </>
+        )}
+        </>
         )}
       </div>
 
