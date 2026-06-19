@@ -2982,27 +2982,10 @@ html, body, #root {
 }
 
 /* =============================================
-   Platform View Toggle (PAN-OS / SRX)
+   Workflow translate button base
    ============================================= */
 
-.platform-view-bar {
-  display: flex;
-  align-items: stretch;
-  padding: 8px 12px 0;
-  background: var(--bg-secondary);
-  gap: 0;
-}
-
-.platform-view-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  flex-wrap: wrap;
-}
-
-/* Shared base for all 5 workflow buttons */
-.platform-view-btn,
+/* Base styling shared by the LLM translate button (rules tab + ReviewLanding) */
 .btn-translate {
   padding: 6px 14px;
   font-size: 12px;
@@ -3020,42 +3003,6 @@ html, body, #root {
   align-items: center;
   gap: 6px;
   line-height: 1.4;
-}
-
-/* First button gets left radius */
-.platform-view-bar > .platform-view-btn:first-child {
-  border-radius: var(--radius) 0 0 var(--radius);
-}
-
-/* Convert (last workflow button) gets right radius + right border */
-.platform-view-btn.convert-btn {
-  border-radius: 0 var(--radius) var(--radius) 0;
-  border-right: 1px solid var(--juniper-green);
-  background: var(--juniper-green);
-  color: #1a1a2e;
-  border-color: var(--juniper-green);
-}
-
-.platform-view-btn.convert-btn:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.platform-view-btn.convert-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Active state */
-.platform-view-btn.active {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--accent);
-  border-bottom: 2px solid var(--accent);
-}
-
-.platform-view-btn:hover:not(.active):not(.convert-btn) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
 }
 
 /* ── Promoted workflow stepper ─────────────────────────────── */

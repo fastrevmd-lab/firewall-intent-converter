@@ -5,7 +5,6 @@ import { useUIContext, isDeterministicMode } from '../../contexts/UIContext.jsx'
 import { useMergeContext } from '../../contexts/MergeContext.jsx';
 import useConfig from '../../hooks/useConfig.js';
 import useConversion from '../../hooks/useConversion.js';
-import useLLM from '../../hooks/useLLM.js';
 import { computeWorkflowSteps } from '../../utils/workflow-steps.js';
 
 const VENDOR_DISPLAY = {
@@ -28,7 +27,6 @@ export default function WorkflowStepper() {
 
   const config = useConfig();
   const conversion = useConversion();
-  const llm = useLLM();
 
   const {
     sourceVendor, sourceModel, targetModel, greenfieldMode,
