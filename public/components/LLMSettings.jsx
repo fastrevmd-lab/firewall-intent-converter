@@ -32,7 +32,7 @@ const VENDOR_LABELS = {
 
 const PROVIDERS = [
   { id: 'claude', name: 'Claude (Anthropic)', defaultModel: 'claude-sonnet-4-6', models: [
-    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6 (Most Capable)' },
+    { id: 'claude-opus-4-8', name: 'Claude Opus 4.8 (Most Capable)' },
     { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Balanced)' },
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5 (Fast)' },
   ]},
@@ -616,27 +616,43 @@ export default function LLMSettings({ onClose, initialTab }) {
           {(() => {
             const providerData = PROVIDERS.find(p => p.id === provider);
             const modelList = providerData?.models || [];
-            if (modelList.length > 0) {
+            // Providers with no preset list (Ollama, LM Studio, Custom) get a plain text box.
+            if (modelList.length === 0) {
               return (
-                <select
+                <input
+                  type="text"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
+                  placeholder="Model name..."
+                  style={inputStyle}
+                />
+              );
+            }
+            // Preset providers: dropdown plus a "Custom / Other…" escape hatch so
+            // users can type a model that isn't listed yet (e.g. an upcoming release).
+            const isKnownModel = modelList.some(m => m.id === model);
+            return (
+              <>
+                <select
+                  value={isKnownModel ? model : '__custom__'}
+                  onChange={(e) => setModel(e.target.value === '__custom__' ? '' : e.target.value)}
                   style={selectStyle}
                 >
                   {modelList.map(m => (
                     <option key={m.id} value={m.id}>{m.name}</option>
                   ))}
+                  <option value="__custom__">Custom / Other…</option>
                 </select>
-              );
-            }
-            return (
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="Model name..."
-                style={inputStyle}
-              />
+                {!isKnownModel && (
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder="Enter model name (e.g. a newly released model)…"
+                    style={{ ...inputStyle, marginTop: 6 }}
+                  />
+                )}
+              </>
             );
           })()}
         </SettingsField>
