@@ -1,10 +1,12 @@
 node_modules/
+.worktrees/
 dist/
 dist-standalone/
 *.zip
 .vite/
 venv/
 .claude/
+.superpowers/
 CLAUDE.md
 tmp/
 
