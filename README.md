@@ -9,6 +9,19 @@
 <p align="center">
   <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/"><img src="https://img.shields.io/badge/License-CC%20BY--NC--ND%204.0-lightgrey.svg" alt="License: CC BY-NC-ND 4.0"></a>
 </p>
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/source-chooser.png" alt="Source configuration chooser — pick a vendor, cloud platform, or start greenfield" width="900">
+  <br><em>Source chooser — pick a firewall vendor, cloud platform, or start from scratch (Greenfield / SRX Best Practice).</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/policy-review.png" alt="Policy review with the six-step migration workflow stepper and triage buckets" width="900">
+  <br><em>Policy review — the six-step workflow stepper, zone-grouped policy table, triage buckets, and the rule inspector.</em>
+</p>
+
 # Quick Start
 
 ### Prerequisites
@@ -46,13 +59,21 @@ Produces a single-file bundle that works from `file://` with no server. LLM feat
 
 ## Usage
 
+A six-step **workflow stepper** runs across the top of the app once a config is loaded, tracking your progress through the migration: **① Source** (edit source config) → **② Analysis** (of source config) → **③ Review w/LLM** (optional) → **④ to SRX** (edit proposed config) → **⑤ Convert & Export** → **⑥ Day 2 Ops** (optional). The left **Navigator** mirrors this with six collapsible workflow stages (① Import, ② Review, ③ Configure, ④ Validate, ⑤ Export, ⑥ Operate), and the right **Inspector** shows details for the selected rule.
+
 ### 1a. Load a Configuration (Import Mode)
 
-Select your source vendor from the dropdown (Junos SRX, PAN-OS, FortiGate, Cisco ASA/FTD, Check Point, SonicWall, Huawei USG, AWS Security Groups, Azure NSG, or GCP Firewall Rules), then paste a configuration into the left panel or click one of the built-in sample configs. You can also **Pull from Device** to fetch the running config from a live SRX via the PyEZ Bridge. Then click **Parse**. The tool auto-detects the source format.
+On the **Import → Config Input** screen, pick your source from the tiled **Source Configuration** chooser, organized into three groups:
+
+- **From Scratch** — *Greenfield* (LLM-guided build from a template) and *SRX Best Practice* (audit an existing SRX config)
+- **Firewall Vendors** — Junos SRX, PAN-OS, FortiGate, Cisco ASA/FTD, Check Point R80+, SonicWall, Huawei USG
+- **Cloud** — AWS SG, Azure NSG, GCP Firewall
+
+After choosing a vendor, paste a configuration into the input panel or click one of the built-in sample configs. You can also **Pull from Device** to fetch the running config from a live SRX via the PyEZ Bridge. Then click **Parse**. The tool auto-detects the source format.
 
 ### 1b. Greenfield Mode (Build from Scratch)
 
-Select **Greenfield (New Config)** from the vendor dropdown (preselected by default). Choose a starting template from the template picker:
+Select the **Greenfield** tile under *From Scratch* (preselected by default). Choose a starting template from the template picker:
 
 - **Branch Office** — Small office with trust/untrust/management zones, outbound web/DNS/NTP policies, source NAT, screen profiles, and syslog
 - **Data Center** — Multi-tier architecture with trust/untrust/dmz/server/management zones, strict inter-tier segmentation, dual screen profiles
@@ -70,9 +91,9 @@ For blank configs, the LLM walks you through a structured interview:
 
 Toggle between **from LLM Interview** and **to SRX** tabs to see the configuration building in real-time. The chat preserves its state when switching tabs.
 
-### 1c. SRX Health Check (Audit Mode)
+### 1c. SRX Best Practice (Audit Mode)
 
-Select **SRX Health Check** from the vendor dropdown to audit an existing SRX configuration for best practices, compliance, and security posture — without changing hardware. Paste your SRX config and click **Parse**. A simplified model selector opens where you select the source SRX model and subscription tier (target is automatically set to match). No interface mapping is needed.
+Select the **SRX Best Practice** tile under *From Scratch* to audit an existing SRX configuration for best practices, compliance, and security posture — without changing hardware. Paste your SRX config and click **Parse**. A simplified model selector opens where you select the source SRX model and subscription tier (target is automatically set to match). No interface mapping is needed.
 
 Click **Run Health Check** to send all policies to the LLM for a comprehensive audit covering:
 
@@ -120,7 +141,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 
 ## Features
 
-### SRX Health Check
+### SRX Health Check (SRX Best Practice tile)
 - **Compliance audit** — LLM-powered assessment of existing SRX configs against PCI DSS v4.0, NIST SP 800-41r1, and CIS Juniper OS Benchmark
 - **12 audit categories** — Policy hygiene, logging completeness, security profiles, screen coverage, application modernization, naming conventions, NAT best practices, zone architecture, and system infrastructure
 - **Severity-tagged findings** — Each policy annotated with `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, `[LOW]`, or `[INFO]` findings in translation notes
@@ -490,7 +511,7 @@ PyEZ Bridge configuration is stored in `localStorage` under the key `pyez-bridge
 - **Frontend**: React 18, JSX (no TypeScript, no bundled CSS framework)
 - **State**: 5 React Contexts with `useReducer` + 7 custom hooks
 - **Parsing**: fast-xml-parser (runs in-browser)
-- **Build**: Vite 5 with `@vitejs/plugin-react`
+- **Build**: Vite 8 (Rolldown bundler) with `@vitejs/plugin-react`
 - **Styling**: Custom CSS with dark theme (CSS variables, no preprocessor)
 - **LLM**: Direct browser-to-provider API calls (no server proxy)
 - **Architecture**: Fully static SPA — all parsing, conversion, and validation runs client-side in the browser. No backend server required.
