@@ -146,8 +146,19 @@ export default function ConfigInput({
   const fileInputRef = useRef(null);
   const [selectedVendor, setSelectedVendor] = useState(deterministicMode ? 'panos' : 'greenfield');
   const [showSanitizeTable, setShowSanitizeTable] = useState(false);
+  // Grid open on first load (nothing committed) so all sources are discoverable.
+  // Once parsed or in an active greenfield interview, a source is implicitly committed.
+  const [sourceCommitted, setSourceCommitted] = useState(false);
 
   const isGreenfield = selectedVendor === 'greenfield';
+  const selectorLocked = greenfieldMode || isParsed;
+  const showGrid = !sourceCommitted && !selectorLocked;
+  const selectedMeta = SOURCE_META_BY_ID[selectedVendor];
+
+  const commitSource = (id) => {
+    setSelectedVendor(id);
+    setSourceCommitted(true);
+  };
 
   const [uploadError, setUploadError] = useState('');
   const [showPullModal, setShowPullModal] = useState(false);
@@ -196,30 +207,6 @@ export default function ConfigInput({
     <div className="panel config-input-panel" data-tour="config-input" style={{ flex: 1, minHeight: 0 }}>
       <div className="panel-header">
         <h2>Source Configuration</h2>
-        <select
-          className="vendor-select"
-          value={selectedVendor}
-          onChange={(e) => setSelectedVendor(e.target.value)}
-          disabled={greenfieldMode || isParsed}
-          title={isGreenfield ? (llmLocalOnly ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM') : undefined}
-          style={isGreenfield ? {
-            borderColor: llmLocalOnly ? 'var(--llm-local)' : 'var(--llm-cloud)',
-            color: llmLocalOnly ? 'var(--llm-local)' : 'var(--llm-cloud)',
-          } : undefined}
-        >
-          {!deterministicMode && <option value="greenfield">Greenfield (New Config)</option>}
-          {!deterministicMode && <option value="srx_healthcheck">Junos SRX Best Practice</option>}
-          <option value="srx">Junos SRX</option>
-          <option value="panos">PAN-OS</option>
-          <option value="fortigate">FortiGate</option>
-          <option value="cisco_asa">Cisco ASA/FTD</option>
-          <option value="checkpoint">Check Point R80+</option>
-          <option value="sonicwall">SonicWall SonicOS</option>
-          <option value="huawei_usg">Huawei USG</option>
-          <option value="aws_sg">AWS Security Groups</option>
-          <option value="azure_nsg">Azure NSG</option>
-          <option value="gcp_fw">GCP Firewall Rules</option>
-        </select>
       </div>
 
       {/* Merge mode: slot tab bar */}
@@ -279,6 +266,51 @@ export default function ConfigInput({
               <span className="model-badge-label">Target</span>
               <span className="model-badge-value" style={{ color: 'var(--juniper-green)' }}>{targetModel || 'Not set'}</span>
             </div>
+          </div>
+        )}
+
+        {showGrid ? (
+          <div className="source-chooser">
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0 8px' }}>
+              Choose what you're converting from
+            </p>
+            {SOURCE_GROUPS.map((group) => {
+              const tiles = SOURCE_META.filter(
+                (meta) => meta.group === group && !(deterministicMode && group === 'scratch')
+              );
+              if (tiles.length === 0) return null;
+              return (
+                <React.Fragment key={group}>
+                  <div className="source-group-label">{SOURCE_GROUP_LABELS[group]}</div>
+                  <div className="source-tile-grid">
+                    {tiles.map((meta) => (
+                      <button
+                        key={meta.id}
+                        className={`source-tile ${selectedVendor === meta.id ? 'selected' : ''}`}
+                        onClick={() => commitSource(meta.id)}
+                        title={meta.llm ? (llmLocalOnly ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM') : meta.secondary}
+                      >
+                        <span className="source-tile-chip" style={{ '--chip-color': meta.color }}>{meta.mono}</span>
+                        <span>{meta.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        ) : (
+        <>
+        {selectedMeta && (
+          <div className="selected-source-header">
+            <span className="source-tile-chip" style={{ '--chip-color': selectedMeta.color }}>{selectedMeta.mono}</span>
+            <div>
+              <div className="ssh-name" style={selectedMeta.llm ? { color: llmLocalOnly ? 'var(--llm-local)' : 'var(--llm-cloud)' } : undefined}>{selectedMeta.label}</div>
+              <div className="ssh-sub">{selectedMeta.secondary}</div>
+            </div>
+            {!selectorLocked && (
+              <button className="selected-source-change" onClick={() => setSourceCommitted(false)}>Change</button>
+            )}
           </div>
         )}
 
@@ -430,6 +462,8 @@ export default function ConfigInput({
             />
 
           </>
+        )}
+        </>
         )}
       </div>
 
