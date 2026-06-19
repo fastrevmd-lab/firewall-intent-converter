@@ -268,20 +268,6 @@ html, body, #root {
   padding: 16px;
 }
 
-/* Vendor selector dropdown in panel header */
-.vendor-select {
-  padding: 4px 8px;
-  font-size: 12px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  cursor: pointer;
-  outline: none;
-}
-.vendor-select:hover { border-color: var(--accent); }
-.vendor-select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-
 /* --- Source chooser tile grid --- */
 .source-chooser {
   display: flex;
