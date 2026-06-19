@@ -206,6 +206,7 @@ export default function useProject() {
     uiDispatch({ type: 'SET_FIELD', field: 'translationError', value: null });
     uiDispatch({ type: 'SET_FIELD', field: 'translationProgress', value: null });
     uiDispatch({ type: 'SET_FIELD', field: 'groupingInProgress', value: false });
+    uiDispatch({ type: 'SET_FIELD', field: 'llmWarningDismissed', value: false });
     uiDispatch({ type: 'CLEAR_ERROR' });
     uiDispatch({ type: 'SET_LOADING', isLoading: false });
     uiDispatch({ type: 'HIDE_MODAL', name: 'modelSelector' });
