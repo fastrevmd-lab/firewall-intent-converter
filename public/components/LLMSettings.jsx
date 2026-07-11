@@ -21,6 +21,10 @@ import {
   normalizeBridgeUrl,
   saveBridgeSettings,
 } from '../utils/bridge-client.js';
+import {
+  EMPTY_DEVICE_REGISTRATION,
+  buildDeviceRegistration,
+} from '../utils/device-registration.js';
 import { useUIContext } from '../contexts/UIContext.jsx';
 
 const CLOUD_PROVIDER_IDS = ['claude', 'openai', 'gemini'];
@@ -92,7 +96,8 @@ export default function LLMSettings({ onClose, initialTab }) {
   const [bridgeResultOk, setBridgeResultOk] = useState(true);
   const [bridgeDevices, setBridgeDevices] = useState([]);
   const [showAddDevice, setShowAddDevice] = useState(false);
-  const [newDevice, setNewDevice] = useState({ name: '', host: '', port: 830, username: '', password: '', ssh_key: '' });
+  const [newDevice, setNewDevice] = useState({ ...EMPTY_DEVICE_REGISTRATION });
+  const [hostKeyVerification, setHostKeyVerification] = useState('strict');
 
   // Load saved settings on mount
   useEffect(() => {
@@ -135,6 +140,11 @@ export default function LLMSettings({ onClose, initialTab }) {
           if (!healthResponse.ok) throw await bridgeResponseError(healthResponse);
           const health = await healthResponse.json();
           if (health.status !== 'ok' || health.service !== 'pyez-bridge') return;
+          setHostKeyVerification(
+            health.host_key_verification === 'disabled-development'
+              ? 'disabled-development'
+              : 'strict',
+          );
           const deviceResponse = await bridgeFetch(base + '/devices');
           if (!deviceResponse.ok) throw await bridgeResponseError(deviceResponse);
           const devices = await deviceResponse.json();
@@ -207,6 +217,11 @@ export default function LLMSettings({ onClose, initialTab }) {
         setBridgeTestResult('URL responded but is not a PyEZ Bridge service. Check the URL and port.');
         return;
       }
+      setHostKeyVerification(
+        data.host_key_verification === 'disabled-development'
+          ? 'disabled-development'
+          : 'strict',
+      );
       const devResp = await bridgeFetch(base + '/devices', { method: 'GET' });
       if (!devResp.ok) throw await bridgeResponseError(devResp);
       const devData = await devResp.json();
@@ -234,18 +249,21 @@ export default function LLMSettings({ onClose, initialTab }) {
 
   /** Add device via PyEZ Bridge */
   const handleAddDevice = async () => {
-    if (!newDevice.name.trim() || !newDevice.host.trim() || !newDevice.username.trim()) return;
     if (!bridgeConnected) {
       setBridgeResultOk(false);
       setBridgeTestResult('PyEZ Bridge is not connected. Start the bridge service first.');
       return;
     }
+    let payload;
+    try {
+      payload = buildDeviceRegistration(newDevice);
+    } catch (error) {
+      setBridgeResultOk(false);
+      setBridgeTestResult(error.message);
+      return;
+    }
     const base = normalizeBridgeUrl(bridgeUrl);
     const url = base + '/devices';
-    // Strip empty optional fields before sending
-    const payload = { name: newDevice.name.trim(), host: newDevice.host.trim(), port: newDevice.port || 830, username: newDevice.username.trim() };
-    if (newDevice.password) payload.password = newDevice.password;
-    if (newDevice.ssh_key) payload.ssh_key = newDevice.ssh_key.trim();
     setBridgeResultOk(true);
     setBridgeTestResult('Adding device...');
     try {
@@ -259,7 +277,7 @@ export default function LLMSettings({ onClose, initialTab }) {
       }
       const data = await resp.json();
       if (data.ok) {
-        setNewDevice({ name: '', host: '', port: 830, username: '', password: '', ssh_key: '' });
+        setNewDevice({ ...EMPTY_DEVICE_REGISTRATION });
         setShowAddDevice(false);
         setBridgeResultOk(true);
         setBridgeTestResult('Device added successfully.');
@@ -272,7 +290,7 @@ export default function LLMSettings({ onClose, initialTab }) {
         } catch { /* ignore refresh failure */ }
       } else {
         setBridgeResultOk(false);
-        setBridgeTestResult(data.error || 'Failed to add device.');
+        setBridgeTestResult('Failed to add device.');
       }
     } catch (err) {
       setBridgeResultOk(false);
@@ -409,6 +427,13 @@ export default function LLMSettings({ onClose, initialTab }) {
               )}
             </div>
 
+            {hostKeyVerification === 'disabled-development' && (
+              <div role="alert" style={{ color: 'var(--error)', marginBottom: 12 }}>
+                Warning: NETCONF SSH host-key verification is disabled for development.
+                Devices can be impersonated on the network.
+              </div>
+            )}
+
             {/* Connected SRX devices list */}
             <SettingsField label="SRX Devices">
               {bridgeDevices.length > 0 ? (
@@ -443,7 +468,7 @@ export default function LLMSettings({ onClose, initialTab }) {
                   padding: '16px', textAlign: 'center', background: 'var(--bg-tertiary)',
                   borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--text-muted)',
                 }}>
-                  {bridgeConnected ? 'No devices configured. Add one below or edit devices.yaml.' : 'Test connection to discover devices.'}
+                  {bridgeConnected ? 'No devices configured. Add one below or create the runtime devices.yaml.' : 'Test connection to discover devices.'}
                 </div>
               )}
             </SettingsField>
@@ -474,20 +499,25 @@ export default function LLMSettings({ onClose, initialTab }) {
                     </div>
                     <div>
                       <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Port</label>
-                      <input type="number" value={newDevice.port} onChange={e => setNewDevice(p => ({ ...p, port: parseInt(e.target.value) || 830 }))} style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                      <input type="number" value={newDevice.port} onChange={e => setNewDevice(p => ({ ...p, port: e.target.value }))} style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
                     </div>
                     <div>
                       <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Username *</label>
                       <input type="text" value={newDevice.username} onChange={e => setNewDevice(p => ({ ...p, username: e.target.value }))} placeholder="admin" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Password</label>
-                      <input type="password" value={newDevice.password} onChange={e => setNewDevice(p => ({ ...p, password: e.target.value }))} style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Authentication</label>
+                      <select value={newDevice.auth_method} onChange={e => setNewDevice(p => ({ ...p, auth_method: e.target.value, password_env: '' }))} style={{ ...selectStyle, fontSize: 11, padding: '4px 8px' }}>
+                        <option value="agent">SSH Agent</option>
+                        <option value="password-env">Password Environment Variable</option>
+                      </select>
                     </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>SSH Key Path</label>
-                      <input type="text" value={newDevice.ssh_key} onChange={e => setNewDevice(p => ({ ...p, ssh_key: e.target.value }))} placeholder="~/.ssh/id_rsa" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
-                    </div>
+                    {newDevice.auth_method === 'password-env' && (
+                      <div>
+                        <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Password Environment Variable</label>
+                        <input type="text" value={newDevice.password_env} onChange={e => setNewDevice(p => ({ ...p, password_env: e.target.value }))} placeholder="FIC_SRX_PROD_PASSWORD" autoComplete="off" style={{ ...inputStyle, fontSize: 11, padding: '4px 8px' }} />
+                      </div>
+                    )}
                     <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
                       <button
                         className="btn btn-primary btn-sm"
@@ -538,50 +568,10 @@ export default function LLMSettings({ onClose, initialTab }) {
                   <span> — Enter <code style={{ fontSize: 10 }}>http://localhost:8830</code>, paste the access token, and click Test Connection.</span>
                 </div>
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>
-                <strong style={{ fontSize: 11, color: 'var(--text-primary)' }}>SRX Device Setup</strong>
-
-                <div style={{ marginTop: 6, marginBottom: 6, lineHeight: 1.5 }}>
-                  <strong>A. Generate an SSH key pair</strong> (on your workstation)
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', lineHeight: 1.8 }}>
-                  ssh-keygen -t rsa -b 4096 -f ~/.ssh/pyez_rsa -C "pyez-bridge"<br />
-                  cat ~/.ssh/pyez_rsa.pub
-                </div>
-                <div style={{ marginTop: 2, lineHeight: 1.5 }}>
-                  Press Enter for no passphrase (required for unattended automation). Copy the public key output.
-                </div>
-
-                <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.5 }}>
-                  <strong>B. Configure the SRX</strong> (in configuration mode)
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', lineHeight: 1.8 }}>
-                  set system services netconf ssh<br />
-                  set system services netconf rfc-compliant<br />
-                  set system login user <em style={{ color: 'var(--accent)' }}>pyez</em> class super-user<br />
-                  set system login user <em style={{ color: 'var(--accent)' }}>pyez</em> authentication ssh-rsa "<em style={{ color: 'var(--accent)' }}>paste-public-key-here</em>"<br />
-                  commit
-                </div>
-                <div style={{ marginTop: 2, lineHeight: 1.5 }}>
-                  Creates a dedicated NETCONF user. Use <strong>super-user</strong> class for full commit access, or <strong>read-only</strong> for diff/check only.
-                </div>
-
-                <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.5 }}>
-                  <strong>C. Verify connectivity</strong> (from your workstation)
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: 'var(--radius)', lineHeight: 1.8 }}>
-                  ssh -i ~/.ssh/pyez_rsa <em style={{ color: 'var(--accent)' }}>pyez</em>@<em style={{ color: 'var(--accent)' }}>device-ip</em> -p 830 -s netconf
-                </div>
-                <div style={{ marginTop: 2, lineHeight: 1.5 }}>
-                  You should see an XML <code style={{ fontSize: 9 }}>&lt;hello&gt;</code> response. Press Ctrl+C to exit.
-                  Then reference the private key path in the device config above (SSH Key Path: <code style={{ fontSize: 9 }}>~/.ssh/pyez_rsa</code>).
-                </div>
-
-                <div style={{ marginTop: 8, padding: '4px 0', lineHeight: 1.5 }}>
-                  <strong>Password auth alternative:</strong> Skip step A. On the SRX, replace the ssh-rsa line with:<br />
-                  <code style={{ fontSize: 9 }}>set system login user pyez authentication plain-text-password</code> and enter a password at the prompt.
-                  Then use the Password field above instead of SSH Key Path.
-                </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, borderTop: '1px solid var(--border-color)', paddingTop: 8, lineHeight: 1.5 }}>
+                Device registrations contain only connection metadata and credential references.
+                Load keys into <code style={{ fontSize: 9 }}>ssh-agent</code> or define the selected environment variable in the bridge process.
+                Verify each NETCONF host key independently before enrollment; see <code style={{ fontSize: 9 }}>tools/pyez-bridge/README.md</code> for the secure setup procedure.
               </div>
             </div>
           </>

@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { getLLMChatResponse, getLLMSuggestion } from '../public/utils/llm-client.js';
 import { saveLLMSettings } from '../public/utils/llm-settings.js';
+import {
+  EMPTY_DEVICE_REGISTRATION,
+  buildDeviceRegistration,
+} from '../public/utils/device-registration.js';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -21,6 +25,46 @@ beforeEach(() => {
 });
 
 describe('credential source invariants', () => {
+  it('builds agent registrations without secret fields', () => {
+    expect(buildDeviceRegistration({
+      ...EMPTY_DEVICE_REGISTRATION,
+      name: ' edge ', host: ' 192.0.2.10 ', username: ' netops ',
+    })).toEqual({
+      name: 'edge', host: '192.0.2.10', port: 830,
+      username: 'netops', auth_method: 'agent',
+    });
+  });
+
+  it('includes only the password environment reference for password-env', () => {
+    expect(buildDeviceRegistration({
+      name: 'edge', host: '192.0.2.10', port: 830, username: 'netops',
+      auth_method: 'password-env', password_env: 'FIC_EDGE_PASSWORD',
+    })).toMatchObject({ auth_method: 'password-env', password_env: 'FIC_EDGE_PASSWORD' });
+  });
+
+  it('rejects invalid password environment names without echoing input', () => {
+    expect(() => buildDeviceRegistration({
+      name: 'edge', host: '192.0.2.10', port: 830, username: 'netops',
+      auth_method: 'password-env', password_env: 'bad-SENTINEL',
+    })).toThrow('Password environment variable name is invalid.');
+    try {
+      buildDeviceRegistration({
+        name: 'edge', host: '192.0.2.10', port: 830, username: 'netops',
+        auth_method: 'password-env', password_env: 'bad-SENTINEL',
+      });
+    } catch (error) {
+      expect(error.message).not.toContain('SENTINEL');
+    }
+  });
+
+  it('removes password and private-key controls from the bridge UI', () => {
+    const source = read('public/components/LLMSettings.jsx');
+    expect(source).not.toMatch(/newDevice\.(?:password|ssh_key)\b/);
+    expect(source).not.toContain('SSH Key Path');
+    expect(source).toContain('Password Environment Variable');
+    expect(source).toContain('disabled-development');
+  });
+
   it('centralizes LLM storage access', () => {
     for (const path of [
       'public/components/LLMSettings.jsx',
