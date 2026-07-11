@@ -1,0 +1,242 @@
+"""Secure persistence for the local PyEZ device inventory."""
+
+import os
+import re
+import stat
+import tempfile
+from pathlib import Path
+
+import yaml
+
+
+MAX_INVENTORY_BYTES = 1024 * 1024
+ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,127}\Z")
+BASE_KEYS = {"name", "host", "port", "username", "auth_method"}
+FORBIDDEN_KEYS = {
+    "password",
+    "passwd",
+    "ssh_key",
+    "ssh_private_key_file",
+    "private_key",
+    "private_key_file",
+    "private_key_material",
+}
+
+
+class InventoryError(Exception):
+    """A device inventory failed validation or filesystem safety checks."""
+
+    def __init__(self, public_message="Device inventory is unsafe or invalid."):
+        super().__init__(public_message)
+        self.code = "INVENTORY_UNSAFE"
+        self.public_message = public_message
+
+
+def validate_device(value):
+    """Validate and normalize one secret-free device record."""
+    if not isinstance(value, dict):
+        raise InventoryError()
+
+    auth_method = value.get("auth_method")
+    allowed = BASE_KEYS | (
+        {"password_env"} if auth_method == "password-env" else set()
+    )
+    if set(value) & FORBIDDEN_KEYS or set(value) - allowed:
+        raise InventoryError(
+            "Device inventory contains unsupported credential fields."
+        )
+    if any(
+        isinstance(item, str) and "PRIVATE KEY-----" in item.upper()
+        for item in value.values()
+    ):
+        raise InventoryError(
+            "Device inventory contains unsupported credential fields."
+        )
+    if auth_method not in {"agent", "password-env"}:
+        raise InventoryError("Device authentication method is invalid.")
+
+    for field in ("name", "host", "username"):
+        if not isinstance(value.get(field), str) or not value[field].strip():
+            raise InventoryError(
+                "Device inventory contains an invalid required field."
+            )
+
+    port = value.get("port", 830)
+    if (
+        isinstance(port, bool)
+        or not isinstance(port, int)
+        or not 1 <= port <= 65535
+    ):
+        raise InventoryError("Device port is invalid.")
+
+    if auth_method == "password-env":
+        env_name = value.get("password_env")
+        if not isinstance(env_name, str) or not ENV_NAME.fullmatch(env_name):
+            raise InventoryError("Password environment variable name is invalid.")
+    elif "password_env" in value:
+        raise InventoryError(
+            "Agent authentication cannot contain a password reference."
+        )
+
+    result = {key: value[key] for key in ("name", "host")}
+    result["port"] = port
+    result["username"] = value["username"]
+    result["auth_method"] = auth_method
+    if auth_method == "password-env":
+        result["password_env"] = value["password_env"]
+    return result
+
+
+def _check_parent(path):
+    parent_stat = path.parent.lstat()
+    if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+        raise InventoryError()
+    if os.name == "posix":
+        if (
+            parent_stat.st_uid != os.getuid()
+            or stat.S_IMODE(parent_stat.st_mode) & 0o022
+        ):
+            raise InventoryError()
+    return parent_stat
+
+
+def _existing_stat(path):
+    """Return lstat metadata, preserving dangling symlinks as existing entries."""
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+
+
+def _check_existing(path, file_stat=None):
+    if file_stat is None:
+        file_stat = path.lstat()
+    if stat.S_ISLNK(file_stat.st_mode) or not stat.S_ISREG(file_stat.st_mode):
+        raise InventoryError()
+    if os.name == "posix":
+        if (
+            file_stat.st_uid != os.getuid()
+            or stat.S_IMODE(file_stat.st_mode) != 0o600
+        ):
+            raise InventoryError()
+    if file_stat.st_size > MAX_INVENTORY_BYTES:
+        raise InventoryError()
+    return file_stat
+
+
+def _validated_list(data):
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"devices"}
+        or not isinstance(data["devices"], list)
+    ):
+        raise InventoryError()
+    devices = [validate_device(item) for item in data["devices"]]
+    names = [item["name"] for item in devices]
+    if len(names) != len(set(names)):
+        raise InventoryError("Device names must be unique.")
+    return devices
+
+
+def _read_bounded(fd):
+    chunks = []
+    remaining = MAX_INVENTORY_BYTES + 1
+    while remaining:
+        chunk = os.read(fd, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def load_devices(path):
+    """Load and validate an owner-only device inventory."""
+    path = Path(path)
+    try:
+        _check_parent(path)
+        existing = _existing_stat(path)
+        if existing is None:
+            return []
+        expected = _check_existing(path, existing)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        try:
+            opened = os.fstat(fd)
+            if (opened.st_dev, opened.st_ino) != (
+                expected.st_dev,
+                expected.st_ino,
+            ):
+                raise InventoryError()
+            raw = _read_bounded(fd)
+        finally:
+            os.close(fd)
+        if len(raw) > MAX_INVENTORY_BYTES:
+            raise InventoryError()
+        return _validated_list(yaml.safe_load(raw.decode("utf-8")))
+    except InventoryError:
+        raise
+    except (OSError, UnicodeError, yaml.YAMLError):
+        raise InventoryError() from None
+
+
+def save_devices(path, devices):
+    """Atomically save a validated, owner-only device inventory."""
+    path = Path(path)
+    normalized = _validated_list({"devices": devices})
+    temp_path = None
+    try:
+        _check_parent(path)
+        existing = _existing_stat(path)
+        if existing is not None:
+            _check_existing(path, existing)
+
+        fd, raw_temp = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        temp_path = Path(raw_temp)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as stream:
+                yaml.safe_dump(
+                    {"devices": normalized},
+                    stream,
+                    default_flow_style=False,
+                    sort_keys=False,
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+
+        existing = _existing_stat(path)
+        if existing is not None:
+            _check_existing(path, existing)
+        os.replace(temp_path, path)
+        temp_path = None
+        if os.name == "posix":
+            os.chmod(path, 0o600, follow_symlinks=False)
+            parent_fd = os.open(
+                path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+    except InventoryError:
+        raise
+    except (OSError, UnicodeError, yaml.YAMLError):
+        raise InventoryError() from None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
