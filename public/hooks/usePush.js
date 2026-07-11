@@ -17,6 +17,10 @@ import {
   loadBridgeSettings,
   saveBridgeSettings,
 } from '../utils/bridge-client.js';
+import {
+  getConversionOutputText,
+  hasConversionOutput,
+} from '../../src/conversion/conversion-output.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,15 +103,9 @@ export default function usePush() {
   // Get config text (with sanitization restore)
   // -----------------------------------------------------------------------
   const getConfigText = useCallback(() => {
-    if (!srxOutput) return '';
-    let text;
-    if (outputFormat === 'xml') {
-      text = srxOutput.xml || '';
-    } else {
-      text = (srxOutput.commands || []).join('\n');
-    }
+    const text = getConversionOutputText(srxOutput);
     return restoreForExport(text, sanitizationTable);
-  }, [srxOutput, outputFormat, sanitizationTable]);
+  }, [srxOutput, sanitizationTable]);
 
   // -----------------------------------------------------------------------
   // Connection
@@ -539,6 +537,6 @@ export default function usePush() {
     // Config info
     getConfigText,
     outputFormat,
-    hasSrxOutput: !!(srxOutput && (srxOutput.commands?.length || srxOutput.xml)),
+    hasSrxOutput: hasConversionOutput(srxOutput),
   };
 }

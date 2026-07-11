@@ -7,6 +7,7 @@
  */
 import React, { useState, useCallback, useRef } from 'react';
 import { parseConfig, convertConfig } from '../utils/engine.js';
+import { getConversionOutputText } from '../../src/conversion/conversion-output.js';
 
 const STATUS = {
   pending: { label: 'Pending', color: 'var(--text-muted)' },
@@ -112,8 +113,8 @@ export default function BatchMigrationPanel() {
         ));
 
         const convertResult = await convertConfig(ic, 'set', {}, null);
-        const srxOutput = (convertResult.commands || []).join('\n');
-        const warningCount = (convertResult.warnings || []).length;
+        const srxOutput = getConversionOutputText(convertResult.output);
+        const warningCount = (convertResult.output.warnings || []).length;
 
         setItems(prev => prev.map((it, idx) =>
           idx === i ? { ...it, status: 'done', vendor, ruleCount, warningCount, srxOutput } : it

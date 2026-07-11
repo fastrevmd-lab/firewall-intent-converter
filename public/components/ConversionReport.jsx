@@ -16,6 +16,7 @@
  */
 import React, { useState, useMemo, useCallback } from 'react';
 import ExportPdfButton from './ExportPdfButton.jsx';
+import { getSetCommands } from '../../src/conversion/conversion-output.js';
 
 /* ── Tab definitions ──────────────────────────────────────────────── */
 const TABS = [
@@ -585,6 +586,7 @@ function MigrationDeltaTab({ intermediateConfig, srxTranslatedPolicies, srxOutpu
 
     const srcPolicies = intermediateConfig.security_policies || [];
     const dstPolicies = srxTranslatedPolicies || srcPolicies;
+    const commands = srxOutput?.format === 'set' ? getSetCommands(srxOutput) : [];
 
     // Rules added/removed/modified/disabled
     const srcNames = new Set(srcPolicies.map(p => p.name));
@@ -627,7 +629,7 @@ function MigrationDeltaTab({ intermediateConfig, srxTranslatedPolicies, srxOutpu
       srcZones, convertedZones, srcNat, convertedNat,
       totalWarnings: (warnings || []).length,
       warningSeverity,
-      totalCommands: srxOutput?.commands?.length || 0,
+      totalCommands: commands.length,
     };
   }, [intermediateConfig, srxTranslatedPolicies, srxOutput, warnings, conversionSummary]);
 
@@ -673,7 +675,7 @@ function MigrationSummaryTab({ intermediateConfig, srxTranslatedPolicies, srxOut
 
     const srcPolicies = intermediateConfig.security_policies || [];
     const dstPolicies = srxTranslatedPolicies || srcPolicies;
-    const commands = srxOutput.commands || [];
+    const commands = srxOutput?.format === 'set' ? getSetCommands(srxOutput) : [];
     const now = new Date().toISOString();
 
     // Risk assessment based on warning severity
@@ -997,8 +999,8 @@ function PerCommandTab({ intermediateConfig, srxTranslatedPolicies }) {
 /* ── 8. Rollback Plan Generation ──────────────────────────────────── */
 function RollbackTab({ srxOutput }) {
   const rollbackCommands = useMemo(() => {
-    if (!srxOutput?.commands) return [];
-    return srxOutput.commands
+    const commands = srxOutput?.format === 'set' ? getSetCommands(srxOutput) : [];
+    return commands
       .filter(cmd => cmd.startsWith('set '))
       .map(cmd => 'delete ' + cmd.substring(4));
   }, [srxOutput]);

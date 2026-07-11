@@ -13,6 +13,10 @@ import React, { useState, useCallback } from 'react';
 import { useUIContext } from '../contexts/UIContext.jsx';
 import { exportToTerraform, exportToAnsible } from '../utils/iac-export.js';
 import { loadBridgeSettings } from '../utils/bridge-client.js';
+import {
+  getConversionOutputText,
+  getSetCommands,
+} from '../../src/conversion/conversion-output.js';
 
 /** Download a text string as a file */
 function downloadText(text, filename, mimeType = 'text/plain') {
@@ -30,14 +34,7 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
   const [copied, setCopied] = useState(false);
 
   /** Get the raw output text based on format */
-  const getOutputText = useCallback(() => {
-    if (!output) return '';
-    if (format === 'xml') {
-      return output.xml || '';
-    }
-    // Set commands format
-    return (output.commands || []).join('\n');
-  }, [output, format]);
+  const getOutputText = useCallback(() => getConversionOutputText(output), [output]);
 
   /**
    * Restore sanitized values that should be put back on export.
@@ -171,7 +168,7 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
         <button
           className="btn btn-secondary btn-sm"
           onClick={() => {
-            const commands = output?.commands || [];
+            const commands = getSetCommands(output);
             const text = exportToTerraform(commands);
             downloadText(text, 'srx-config.tf', 'text/plain');
           }}
@@ -183,7 +180,7 @@ export default function SRXOutput({ output, format, summary, isParsed, sanitizat
         <button
           className="btn btn-secondary btn-sm"
           onClick={() => {
-            const commands = output?.commands || [];
+            const commands = getSetCommands(output);
             const text = exportToAnsible(commands);
             downloadText(text, 'srx-playbook.yml', 'text/yaml');
           }}
