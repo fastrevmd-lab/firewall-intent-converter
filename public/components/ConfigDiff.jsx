@@ -8,6 +8,7 @@
  * Uses simple line-by-line diff with green/red highlighting.
  */
 import React, { useState, useMemo, useCallback } from 'react';
+import { getConversionOutputText } from '../../src/conversion/conversion-output.js';
 
 /**
  * Simple line-by-line diff algorithm (longest common subsequence based).
@@ -113,10 +114,10 @@ export default function ConfigDiff({ currentOutput }) {
   const [pasteText, setPasteText] = useState('');
   const [showOnlyChanges, setShowOnlyChanges] = useState(false);
 
-  const currentText = useMemo(() => {
-    if (!currentOutput?.commands) return '';
-    return currentOutput.commands.join('\n');
-  }, [currentOutput]);
+  const currentText = useMemo(
+    () => currentOutput ? getConversionOutputText(currentOutput) : '',
+    [currentOutput],
+  );
 
   // Load previous output from localStorage
   const previousText = useMemo(() => {

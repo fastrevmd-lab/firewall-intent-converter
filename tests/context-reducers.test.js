@@ -18,6 +18,96 @@ describe('conversionReducer RESET', () => {
   });
 });
 
+describe('conversionReducer canonical output', () => {
+  it('derives outputFormat from canonical output and ignores a stale action format', () => {
+    const output = {
+      format: 'set',
+      commands: ['set system host-name edge-1'],
+      warnings: [],
+    };
+    const next = conversionReducer(conversionInitial, {
+      type: 'SET_CONVERSION_RESULT',
+      output,
+      format: 'xml',
+      warnings: [],
+    });
+
+    expect(next.srxOutput).toEqual(output);
+    expect(next.outputFormat).toBe('set');
+  });
+
+  it('rejects malformed output instead of storing it', () => {
+    expect(() => conversionReducer(conversionInitial, {
+      type: 'SET_CONVERSION_RESULT',
+      output: { commands: [] },
+    })).toThrow(/Canonical conversion output/);
+  });
+
+  it('validates canonical output assigned through SET_FIELD and corrects stale format', () => {
+    const output = {
+      format: 'set',
+      commands: ['set system host-name edge-1'],
+    };
+    const next = conversionReducer(
+      { ...conversionInitial, outputFormat: 'xml' },
+      { type: 'SET_FIELD', field: 'srxOutput', value: output },
+    );
+
+    expect(next.srxOutput).toEqual(output);
+    expect(next.outputFormat).toBe('set');
+    expect(() => conversionReducer(conversionInitial, {
+      type: 'SET_FIELD',
+      field: 'srxOutput',
+      value: { commands: ['set system host-name bypass'] },
+    })).toThrow(/Canonical conversion output/);
+  });
+
+  it('allows SET_FIELD to clear output without changing the selected format', () => {
+    const next = conversionReducer(
+      {
+        ...conversionInitial,
+        srxOutput: { format: 'xml', xml: '<configuration />' },
+        outputFormat: 'xml',
+      },
+      { type: 'SET_FIELD', field: 'srxOutput', value: null },
+    );
+
+    expect(next.srxOutput).toBeNull();
+    expect(next.outputFormat).toBe('xml');
+  });
+
+  it('validates LOAD_PROJECT output and derives format from canonical output', () => {
+    const output = {
+      format: 'set',
+      commands: ['set system host-name loaded-edge'],
+    };
+    const next = conversionReducer(conversionInitial, {
+      type: 'LOAD_PROJECT',
+      state: { srxOutput: output, outputFormat: 'xml' },
+    });
+
+    expect(next.srxOutput).toEqual(output);
+    expect(next.outputFormat).toBe('set');
+    expect(() => conversionReducer(conversionInitial, {
+      type: 'LOAD_PROJECT',
+      state: {
+        srxOutput: { format: 'set', commands: [] },
+        outputFormat: 'set',
+      },
+    })).toThrow(/at least one command/);
+  });
+
+  it('preserves null LOAD_PROJECT output and its selected format', () => {
+    const next = conversionReducer(conversionInitial, {
+      type: 'LOAD_PROJECT',
+      state: { srxOutput: null, outputFormat: 'xml' },
+    });
+
+    expect(next.srxOutput).toBeNull();
+    expect(next.outputFormat).toBe('xml');
+  });
+});
+
 describe('mergeReducer RESET', () => {
   it('returns a clean initial state, discarding all merge slots', () => {
     const dirty = {

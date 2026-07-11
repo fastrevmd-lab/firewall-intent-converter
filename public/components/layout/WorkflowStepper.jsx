@@ -7,6 +7,7 @@ import useConfig from '../../hooks/useConfig.js';
 import useConversion from '../../hooks/useConversion.js';
 import { loadBridgeSettings } from '../../utils/bridge-client.js';
 import { computeWorkflowSteps } from '../../utils/workflow-steps.js';
+import { hasConversionOutput } from '../../../src/conversion/conversion-output.js';
 
 const VENDOR_DISPLAY = {
   panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate', cisco_asa: 'Cisco ASA',
@@ -36,6 +37,7 @@ export default function WorkflowStepper() {
   const { editTab, platformView, isLoading } = ui;
   const { mergeMode, configSlots, activeSlotIndex } = merge;
   const { srxOutput, validationFindings, targetContext } = conv;
+  const hasOutput = hasConversionOutput(srxOutput);
 
   const [enforceLicense, setEnforceLicense] = useState(false);
 
@@ -60,7 +62,7 @@ export default function WorkflowStepper() {
 
   const steps = computeWorkflowSteps({
     editTab, platformView, analysisCount,
-    hasTranslated: !!srxTranslatedPolicies, hasOutput: !!srxOutput,
+    hasTranslated: !!srxTranslatedPolicies, hasOutput,
     llmReviewedCount, mergeMode, sourceLabel, targetLabel,
   });
 
@@ -142,7 +144,7 @@ export default function WorkflowStepper() {
               style={{ maxWidth: 100, textAlign: 'left' }}
             />
           )}
-          {srxOutput && (
+          {hasOutput && (
             <>
               <button
                 className="btn btn-secondary btn-sm"
@@ -173,7 +175,7 @@ export default function WorkflowStepper() {
               }
             }}
             title="Push config to SRX device via PyEZ"
-            disabled={!srxOutput}
+            disabled={!hasOutput}
           >Push to SRX</button>
         </div>
       )}

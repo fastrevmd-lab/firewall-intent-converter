@@ -5,6 +5,7 @@
  * output format selection, and target routing context.
  */
 import React, { createContext, useContext, useReducer } from 'react';
+import { assertConversionOutput } from '../../src/conversion/conversion-output.js';
 
 // ---------------------------------------------------------------------------
 // Initial state
@@ -24,19 +25,33 @@ export const initialState = {
 export function conversionReducer(state, action) {
   switch (action.type) {
     // Generic single-field setter
-    case 'SET_FIELD':
+    case 'SET_FIELD': {
+      if (action.field === 'srxOutput') {
+        if (action.value === null) {
+          return { ...state, srxOutput: null };
+        }
+        const output = assertConversionOutput(action.value);
+        return {
+          ...state,
+          srxOutput: output,
+          outputFormat: output.format,
+        };
+      }
       return { ...state, [action.field]: action.value };
+    }
 
     // Bulk set after a successful conversion
-    case 'SET_CONVERSION_RESULT':
+    case 'SET_CONVERSION_RESULT': {
+      const output = assertConversionOutput(action.output);
       return {
         ...state,
-        srxOutput: action.output ?? null,
+        srxOutput: output,
         convertWarnings: action.warnings ?? [],
-        conversionSummary: action.summary ?? null,
-        outputFormat: action.format ?? state.outputFormat,
+        conversionSummary: action.summary ?? output.summary ?? null,
+        outputFormat: output.format,
         validationFindings: action.validationFindings ?? state.validationFindings,
       };
+    }
 
     // Clear all output state
     case 'CLEAR_OUTPUT':
@@ -55,9 +70,14 @@ export function conversionReducer(state, action) {
     // Restore from a project file
     case 'LOAD_PROJECT': {
       const s = action.state;
+      const output = s.srxOutput == null
+        ? null
+        : assertConversionOutput(s.srxOutput);
       return {
         ...initialState,
         ...s,
+        srxOutput: output,
+        outputFormat: output?.format ?? s.outputFormat ?? initialState.outputFormat,
       };
     }
 

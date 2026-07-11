@@ -59,7 +59,7 @@ describe('conversion fail-closed behavior', () => {
     );
     const clearCalls = source.match(/conversionDispatch\(\{ type: 'CLEAR_OUTPUT' \}\)/g) || [];
 
-    expect(clearCalls).toHaveLength(4);
+    expect(clearCalls).toHaveLength(5);
     expect(source).toContain("formatJunosSerializationError(err, 'Conversion')");
     expect(source).toContain("formatJunosSerializationError(err, 'Merge conversion')");
   });
@@ -72,5 +72,36 @@ describe('conversion fail-closed behavior', () => {
 
     expect(source).toContain('validateSetOutput(output.commands)');
     expect(source).toContain('validateXmlOutput(output.xml)');
+  });
+
+  it('returns canonical discriminated output through both public engine paths', async () => {
+    const intermediate = {
+      metadata: {},
+      zones: [],
+      address_objects: [],
+      address_groups: [],
+      service_objects: [],
+      service_groups: [],
+      security_policies: [],
+      nat_rules: [],
+      interfaces: [],
+    };
+
+    const setResult = await convertConfig(intermediate, 'set');
+    const configSlots = [
+      { lsName: 'site-a', intermediateConfig: intermediate, interfaceMappings: {} },
+    ];
+    const mergedSetResult = await mergeConvert(configSlots, [], 'set');
+    const xmlResult = await mergeConvert(configSlots, [], 'xml');
+
+    expect(setResult.output.format).toBe('set');
+    expect(setResult.output.commands.length).toBeGreaterThan(0);
+    expect(mergedSetResult.output.format).toBe('set');
+    expect(mergedSetResult.output.commands.length).toBeGreaterThan(0);
+    expect(mergedSetResult.output.commands.every(
+      command => typeof command === 'string' && command.trim().length > 0,
+    )).toBe(true);
+    expect(xmlResult.output.format).toBe('xml');
+    expect(xmlResult.output.xml).toContain('<configuration>');
   });
 });

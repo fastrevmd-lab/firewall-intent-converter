@@ -13,10 +13,18 @@ import { useMergeContext } from '../contexts/MergeContext.jsx';
 import { convertConfig, mergeConvert } from '../utils/engine.js';
 import { validateHardwareCapacity } from '../data/hardware-db.js';
 import { JunosSerializationError } from '../../src/security/junos-serialization.js';
+import {
+  ConversionOutputError,
+  filterEffectiveSetCommands,
+  replaceSetCommands,
+} from '../../src/conversion/conversion-output.js';
 
 export function formatJunosSerializationError(error, prefix) {
   if (error instanceof JunosSerializationError) {
     return `${prefix} blocked: ${error.fieldPath} — ${error.reason}`;
+  }
+  if (error instanceof ConversionOutputError) {
+    return `${prefix} blocked: ${error.reason}`;
   }
   return `${prefix} error: ${error instanceof Error ? error.message : 'Unexpected conversion failure'}`;
 }
@@ -185,7 +193,10 @@ export default function useConversion() {
   // -----------------------------------------------------------------------
   const handleValidate = useCallback(async (enforceLicense = false) => {
     const { srxOutput } = conversionState;
-    if (!srxOutput) return;
+    if (!srxOutput) {
+      uiDispatch({ type: 'SET_FIELD', field: 'error', value: 'Validation blocked: No SRX output is available.' });
+      return;
+    }
 
     uiDispatch({ type: 'SET_LOADING', isLoading: true, message: 'Running validation checks...' });
 
@@ -200,7 +211,7 @@ export default function useConversion() {
 
       const result = runValidation({
         intermediateConfig,
-        srxOutput: typeof srxOutput === 'string' ? srxOutput : srxOutput?.srxCommands || '',
+        conversionOutput: srxOutput,
         targetModel,
         srxLicense,
         enforceLicense,
@@ -213,15 +224,24 @@ export default function useConversion() {
       const existingNonValidation = (conversionState.convertWarnings || []).filter(w => w._source !== 'validation');
       const newWarnings = [...existingNonValidation, ...result.findings];
 
-      if (result.filteredOutput !== null) {
-        // License enforcement stripped commands — update output
-        const updatedOutput = typeof conversionState.srxOutput === 'string'
-          ? result.filteredOutput
-          : { ...conversionState.srxOutput, srxCommands: result.filteredOutput };
+      if (result.filteredCommands !== null) {
+        if (filterEffectiveSetCommands(result.filteredCommands).length === 0) {
+          conversionDispatch({ type: 'CLEAR_OUTPUT' });
+          conversionDispatch({ type: 'SET_FIELD', field: 'convertWarnings', value: newWarnings });
+          conversionDispatch({ type: 'SET_FIELD', field: 'validationFindings', value: result.findings });
+          uiDispatch({
+            type: 'SET_FIELD',
+            field: 'error',
+            value: 'License enforcement blocked all generated commands; output, export, and push have been disabled.',
+          });
+          return;
+        }
+        const updatedOutput = replaceSetCommands(srxOutput, result.filteredCommands);
         conversionDispatch({
           type: 'SET_CONVERSION_RESULT',
           output: updatedOutput,
           warnings: newWarnings,
+          summary: updatedOutput.summary ?? conversionState.conversionSummary,
           validationFindings: result.findings,
         });
       } else {
@@ -232,7 +252,11 @@ export default function useConversion() {
       // Navigate to warnings panel
       uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'warnings' });
     } catch (err) {
-      uiDispatch({ type: 'SET_FIELD', field: 'error', value: `Validation error: ${err.message}` });
+      uiDispatch({
+        type: 'SET_FIELD',
+        field: 'error',
+        value: formatJunosSerializationError(err, 'Validation'),
+      });
     } finally {
       uiDispatch({ type: 'SET_LOADING', isLoading: false });
     }

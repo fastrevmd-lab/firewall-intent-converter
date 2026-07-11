@@ -17,6 +17,7 @@
  *   - Juniper Green (#90C641) = SRX target branding
  *   - Teal (#4dd0c8)      = Accent / general
  */
+import { getConversionOutputText } from '../../src/conversion/conversion-output.js';
 
 const VENDOR_LABELS = {
   panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate',
@@ -527,8 +528,8 @@ function buildUserChanges(srxTranslatedPolicies, originalPolicies, sectionAccept
 function buildFinalOutput(srxOutput, outputFormat) {
   if (!srxOutput) return '<p class="empty">No SRX output was generated. Run the conversion first.</p>';
 
-  const isXml = outputFormat === 'xml';
-  const text = isXml ? (srxOutput.xml || '') : arr(srxOutput.commands).join('\n');
+  const text = getConversionOutputText(srxOutput);
+  const isXml = srxOutput.format === 'xml';
 
   if (!text) return '<p class="empty">Output is empty.</p>';
 

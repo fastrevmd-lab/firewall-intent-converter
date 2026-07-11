@@ -25,6 +25,7 @@ import { runHardwareChecks } from '../src/validators/hardware-checks.js';
 import { runOperationalChecks } from '../src/validators/operational-checks.js';
 import { runComplianceChecks } from '../src/validators/compliance-checks.js';
 import { runValidation } from '../src/validators/srx-validation-engine.js';
+import { normalizeConversionOutput } from '../src/conversion/conversion-output.js';
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -110,6 +111,8 @@ function test(name, fn) {
 function section(name) {
   console.log(`\n--- ${name} ---`);
 }
+
+const setOutput = text => normalizeConversionOutput(text, 'set');
 
 // ---------------------------------------------------------------------------
 // Hardware Checks
@@ -372,9 +375,10 @@ test('No root-auth → no-root-auth flagged', () => {
 section('Validation Engine');
 
 test('All findings tagged with _source: "validation"', () => {
+  const srxOutput = '';
   const result = runValidation({
     intermediateConfig: EMPTY_IC,
-    srxOutput: '',
+    conversionOutput: setOutput(srxOutput || 'set system host-name validation-fixture'),
     targetModel: null,
     srxLicense: null,
     enforceLicense: false,
@@ -388,9 +392,10 @@ test('All findings tagged with _source: "validation"', () => {
 });
 
 test('No license tier → info finding at license/no-tier', () => {
+  const srxOutput = '';
   const result = runValidation({
     intermediateConfig: EMPTY_IC,
-    srxOutput: '',
+    conversionOutput: setOutput(srxOutput || 'set system host-name validation-fixture'),
     targetModel: null,
     srxLicense: null,
     enforceLicense: false,
@@ -403,11 +408,11 @@ test('No license tier → info finding at license/no-tier', () => {
   assert(licenseFinding.severity === 'info', 'severity is info');
 });
 
-test('Warn-only mode: IDP on Base → warning severity, no stripping, filteredOutput null', () => {
+test('Warn-only mode: IDP on Base → warning severity, no stripping, filteredCommands null', () => {
   const srxOutput = 'set services idp active-policy recommended';
   const result = runValidation({
     intermediateConfig: EMPTY_IC,
-    srxOutput,
+    conversionOutput: setOutput(srxOutput || 'set system host-name validation-fixture'),
     targetModel: null,
     srxLicense: 'Base',
     enforceLicense: false,
@@ -419,17 +424,17 @@ test('Warn-only mode: IDP on Base → warning severity, no stripping, filteredOu
   assert(idpFinding !== undefined, 'license/A1 finding exists');
   assert(idpFinding.severity === 'warning', 'severity is warning in warn-only mode');
   // strippedCommands tracks offending commands even in warn-only; output is not filtered
-  assert(result.filteredOutput === null, 'filteredOutput is null in warn-only mode');
+  assert(result.filteredCommands === null, 'filteredCommands is null in warn-only mode');
 });
 
-test('Enforce mode: IDP on Base → unsupported severity, 1 stripped command, filteredOutput without IDP', () => {
+test('Enforce mode: IDP on Base → unsupported severity, 1 stripped command, filteredCommands without IDP', () => {
   const srxOutput = [
     'set interfaces ge-0/0/0 unit 0 family inet address 10.0.0.1/24',
     'set services idp active-policy recommended',
   ].join('\n');
   const result = runValidation({
     intermediateConfig: EMPTY_IC,
-    srxOutput,
+    conversionOutput: setOutput(srxOutput || 'set system host-name validation-fixture'),
     targetModel: null,
     srxLicense: 'Base',
     enforceLicense: true,
@@ -441,8 +446,8 @@ test('Enforce mode: IDP on Base → unsupported severity, 1 stripped command, fi
   assert(idpFinding !== undefined, 'license/A1 finding exists in enforce mode');
   assert(idpFinding.severity === 'unsupported', 'severity is unsupported in enforce mode');
   assert(result.strippedCommands.length === 1, '1 command stripped');
-  assert(result.filteredOutput !== null, 'filteredOutput is not null');
-  assert(!result.filteredOutput.includes('set services idp'), 'filteredOutput excludes IDP command');
+  assert(Array.isArray(result.filteredCommands), 'filteredCommands is an array');
+  assert(!result.filteredCommands.some(command => command.includes('set services idp')), 'filteredCommands excludes IDP command');
 });
 
 test('P2 covers everything → no license gaps', () => {
@@ -453,7 +458,7 @@ test('P2 covers everything → no license gaps', () => {
   ].join('\n');
   const result = runValidation({
     intermediateConfig: EMPTY_IC,
-    srxOutput,
+    conversionOutput: setOutput(srxOutput || 'set system host-name validation-fixture'),
     targetModel: null,
     srxLicense: 'P2',
     enforceLicense: true,

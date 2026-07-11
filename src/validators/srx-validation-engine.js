@@ -6,6 +6,7 @@
  */
 
 import { createWarning } from '../parsers/parser-utils.js';
+import { getSetCommands } from '../conversion/conversion-output.js';
 import { runHardwareChecks } from './hardware-checks.js';
 import { runOperationalChecks } from './operational-checks.js';
 import { runComplianceChecks } from './compliance-checks.js';
@@ -130,18 +131,18 @@ function runLicenseChecks(commands, srxLicense, enforce) {
  *
  * @param {object} opts
  * @param {object} opts.intermediateConfig - Parsed intermediate config object
- * @param {string} opts.srxOutput - Newline-separated SRX set commands
+ * @param {import('../conversion/conversion-output.js').ConversionOutput} opts.conversionOutput
  * @param {string|null} opts.targetModel - Target SRX model string or null
  * @param {string|null} opts.srxLicense - License tier string or null ('Base','A1','A2','P1','P2')
  * @param {boolean} [opts.enforceLicense=false] - Strip unlicensed commands when true
  * @param {object} opts.modelDb - SRX_MODELS lookup object
  * @param {object} opts.capacityLimits - SRX_CAPACITY_LIMITS lookup object
  * @param {object|null} opts.sourceModel - Source model entry or null
- * @returns {{ findings: Object[], strippedCommands: string[], filteredOutput: string|null }}
+ * @returns {{ findings: Object[], strippedCommands: string[], filteredCommands: string[]|null }}
  */
 export function runValidation({
   intermediateConfig,
-  srxOutput,
+  conversionOutput,
   targetModel,
   srxLicense,
   enforceLicense = false,
@@ -149,7 +150,7 @@ export function runValidation({
   capacityLimits,
   sourceModel,
 }) {
-  const commands = (srxOutput ?? '').split('\n').filter(line => line.trim().length > 0);
+  const commands = getSetCommands(conversionOutput);
 
   const hardwareFindings = runHardwareChecks(
     commands,
@@ -174,14 +175,14 @@ export function runValidation({
     ...licenseFindings,
   ].map(finding => ({ ...finding, _source: 'validation' }));
 
-  const filteredOutput =
+  const enforcedCommands =
     enforceLicense && strippedCommands.length > 0
-      ? filteredCommands.join('\n')
+      ? filteredCommands
       : null;
 
   return {
     findings: allFindings,
     strippedCommands,
-    filteredOutput,
+    filteredCommands: enforcedCommands,
   };
 }
