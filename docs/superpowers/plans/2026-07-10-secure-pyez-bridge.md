@@ -22,6 +22,61 @@
 
 ---
 
+### Task 0: Restore the existing JavaScript test baseline
+
+**Files:**
+- Modify: `package.json`
+- Modify: `package-lock.json`
+- Modify: `public/utils/llm-client.js`
+
+**Interfaces:**
+- Produces: declared `vitest` 4.1.10 test-runner dependency compatible with Vite 8 and Node 20, 22, or 24+
+
+- [x] **Step 1: Reproduce the missing-runner failure**
+
+Run: `node tests/context-reducers.test.js`
+
+Expected: `ERR_MODULE_NOT_FOUND` for `vitest`. This existing test is the failing reproduction; no new test is necessary for a missing test-runner dependency.
+
+- [x] **Step 2: Declare the exact compatible dependency**
+
+Run: `npm install --save-dev --save-exact vitest@4.1.10`
+
+This also synchronizes the root package license in `package-lock.json` from the previous MIT relicensing commit.
+
+- [x] **Step 3: Verify every existing Vitest suite**
+
+Run:
+
+```bash
+npx vitest run tests/context-reducers.test.js tests/triage.test.js tests/workflow-steps.test.js
+```
+
+Expected: all three files pass.
+
+- [x] **Step 4: Verify the self-running JavaScript baseline**
+
+Run every remaining self-running JavaScript test. If direct Node execution reaches Vite-only development logging, guard `import.meta.env` with optional chaining so non-Vite test execution disables the log without changing application behavior:
+
+```javascript
+if (import.meta.env?.DEV) {
+  console.log('[translate] Raw LLM response length:', response.length, 'chars');
+}
+```
+
+Run: `node tests/llm-translate.test.js`
+
+Expected: 113 passed, 0 failed.
+
+- [x] **Step 5: Commit the baseline repair**
+
+```bash
+git add package.json package-lock.json public/utils/llm-client.js docs/superpowers/plans/2026-07-10-secure-pyez-bridge.md
+git commit -m "test: declare existing Vitest runner"
+```
+
+---
+
 ### Task 1: Python security policy
 
 **Files:**
@@ -373,7 +428,7 @@ Remove the `0.0.0.0` example. Document exact origins, the UI token field, sessio
 
 - [ ] **Step 2: Add GitHub Actions CI**
 
-Create `.github/workflows/ci.yml` with read-only repository permissions, cancellation of superseded runs, Node 22 and Python 3.12. The `Web` job runs `npm ci`, every `tests/*.test.js` file in lexical order, and `npm run build`. The `PyEZ bridge` job installs `tools/pyez-bridge/requirements.txt` and runs:
+Create `.github/workflows/ci.yml` with read-only repository permissions, cancellation of superseded runs, Node 22 and Python 3.12. The `Web` job runs `npm ci`, the three declared Vitest suites, every remaining self-running `tests/*.test.js` file in lexical order, and `npm run build`. The `PyEZ bridge` job installs `tools/pyez-bridge/requirements.txt` and runs:
 
 ```bash
 python -m unittest discover tools/pyez-bridge/tests -v
@@ -384,7 +439,11 @@ python -m unittest discover tools/pyez-bridge/tests -v
 Run:
 
 ```bash
-for test_file in tests/*.test.js; do node "$test_file"; done
+npx vitest run tests/context-reducers.test.js tests/triage.test.js tests/workflow-steps.test.js
+for test_file in tests/*.test.js; do
+  if grep -q "from 'vitest'" "$test_file"; then continue; fi
+  node "$test_file"
+done
 python -m unittest discover tools/pyez-bridge/tests -v
 npm run build
 git diff --check
