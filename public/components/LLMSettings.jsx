@@ -16,7 +16,7 @@ import {
 import { loadLLMSettings, saveLLMSettings } from '../utils/llm-settings.js';
 import {
   bridgeFetch,
-  bridgeResponseError,
+  bridgeResponseJson,
   loadBridgeSettings,
   normalizeBridgeUrl,
   saveBridgeSettings,
@@ -166,8 +166,7 @@ export default function LLMSettings({ onClose, initialTab }) {
             { authenticated: false },
           );
           if (!attempt.isCurrent()) return;
-          if (!healthResponse.ok) throw await bridgeResponseError(healthResponse);
-          const health = await healthResponse.json();
+          const health = await bridgeResponseJson(healthResponse);
           if (!attempt.isCurrent()) return;
           if (health.status !== 'ok' || health.service !== 'pyez-bridge') return;
           attempt.commit(() => {
@@ -180,8 +179,7 @@ export default function LLMSettings({ onClose, initialTab }) {
 
           const deviceResponse = await bridgeFetch(base + '/devices');
           if (!attempt.isCurrent()) return;
-          if (!deviceResponse.ok) throw await bridgeResponseError(deviceResponse);
-          const devices = await deviceResponse.json();
+          const devices = await bridgeResponseJson(deviceResponse);
           if (!attempt.isCurrent()) return;
           attempt.commit(() => {
             setBridgeDevices(Array.isArray(devices) ? devices : devices.devices || []);
@@ -193,8 +191,13 @@ export default function LLMSettings({ onClose, initialTab }) {
             {},
             { timeout: 60000 },
           );
-          if (!attempt.isCurrent() || !probeResponse.ok) return;
-          const probed = await probeResponse.json();
+          if (!attempt.isCurrent()) return;
+          let probed;
+          try {
+            probed = await bridgeResponseJson(probeResponse);
+          } catch {
+            return;
+          }
           attempt.commit(() => {
             setBridgeDevices(Array.isArray(probed) ? probed : probed.devices || []);
           });
@@ -279,19 +282,8 @@ export default function LLMSettings({ onClose, initialTab }) {
         { authenticated: false },
       );
       if (!attempt.isCurrent()) return;
-      if (!resp.ok) {
-        throw await bridgeResponseError(resp);
-      }
       // Verify it's actually the PyEZ Bridge (not a Vite SPA fallback)
-      let data;
-      try { data = await resp.json(); } catch {
-        attempt.commit(() => {
-          setBridgeConnected(false);
-          setBridgeResultOk(false);
-          setBridgeTestResult('URL responded with non-JSON content. Check the URL and port — it may be pointing at the wrong service.');
-        });
-        return;
-      }
+      const data = await bridgeResponseJson(resp);
       if (!attempt.isCurrent()) return;
       if (data.status !== 'ok' || data.service !== 'pyez-bridge') {
         attempt.commit(() => {
@@ -310,8 +302,7 @@ export default function LLMSettings({ onClose, initialTab }) {
       });
       const devResp = await bridgeFetch(base + '/devices', { method: 'GET' });
       if (!attempt.isCurrent()) return;
-      if (!devResp.ok) throw await bridgeResponseError(devResp);
-      const devData = await devResp.json();
+      const devData = await bridgeResponseJson(devResp);
       if (!attempt.isCurrent()) return;
       attempt.commit(() => {
         setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
@@ -326,8 +317,8 @@ export default function LLMSettings({ onClose, initialTab }) {
             {},
             { timeout: 60000 },
           );
-          if (!attempt.isCurrent() || !probeResponse.ok) return;
-          const probed = await probeResponse.json();
+          if (!attempt.isCurrent()) return;
+          const probed = await bridgeResponseJson(probeResponse);
           attempt.commit(() => {
             setBridgeDevices(Array.isArray(probed) ? probed : probed.devices || []);
           });
@@ -377,10 +368,7 @@ export default function LLMSettings({ onClose, initialTab }) {
         body: JSON.stringify(payload),
       });
       if (!attempt.isCurrent()) return;
-      if (!resp.ok && [401, 403, 429].includes(resp.status)) {
-        throw await bridgeResponseError(resp);
-      }
-      const data = await resp.json();
+      const data = await bridgeResponseJson(resp);
       if (!attempt.isCurrent()) return;
       if (data.ok) {
         attempt.commit(() => {
@@ -393,8 +381,7 @@ export default function LLMSettings({ onClose, initialTab }) {
         try {
           const devResp = await bridgeFetch(base + '/devices');
           if (!attempt.isCurrent()) return;
-          if (!devResp.ok) throw await bridgeResponseError(devResp);
-          const devData = await devResp.json();
+          const devData = await bridgeResponseJson(devResp);
           attempt.commit(() => {
             setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
           });
@@ -428,7 +415,7 @@ export default function LLMSettings({ onClose, initialTab }) {
         { method: 'DELETE' },
       );
       if (!attempt.isCurrent()) return;
-      if (!resp.ok) throw await bridgeResponseError(resp);
+      await bridgeResponseJson(resp);
       attempt.commit(() => {
         setBridgeDevices(prev => prev.filter(d => (d.name || d.hostname) !== deviceName));
       });

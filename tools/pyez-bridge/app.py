@@ -162,7 +162,7 @@ def _safe_device_info(dev_dict):
     credential_ready = (
         True
         if dev_dict["auth_method"] == "agent"
-        else bool(os.environ.get(dev_dict["password_env"]))
+        else dev_dict["password_env"] in os.environ
     )
     return {
         "name": dev_dict["name"],

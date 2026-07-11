@@ -487,7 +487,7 @@ firewall-intent-converter/
 
 ### LLM Settings
 
-All LLM configuration is stored in `localStorage` under the key `llm-settings`. No API keys are ever sent to the server. Supported providers:
+LLM nonsecret preferences are stored in `localStorage['llm-settings']`. The API key is stored only in `sessionStorage['llm-api-key']` for the current tab session and is removed when that tab session ends. No API keys are ever sent to the project server. Supported providers:
 
 | Provider | Key Required | Default URL |
 |----------|-------------|-------------|

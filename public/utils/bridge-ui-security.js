@@ -1,10 +1,5 @@
 import { DeviceRegistrationError } from './device-registration.js';
-
-const STATUS_MESSAGES = new Map([
-  [401, 'Bridge access token is missing or invalid.'],
-  [403, 'This browser origin is not allowed by the bridge.'],
-  [429, 'Bridge request limit reached. Wait and try again.'],
-]);
+import { bridgeErrorMessage } from './bridge-client.js';
 
 const OPERATION_FALLBACKS = Object.freeze({
   connection: 'Connection failed. Check the bridge service and try again.',
@@ -60,9 +55,10 @@ export function bridgeDisplayError(operation, error) {
   ) {
     return error.message;
   }
-  const statusMessage = STATUS_MESSAGES.get(error?.status);
-  if (statusMessage) return statusMessage;
-  return OPERATION_FALLBACKS[operation] || 'Bridge operation failed.';
+  return bridgeErrorMessage(
+    error,
+    OPERATION_FALLBACKS[operation] || 'Bridge operation failed.',
+  );
 }
 
 export function createLatestBridgeAttemptGuard() {

@@ -203,6 +203,35 @@ class BridgeApplicationSecurityTests(unittest.TestCase):
         self.assertNotIn("password_env", response.get_data(as_text=True))
         self.assertNotIn("SENTINEL_PASSWORD_ENV", response.get_data(as_text=True))
 
+    def test_device_listing_checks_credential_membership_without_value_access(self):
+        class MembershipOnlyEnvironment:
+            def __contains__(self, key):
+                return key == "FIC_EDGE_PASSWORD"
+
+            def get(self, *_args, **_kwargs):
+                raise AssertionError("credential value was retrieved with get()")
+
+            def __getitem__(self, _key):
+                raise AssertionError("credential value was retrieved")
+
+        device = {
+            "name": "edge",
+            "host": "192.0.2.10",
+            "port": 830,
+            "username": "netops",
+            "auth_method": "password-env",
+            "password_env": "FIC_EDGE_PASSWORD",
+        }
+        with patch.object(
+            app_module.os,
+            "environ",
+            MembershipOnlyEnvironment(),
+        ):
+            info = app_module._safe_device_info(device)
+
+        self.assertTrue(info["credential_ready"])
+        self.assertNotIn("password_env", info)
+
     def test_connect_uses_strict_host_key_verification_by_default(self):
         device = {
             "name": "edge",

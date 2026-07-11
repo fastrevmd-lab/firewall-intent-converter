@@ -37,8 +37,15 @@ beforeEach(() => {
 describe('credential source invariants', () => {
   it('runs both credential security suites in CI', () => {
     const ci = read('.github/workflows/ci.yml');
-    expect(ci).toContain('tests/llm-settings.test.js');
-    expect(ci).toContain('tests/credential-security.test.js');
+    const start = ci.indexOf('      - name: Run Vitest suites\n');
+    const end = ci.indexOf('\n      - name:', start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const step = ci.slice(start, end);
+    const command = step.match(/\n        run: >-\n([\s\S]*)/)?.[1] || '';
+    expect(command).toContain('npx vitest run');
+    expect(command).toContain('tests/llm-settings.test.js');
+    expect(command).toContain('tests/credential-security.test.js');
   });
 
   it('has no tracked runtime device inventory', () => {
@@ -52,6 +59,21 @@ describe('credential source invariants', () => {
       ['ls-files', '--error-unmatch', 'tools/pyez-bridge/devices.yaml'],
       { stdio: 'pipe' },
     )).toThrow();
+  });
+
+  it('effectively ignores the runtime inventory', () => {
+    expect(() => execFileSync(
+      'git',
+      ['check-ignore', '--quiet', 'tools/pyez-bridge/devices.yaml'],
+      { stdio: 'pipe' },
+    )).not.toThrow();
+  });
+
+  it('documents the split LLM settings storage boundary', () => {
+    const readme = read('README.md');
+    expect(readme).toContain("nonsecret preferences are stored in `localStorage['llm-settings']`");
+    expect(readme).toContain("API key is stored only in `sessionStorage['llm-api-key']` for the current tab session");
+    expect(readme).not.toContain('All LLM configuration is stored in `localStorage`');
   });
 
   it('contains no raw bridge exception reflection', () => {
@@ -116,10 +138,11 @@ describe('credential source invariants', () => {
       headers: { 'Content-Type': 'application/json' },
     });
     const hostileError = await bridgeResponseError(hostileResponse);
-    expect(hostileError.message).toContain('SENTINEL_REMOTE_BODY');
+    expect(hostileError.message).toBe('Bridge encountered an internal error.');
+    expect(hostileError.message).not.toContain('SENTINEL_REMOTE_BODY');
 
     const connectionMessage = bridgeDisplayError('connection', hostileError);
-    expect(connectionMessage).toBe('Connection failed. Check the bridge service and try again.');
+    expect(connectionMessage).toBe('Bridge encountered an internal error.');
     expect(connectionMessage).not.toContain('SENTINEL');
     expect(connectionMessage).not.toContain('FIC_EDGE_PASSWORD');
     expect(connectionMessage).not.toContain('http://');
@@ -136,7 +159,7 @@ describe('credential source invariants', () => {
     }
   });
 
-  it('preserves only enumerated bridge and registration messages', () => {
+  it('preserves only enumerated bridge and registration messages', async () => {
     const registrationError = new DeviceRegistrationError('Device port is invalid.');
     expect(bridgeDisplayError('add-device', registrationError)).toBe('Device port is invalid.');
     const hostileRegistrationError = new DeviceRegistrationError('SENTINEL_REGISTRATION');
@@ -147,8 +170,10 @@ describe('credential source invariants', () => {
       [403, 'This browser origin is not allowed by the bridge.'],
       [429, 'Bridge request limit reached. Wait and try again.'],
     ]) {
-      const error = new Error(`SENTINEL_STATUS_${status}`);
-      error.status = status;
+      const error = await bridgeResponseError(new Response(
+        JSON.stringify({ error: `SENTINEL_STATUS_${status}` }),
+        { status },
+      ));
       expect(bridgeDisplayError('connection', error)).toBe(expected);
     }
 
