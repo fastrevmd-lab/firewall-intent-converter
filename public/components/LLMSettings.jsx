@@ -6,7 +6,7 @@
  *
  * Preferences are persisted locally; API keys are scoped to the browser session.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   DEFAULT_FULL_REVIEW_SYSTEM_PROMPT,
   DEFAULT_GREENFIELD_SYSTEM_PROMPT,
@@ -25,6 +25,11 @@ import {
   EMPTY_DEVICE_REGISTRATION,
   buildDeviceRegistration,
 } from '../utils/device-registration.js';
+import {
+  bridgeDisplayError,
+  createExclusiveBridgeMutationLock,
+  createLatestBridgeAttemptGuard,
+} from '../utils/bridge-ui-security.js';
 import { useUIContext } from '../contexts/UIContext.jsx';
 
 const CLOUD_PROVIDER_IDS = ['claude', 'openai', 'gemini'];
@@ -98,6 +103,17 @@ export default function LLMSettings({ onClose, initialTab }) {
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [newDevice, setNewDevice] = useState({ ...EMPTY_DEVICE_REGISTRATION });
   const [hostKeyVerification, setHostKeyVerification] = useState('strict');
+  const [bridgeMutationPending, setBridgeMutationPending] = useState(false);
+  const bridgeAttemptGuardRef = useRef(null);
+  if (!bridgeAttemptGuardRef.current) {
+    bridgeAttemptGuardRef.current = createLatestBridgeAttemptGuard();
+  }
+  const bridgeAttemptGuard = bridgeAttemptGuardRef.current;
+  const bridgeMutationLockRef = useRef(null);
+  if (!bridgeMutationLockRef.current) {
+    bridgeMutationLockRef.current = createExclusiveBridgeMutationLock();
+  }
+  const bridgeMutationLock = bridgeMutationLockRef.current;
 
   // Load saved settings on mount
   useEffect(() => {
@@ -135,35 +151,82 @@ export default function LLMSettings({ onClose, initialTab }) {
     // Auto-connect to bridge if URL is saved
     if (savedBridgeUrl && savedBridge.token) {
       const base = normalizeBridgeUrl(savedBridgeUrl);
-      bridgeFetch(base + '/health', {}, { authenticated: false })
-        .then(async (healthResponse) => {
+      const attempt = bridgeAttemptGuard.begin();
+      void (async () => {
+        try {
+          const healthResponse = await bridgeFetch(
+            base + '/health',
+            {},
+            { authenticated: false },
+          );
+          if (!attempt.isCurrent()) return;
           if (!healthResponse.ok) throw await bridgeResponseError(healthResponse);
           const health = await healthResponse.json();
+          if (!attempt.isCurrent()) return;
           if (health.status !== 'ok' || health.service !== 'pyez-bridge') return;
-          setHostKeyVerification(
-            health.host_key_verification === 'disabled-development'
-              ? 'disabled-development'
-              : 'strict',
-          );
+          attempt.commit(() => {
+            setHostKeyVerification(
+              health.host_key_verification === 'disabled-development'
+                ? 'disabled-development'
+                : 'strict',
+            );
+          });
+
           const deviceResponse = await bridgeFetch(base + '/devices');
+          if (!attempt.isCurrent()) return;
           if (!deviceResponse.ok) throw await bridgeResponseError(deviceResponse);
           const devices = await deviceResponse.json();
-          setBridgeDevices(Array.isArray(devices) ? devices : devices.devices || []);
-          setBridgeConnected(true);
-          return bridgeFetch(
+          if (!attempt.isCurrent()) return;
+          attempt.commit(() => {
+            setBridgeDevices(Array.isArray(devices) ? devices : devices.devices || []);
+            setBridgeConnected(true);
+          });
+
+          const probeResponse = await bridgeFetch(
             base + '/devices?probe=true',
             {},
             { timeout: 60000 },
           );
-        })
-        .then(async (probeResponse) => {
-          if (!probeResponse?.ok) return;
-          const devices = await probeResponse.json();
-          setBridgeDevices(Array.isArray(devices) ? devices : devices.devices || []);
-        })
-        .catch(() => setBridgeConnected(false));
+          if (!attempt.isCurrent() || !probeResponse.ok) return;
+          const probed = await probeResponse.json();
+          attempt.commit(() => {
+            setBridgeDevices(Array.isArray(probed) ? probed : probed.devices || []);
+          });
+        } catch {
+          attempt.commit(() => setBridgeConnected(false));
+        }
+      })();
     }
+    return () => {
+      bridgeAttemptGuard.invalidate();
+      bridgeMutationLock.reset();
+    };
   }, []);
+
+  const resetBridgeMutation = () => {
+    bridgeMutationLock.reset();
+    setBridgeMutationPending(false);
+  };
+
+  const invalidateBridgeConnection = () => {
+    bridgeAttemptGuard.invalidate();
+    resetBridgeMutation();
+    setBridgeTesting(false);
+    setBridgeConnected(false);
+    setBridgeDevices([]);
+    setHostKeyVerification('strict');
+    setBridgeTestResult('');
+  };
+
+  const handleBridgeUrlChange = (value) => {
+    invalidateBridgeConnection();
+    setBridgeUrl(value);
+  };
+
+  const handleBridgeTokenChange = (value) => {
+    invalidateBridgeConnection();
+    setBridgeToken(value);
+  };
 
   /** Save LLM settings */
   const handleSave = () => {
@@ -182,16 +245,23 @@ export default function LLMSettings({ onClose, initialTab }) {
 
   /** Test PyEZ Bridge connection */
   const handleBridgeTest = async () => {
+    resetBridgeMutation();
+    const attempt = bridgeAttemptGuard.begin();
     const base = normalizeBridgeUrl(bridgeUrl);
     if (!base) {
-      setBridgeResultOk(false);
-      setBridgeTestResult('Enter the PyEZ Bridge URL first.');
+      attempt.commit(() => {
+        setBridgeConnected(false);
+        setBridgeResultOk(false);
+        setBridgeTestResult('Enter the PyEZ Bridge URL first.');
+      });
       return;
     }
     // Update the input to the normalized URL
     if (base !== bridgeUrl) setBridgeUrl(base);
     saveBridgeSettings({ url: base, token: bridgeToken });
     setBridgeTesting(true);
+    setBridgeConnected(false);
+    setHostKeyVerification('strict');
     setBridgeTestResult('');
     setBridgeDevices([]);
     try {
@@ -200,50 +270,71 @@ export default function LLMSettings({ onClose, initialTab }) {
         { method: 'GET' },
         { authenticated: false },
       );
+      if (!attempt.isCurrent()) return;
       if (!resp.ok) {
         throw await bridgeResponseError(resp);
       }
       // Verify it's actually the PyEZ Bridge (not a Vite SPA fallback)
       let data;
       try { data = await resp.json(); } catch {
-        setBridgeConnected(false);
-        setBridgeResultOk(false);
-        setBridgeTestResult('URL responded with non-JSON content. Check the URL and port — it may be pointing at the wrong service.');
+        attempt.commit(() => {
+          setBridgeConnected(false);
+          setBridgeResultOk(false);
+          setBridgeTestResult('URL responded with non-JSON content. Check the URL and port — it may be pointing at the wrong service.');
+        });
         return;
       }
+      if (!attempt.isCurrent()) return;
       if (data.status !== 'ok' || data.service !== 'pyez-bridge') {
-        setBridgeConnected(false);
-        setBridgeResultOk(false);
-        setBridgeTestResult('URL responded but is not a PyEZ Bridge service. Check the URL and port.');
+        attempt.commit(() => {
+          setBridgeConnected(false);
+          setBridgeResultOk(false);
+          setBridgeTestResult('URL responded but is not a PyEZ Bridge service. Check the URL and port.');
+        });
         return;
       }
-      setHostKeyVerification(
-        data.host_key_verification === 'disabled-development'
-          ? 'disabled-development'
-          : 'strict',
-      );
+      attempt.commit(() => {
+        setHostKeyVerification(
+          data.host_key_verification === 'disabled-development'
+            ? 'disabled-development'
+            : 'strict',
+        );
+      });
       const devResp = await bridgeFetch(base + '/devices', { method: 'GET' });
+      if (!attempt.isCurrent()) return;
       if (!devResp.ok) throw await bridgeResponseError(devResp);
       const devData = await devResp.json();
-      setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
-      setBridgeConnected(true);
-      setBridgeResultOk(true);
-      setBridgeTestResult('Connected successfully with access token.');
-      bridgeFetch(
-        base + '/devices?probe=true',
-        {},
-        { timeout: 60000 },
-      ).then(async (probeResponse) => {
-        if (!probeResponse.ok) return;
-        const probed = await probeResponse.json();
-        setBridgeDevices(Array.isArray(probed) ? probed : probed.devices || []);
-      }).catch(() => {});
-    } catch (err) {
-      setBridgeConnected(false);
-      setBridgeResultOk(false);
-      setBridgeTestResult(`Connection failed: ${err.message}`);
+      if (!attempt.isCurrent()) return;
+      attempt.commit(() => {
+        setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+        setBridgeConnected(true);
+        setBridgeResultOk(true);
+        setBridgeTestResult('Connected successfully with access token.');
+      });
+      void (async () => {
+        try {
+          const probeResponse = await bridgeFetch(
+            base + '/devices?probe=true',
+            {},
+            { timeout: 60000 },
+          );
+          if (!attempt.isCurrent() || !probeResponse.ok) return;
+          const probed = await probeResponse.json();
+          attempt.commit(() => {
+            setBridgeDevices(Array.isArray(probed) ? probed : probed.devices || []);
+          });
+        } catch {
+          // Probing is best-effort; the authenticated inventory remains usable.
+        }
+      })();
+    } catch (error) {
+      attempt.commit(() => {
+        setBridgeConnected(false);
+        setBridgeResultOk(false);
+        setBridgeTestResult(bridgeDisplayError('connection', error));
+      });
     } finally {
-      setBridgeTesting(false);
+      attempt.commit(() => setBridgeTesting(false));
     }
   };
 
@@ -254,12 +345,17 @@ export default function LLMSettings({ onClose, initialTab }) {
       setBridgeTestResult('PyEZ Bridge is not connected. Start the bridge service first.');
       return;
     }
+    const mutation = bridgeMutationLock.acquire();
+    if (!mutation) return;
+    setBridgeMutationPending(true);
+    const attempt = bridgeAttemptGuard.begin();
     let payload;
     try {
       payload = buildDeviceRegistration(newDevice);
     } catch (error) {
       setBridgeResultOk(false);
-      setBridgeTestResult(error.message);
+      setBridgeTestResult(bridgeDisplayError('add-device', error));
+      if (mutation.release()) setBridgeMutationPending(false);
       return;
     }
     const base = normalizeBridgeUrl(bridgeUrl);
@@ -272,47 +368,69 @@ export default function LLMSettings({ onClose, initialTab }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (!attempt.isCurrent()) return;
       if (!resp.ok && [401, 403, 429].includes(resp.status)) {
         throw await bridgeResponseError(resp);
       }
       const data = await resp.json();
+      if (!attempt.isCurrent()) return;
       if (data.ok) {
-        setNewDevice({ ...EMPTY_DEVICE_REGISTRATION });
-        setShowAddDevice(false);
-        setBridgeResultOk(true);
-        setBridgeTestResult('Device added successfully.');
+        attempt.commit(() => {
+          setNewDevice({ ...EMPTY_DEVICE_REGISTRATION });
+          setShowAddDevice(false);
+          setBridgeResultOk(true);
+          setBridgeTestResult('Device added successfully.');
+        });
         // Refresh device list
         try {
           const devResp = await bridgeFetch(base + '/devices');
+          if (!attempt.isCurrent()) return;
           if (!devResp.ok) throw await bridgeResponseError(devResp);
           const devData = await devResp.json();
-          setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+          attempt.commit(() => {
+            setBridgeDevices(Array.isArray(devData) ? devData : devData.devices || []);
+          });
         } catch { /* ignore refresh failure */ }
       } else {
-        setBridgeResultOk(false);
-        setBridgeTestResult('Failed to add device.');
+        attempt.commit(() => {
+          setBridgeResultOk(false);
+          setBridgeTestResult('Failed to add device.');
+        });
       }
-    } catch (err) {
-      setBridgeResultOk(false);
-      setBridgeTestResult(`Failed to add device: ${err.message}`);
+    } catch (error) {
+      attempt.commit(() => {
+        setBridgeResultOk(false);
+        setBridgeTestResult(bridgeDisplayError('add-device', error));
+      });
+    } finally {
+      if (mutation.release()) setBridgeMutationPending(false);
     }
   };
 
   /** Remove device via PyEZ Bridge */
   const handleRemoveDevice = async (deviceName) => {
     const base = bridgeUrl.replace(/\/+$/, '');
+    const mutation = bridgeMutationLock.acquire();
+    if (!mutation) return;
+    setBridgeMutationPending(true);
+    const attempt = bridgeAttemptGuard.begin();
     try {
       const resp = await bridgeFetch(
         base + `/devices/${encodeURIComponent(deviceName)}`,
         { method: 'DELETE' },
       );
+      if (!attempt.isCurrent()) return;
       if (!resp.ok) throw await bridgeResponseError(resp);
-      if (resp.ok) {
+      attempt.commit(() => {
         setBridgeDevices(prev => prev.filter(d => (d.name || d.hostname) !== deviceName));
-      }
+      });
     } catch (error) {
-      setBridgeResultOk(false);
-      setBridgeTestResult(`Failed to remove device: ${error.message}`);
+      attempt.commit(() => {
+        setBridgeResultOk(false);
+        setBridgeTestResult(bridgeDisplayError('remove-device', error));
+      });
+    } finally {
+      if (mutation.release()) setBridgeMutationPending(false);
     }
   };
 
@@ -386,7 +504,7 @@ export default function LLMSettings({ onClose, initialTab }) {
               <input
                 type="text"
                 value={bridgeUrl}
-                onChange={(e) => setBridgeUrl(e.target.value)}
+                onChange={(e) => handleBridgeUrlChange(e.target.value)}
                 placeholder="http://localhost:8830"
                 style={inputStyle}
               />
@@ -399,7 +517,7 @@ export default function LLMSettings({ onClose, initialTab }) {
               <input
                 type="password"
                 value={bridgeToken}
-                onChange={(e) => setBridgeToken(e.target.value)}
+                onChange={(e) => handleBridgeTokenChange(e.target.value)}
                 autoComplete="off"
                 placeholder="Paste the token printed when the bridge starts"
                 style={inputStyle}
@@ -413,7 +531,7 @@ export default function LLMSettings({ onClose, initialTab }) {
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleBridgeTest}
-                disabled={bridgeTesting}
+                disabled={bridgeTesting || bridgeMutationPending}
               >
                 {bridgeTesting ? 'Testing...' : 'Test Connection'}
               </button>
@@ -454,6 +572,7 @@ export default function LLMSettings({ onClose, initialTab }) {
                       <span style={{ color: 'var(--text-muted)', marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{dev.host || dev.ip || ''}</span>
                       <button
                         onClick={() => handleRemoveDevice(dev.name || dev.hostname)}
+                        disabled={bridgeMutationPending}
                         style={{
                           background: 'none', border: 'none', cursor: 'pointer',
                           color: 'var(--text-muted)', fontSize: 14, padding: '0 4px', lineHeight: 1,
@@ -522,7 +641,7 @@ export default function LLMSettings({ onClose, initialTab }) {
                       <button
                         className="btn btn-primary btn-sm"
                         onClick={handleAddDevice}
-                        disabled={!newDevice.name.trim() || !newDevice.host.trim() || !newDevice.username.trim()}
+                        disabled={bridgeMutationPending || !newDevice.name.trim() || !newDevice.host.trim() || !newDevice.username.trim()}
                         style={{ fontSize: 11 }}
                       >
                         Add Device

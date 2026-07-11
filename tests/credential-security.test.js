@@ -3,10 +3,17 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { getLLMChatResponse, getLLMSuggestion } from '../public/utils/llm-client.js';
 import { saveLLMSettings } from '../public/utils/llm-settings.js';
+import { bridgeResponseError } from '../public/utils/bridge-client.js';
 import {
   EMPTY_DEVICE_REGISTRATION,
+  DeviceRegistrationError,
   buildDeviceRegistration,
 } from '../public/utils/device-registration.js';
+import {
+  bridgeDisplayError,
+  createExclusiveBridgeMutationLock,
+  createLatestBridgeAttemptGuard,
+} from '../public/utils/bridge-ui-security.js';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -63,6 +70,126 @@ describe('credential source invariants', () => {
     expect(source).not.toContain('SSH Key Path');
     expect(source).toContain('Password Environment Variable');
     expect(source).toContain('disabled-development');
+  });
+
+  it('maps hostile bridge and parser errors to fixed display messages', async () => {
+    const hostileResponse = new Response(JSON.stringify({
+      error: 'SENTINEL_REMOTE_BODY FIC_EDGE_PASSWORD http://host.invalid',
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const hostileError = await bridgeResponseError(hostileResponse);
+    expect(hostileError.message).toContain('SENTINEL_REMOTE_BODY');
+
+    const connectionMessage = bridgeDisplayError('connection', hostileError);
+    expect(connectionMessage).toBe('Connection failed. Check the bridge service and try again.');
+    expect(connectionMessage).not.toContain('SENTINEL');
+    expect(connectionMessage).not.toContain('FIC_EDGE_PASSWORD');
+    expect(connectionMessage).not.toContain('http://');
+
+    for (const [operation, expected] of [
+      ['connection', 'Connection failed. Check the bridge service and try again.'],
+      ['add-device', 'Failed to add device.'],
+      ['remove-device', 'Failed to remove device.'],
+    ]) {
+      const parserError = new SyntaxError(`Malformed JSON SENTINEL_PARSER for ${operation}`);
+      const message = bridgeDisplayError(operation, parserError);
+      expect(message).toBe(expected);
+      expect(message).not.toContain('SENTINEL_PARSER');
+    }
+  });
+
+  it('preserves only enumerated bridge and registration messages', () => {
+    const registrationError = new DeviceRegistrationError('Device port is invalid.');
+    expect(bridgeDisplayError('add-device', registrationError)).toBe('Device port is invalid.');
+    const hostileRegistrationError = new DeviceRegistrationError('SENTINEL_REGISTRATION');
+    expect(bridgeDisplayError('add-device', hostileRegistrationError)).toBe('Failed to add device.');
+
+    for (const [status, expected] of [
+      [401, 'Bridge access token is missing or invalid.'],
+      [403, 'This browser origin is not allowed by the bridge.'],
+      [429, 'Bridge request limit reached. Wait and try again.'],
+    ]) {
+      const error = new Error(`SENTINEL_STATUS_${status}`);
+      error.status = status;
+      expect(bridgeDisplayError('connection', error)).toBe(expected);
+    }
+
+    for (const inheritedStatus of ['toString', 'constructor', '__proto__']) {
+      const error = new Error(`SENTINEL_${inheritedStatus}`);
+      error.status = inheritedStatus;
+      expect(bridgeDisplayError('connection', error)).toBe(
+        'Connection failed. Check the bridge service and try again.',
+      );
+    }
+  });
+
+  it('prevents an older deferred bridge attempt from committing state', async () => {
+    const deferred = () => {
+      let resolve;
+      const promise = new Promise(done => { resolve = done; });
+      return { promise, resolve };
+    };
+    const guard = createLatestBridgeAttemptGuard();
+    const olderHealth = deferred();
+    const newerHealth = deferred();
+    const state = { mode: 'strict', commits: [] };
+    const run = async (attempt, response) => {
+      const health = await response.promise;
+      attempt.commit(() => {
+        state.mode = health.host_key_verification;
+        state.commits.push(health.host_key_verification);
+      });
+    };
+
+    const olderRun = run(guard.begin(), olderHealth);
+    const newerRun = run(guard.begin(), newerHealth);
+    newerHealth.resolve({ host_key_verification: 'disabled-development' });
+    await newerRun;
+    olderHealth.resolve({ host_key_verification: 'strict' });
+    await olderRun;
+
+    expect(state).toEqual({
+      mode: 'disabled-development',
+      commits: ['disabled-development'],
+    });
+  });
+
+  it('serializes device mutations without letting an old owner release a new lock', () => {
+    const lock = createExclusiveBridgeMutationLock();
+    const first = lock.acquire();
+    expect(first).not.toBeNull();
+    expect(lock.acquire()).toBeNull();
+
+    lock.reset();
+    const second = lock.acquire();
+    expect(second).not.toBeNull();
+    expect(first.release()).toBe(false);
+    expect(lock.acquire()).toBeNull();
+    expect(second.release()).toBe(true);
+    expect(lock.acquire()).not.toBeNull();
+  });
+
+  it('wires safe display errors and latest-attempt guards into the bridge UI', () => {
+    const source = read('public/components/LLMSettings.jsx');
+    expect(source).not.toMatch(/(?:err|error)\.message/);
+    expect(source).toContain("bridgeDisplayError('connection'");
+    expect(source).toContain("bridgeDisplayError('add-device'");
+    expect(source).toContain("bridgeDisplayError('remove-device'");
+    expect(source.match(/bridgeAttemptGuard\.begin\(\)/g)).toHaveLength(4);
+    expect(source).toContain('bridgeAttemptGuard.invalidate()');
+    expect(source).toContain('attempt.commit(');
+    const addHandler = source.slice(
+      source.indexOf('const handleAddDevice'),
+      source.indexOf('const handleRemoveDevice'),
+    );
+    expect(addHandler.indexOf('bridgeAttemptGuard.begin()')).toBeLessThan(
+      addHandler.indexOf('buildDeviceRegistration(newDevice)'),
+    );
+    expect(source.match(/bridgeMutationLock\.acquire\(\)/g)).toHaveLength(2);
+    expect(source).toContain('bridgeTesting || bridgeMutationPending');
+    expect(source).toContain('disabled={bridgeMutationPending}');
   });
 
   it('centralizes LLM storage access', () => {
