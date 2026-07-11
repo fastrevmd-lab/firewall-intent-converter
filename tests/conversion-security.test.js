@@ -59,7 +59,7 @@ describe('conversion fail-closed behavior', () => {
     );
     const clearCalls = source.match(/conversionDispatch\(\{ type: 'CLEAR_OUTPUT' \}\)/g) || [];
 
-    expect(clearCalls).toHaveLength(4);
+    expect(clearCalls).toHaveLength(5);
     expect(source).toContain("formatJunosSerializationError(err, 'Conversion')");
     expect(source).toContain("formatJunosSerializationError(err, 'Merge conversion')");
   });
