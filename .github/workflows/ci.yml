@@ -40,6 +40,10 @@ jobs:
           tests/junos-validation.test.js
           tests/srx-injection-defense.test.js
           tests/conversion-security.test.js
+          tests/conversion-output.test.js
+          tests/conversion-enforcement.test.js
+          tests/project-io.test.js
+          tests/conversion-consumers.test.js
 
       - name: Run self-contained JavaScript suites
         shell: bash

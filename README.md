@@ -45,6 +45,8 @@ npm run dev
 
 Open **http://localhost:5173** in your browser. Vite serves the app with hot module replacement.
 
+Generated SRX configuration uses a runtime-validated discriminated output object: set output is `{ format: 'set', commands: string[] }`, while XML output is `{ format: 'xml', xml: string }`. Consumers must use `src/conversion/conversion-output.js`; missing, empty, mixed, or malformed output is a blocking error and must never be converted to an empty fallback.
+
 ### Production Build
 
 ```bash
