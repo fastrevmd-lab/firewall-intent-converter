@@ -472,11 +472,11 @@ git commit -m "ci: verify web and PyEZ bridge security"
 
 Confirm `git status --short` is empty, review `git diff origin/main...HEAD`, and map every issue #7 acceptance criterion to a passing test or documented startup behavior.
 
-- [ ] **Step 2: Push and open the PR**
+- [x] **Step 2: Push and open the PR**
 
 Push `agent/issue-7-secure-pyez-bridge` to `origin`. Open a draft PR targeting `main` with `Fixes #7`, the root cause, security behavior, migration note, and exact local checks. Mark it ready only after the diff and check list are complete.
 
-- [ ] **Step 3: Wait for and inspect CI**
+- [x] **Step 3: Wait for and inspect CI**
 
 Use `gh pr checks --watch`. If any check fails, inspect the actual GitHub Actions log, reproduce locally, add a failing regression test when behavior is wrong, fix test-first, commit, push, and wait again.
 
