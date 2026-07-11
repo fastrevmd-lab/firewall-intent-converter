@@ -1,5 +1,6 @@
 """Integration tests for security on the real PyEZ bridge routes."""
 
+import json
 import os
 import sys
 import tempfile
@@ -132,6 +133,41 @@ class BridgeApplicationSecurityTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(
                     response.get_json()["code"], "INVENTORY_UNSAFE"
+                )
+
+    def test_device_api_routes_every_parsed_falsy_record_to_inventory_validation(self):
+        for value in ([], False, "", None, {}):
+            with self.subTest(value=value):
+                response = self.client.post(
+                    "/devices",
+                    headers=self.auth,
+                    data=json.dumps(value),
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    response.get_json(),
+                    {
+                        "ok": False,
+                        "error": "Device inventory is unsafe or invalid.",
+                        "code": "INVENTORY_UNSAFE",
+                    },
+                )
+
+    def test_device_api_keeps_missing_and_invalid_json_errors_constant(self):
+        requests = (
+            {},
+            {"data": "{", "content_type": "application/json"},
+        )
+        for kwargs in requests:
+            with self.subTest(kwargs=kwargs):
+                response = self.client.post(
+                    "/devices", headers=self.auth, **kwargs
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    response.get_json(),
+                    {"ok": False, "error": "Request body must be JSON."},
                 )
 
     def test_device_list_omits_credential_reference(self):

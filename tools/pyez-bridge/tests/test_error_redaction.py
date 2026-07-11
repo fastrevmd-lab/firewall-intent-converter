@@ -139,6 +139,28 @@ class BridgeErrorRedactionTests(unittest.TestCase):
                 )
                 self.assert_redacted(response, captured)
 
+    def test_unexpected_validator_failure_is_stable_and_redacted(self):
+        with patch.object(
+            app_module,
+            "validate_config_payload",
+            side_effect=RuntimeError(PRIVATE_MESSAGE),
+        ):
+            response, captured = self.request_with_captured_output(
+                "post",
+                "/devices/edge/load",
+                {"format": "set", "config": "set system host-name edge"},
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "ok": False,
+                "error": "An unexpected bridge error occurred.",
+                "code": "UNEXPECTED_ERROR",
+            },
+        )
+        self.assert_redacted(response, captured)
+
     def test_non_object_json_is_rejected_without_tracebacks_or_reflection(self):
         for path in (
             "/devices/edge/load",

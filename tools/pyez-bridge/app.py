@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from flask import Blueprint, Flask, current_app, jsonify, request
+from werkzeug.exceptions import BadRequest
 
 from connection import DeviceConnectionError, connect_device
 from security import (
@@ -297,8 +298,11 @@ def list_devices():
 @bridge.route("/devices", methods=["POST"])
 def add_device():
     """Add a new device to devices.yaml."""
-    data = request.get_json(silent=True)
-    if not data:
+    if not request.is_json:
+        return _error_response("Request body must be JSON.")
+    try:
+        data = request.get_json(silent=False)
+    except BadRequest:
         return _error_response("Request body must be JSON.")
     if not isinstance(data, dict):
         return _safe_failure("INVENTORY_UNSAFE")
@@ -475,6 +479,8 @@ def load_config(name):
             line=error.line,
             path=_safe_validation_path(error.path),
         )
+    except Exception:
+        return _safe_failure("UNEXPECTED_ERROR")
 
     dev = None
     cu = None
