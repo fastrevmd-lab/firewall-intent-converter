@@ -408,7 +408,7 @@ git commit -m "security: authenticate browser bridge requests"
 **Interfaces:**
 - Produces: GitHub checks `Web` and `PyEZ bridge`
 
-- [ ] **Step 1: Update operator documentation**
+- [x] **Step 1: Update operator documentation**
 
 Document these exact launch patterns:
 
@@ -426,7 +426,7 @@ curl -H "Authorization: Bearer $PYEZ_BRIDGE_TOKEN" \
 
 Remove the `0.0.0.0` example. Document exact origins, the UI token field, session lifetime, `401`, CORS failure, `429`, and that remote access is unsupported.
 
-- [ ] **Step 2: Add GitHub Actions CI**
+- [x] **Step 2: Add GitHub Actions CI**
 
 Create `.github/workflows/ci.yml` with read-only repository permissions, cancellation of superseded runs, Node 22 and Python 3.12. The `Web` job runs `npm ci`, the three declared Vitest suites, every remaining self-running `tests/*.test.js` file in lexical order, and `npm run build`. The `PyEZ bridge` job installs `tools/pyez-bridge/requirements.txt` and runs:
 
@@ -434,7 +434,7 @@ Create `.github/workflows/ci.yml` with read-only repository permissions, cancell
 python -m unittest discover tools/pyez-bridge/tests -v
 ```
 
-- [ ] **Step 3: Run the complete local verification suite**
+- [x] **Step 3: Run the complete local verification suite**
 
 Run:
 
@@ -451,7 +451,7 @@ git diff --check
 
 Expected: every JavaScript and Python test passes, Vite builds successfully, and `git diff --check` produces no output.
 
-- [ ] **Step 4: Commit documentation and CI**
+- [x] **Step 4: Commit documentation and CI**
 
 ```bash
 git add tools/pyez-bridge/README.md .github/workflows/ci.yml
