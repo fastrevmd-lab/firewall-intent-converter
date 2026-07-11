@@ -128,6 +128,12 @@ curl -H "Authorization: Bearer $PYEZ_BRIDGE_TOKEN" \
 | `GET` | `/devices/<name>/policy-stats` | Fetch policy statistics |
 | `GET` | `/devices/<name>/app-usage` | Fetch application usage |
 
+### Configuration load validation
+
+`POST /devices/<name>/load` accepts only the converter's supported `set` and XML subset. Before opening NETCONF, the bridge rejects control characters, malformed quoting or XML, unsupported command verbs and top-level hierarchies, DTDs/entities/processing instructions, clear-text management services, scripts/event automation, and credential-changing paths. Validation errors report only a safe line number or XML path and reason.
+
+Brace-format `text` loads are disabled because they cannot be structurally validated to the same standard. The read-only pull endpoint may still return hierarchical text for inspection.
+
 ## Troubleshooting
 
 - **401 Authentication required:** paste the current startup token into the Bridge Access Token field. Generated tokens change after every restart.
@@ -135,3 +141,4 @@ curl -H "Authorization: Bearer $PYEZ_BRIDGE_TOKEN" \
 - **429 Request rate limit exceeded:** wait for the `Retry-After` interval before retrying.
 - **Startup rejects the bind address:** only numeric loopback addresses such as `127.0.0.1` and `::1` are supported.
 - **Health works but devices do not:** `/health` is public; `/devices` verifies the access token.
+- **400 Configuration validation failed:** use converter-generated set or XML output. Text/brace-format loads and arbitrary Junos hierarchies are intentionally unsupported.

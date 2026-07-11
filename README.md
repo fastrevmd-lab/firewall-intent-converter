@@ -293,6 +293,7 @@ Click **Convert to SRX** to generate the output. Switch between **Set Commands**
 - **Available in both modes** — Analysis works identically in No-AI and LLM modes
 
 ### Conversion Features
+- **Safe Junos output** — Imported, project, and AI-assisted values are treated as untrusted. Fields are validated by domain, serialized for their set/XML context, and the completed artifact is structurally validated before it can be displayed, exported, or pushed. Invalid values stop conversion with a safe intermediate field path and reason; the rejected value is not echoed
 - **Security policies** — Zone-based firewall rules with source/dest addresses, applications, services, actions, logging
 - **NAT** — Source NAT, destination NAT, static NAT with zone-pair rule sets
 - **Address & service objects** — Named objects, groups, FQDN addresses

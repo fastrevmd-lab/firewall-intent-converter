@@ -10,6 +10,7 @@ import {
   buildMergedSrxXml,
   buildSrxXml,
 } from '../src/converters/srx-xml-builder.js';
+import { parseSrxConfig } from '../src/parsers/srx-parser.js';
 import { JunosSerializationError } from '../src/security/junos-serialization.js';
 import {
   validateSetOutput,
@@ -237,6 +238,27 @@ describe('set converter injection defense', () => {
     const { commands } = convertToSrxSetCommands(config);
     expect(commands.length).toBeGreaterThan(50);
     expect(validateSetOutput(commands)).toBe(commands);
+  });
+
+  it('round-trips a valid generated security policy through the SRX parser', () => {
+    const config = baseConfig();
+    config.zones = [];
+    config.address_objects = [];
+    config.security_policies[0].dst_addresses = ['any'];
+    config.security_policies[0].action = 'allow';
+
+    const generated = convertToSrxSetCommands(config).commands
+      .filter(line => line.startsWith('set ') || line.startsWith('deactivate '))
+      .join('\n');
+    const reparsed = parseSrxConfig(generated).intermediateConfig;
+    const policy = reparsed.security_policies.find(item => item.name === 'allow-web');
+
+    expect(policy).toMatchObject({
+      src_zones: ['trust'],
+      dst_zones: ['untrust'],
+      action: 'allow',
+      applications: ['junos-https'],
+    });
   });
 
   it('does not directly interpolate protected set free-text sites', () => {
