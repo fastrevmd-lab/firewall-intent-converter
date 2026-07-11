@@ -68,13 +68,14 @@ export async function convertConfig(intermediateConfig, format = 'set', interfac
     throw new Error("format must be 'set' or 'xml'");
   }
 
-  const [converterMod, xmlMod, validatorMod, shadowMod, appMappingsMod, parserUtilsMod] = await Promise.all([
+  const [converterMod, xmlMod, validatorMod, shadowMod, appMappingsMod, parserUtilsMod, outputValidatorMod] = await Promise.all([
     import('../../src/converters/srx-converter.js'),
     import('../../src/converters/srx-xml-builder.js'),
     import('../../src/validators/srx-validator.js'),
     import('../../src/analysis/shadow-detector.js'),
     import('../../src/utils/app-mappings.js'),
     import('../../src/parsers/parser-utils.js'),
+    import('../../src/security/junos-output-validation.js'),
   ]);
 
   // Preload app mappings and inject into parser-utils for enhanced app resolution
@@ -89,6 +90,8 @@ export async function convertConfig(intermediateConfig, format = 'set', interfac
   } else {
     output = converterMod.convertToSrxSetCommands(intermediateConfig, interfaceMappings, targetContext);
   }
+  if (format === 'xml') outputValidatorMod.validateXmlOutput(output.xml);
+  else outputValidatorMod.validateSetOutput(output.commands);
 
   // Detect shadowed rules and optimization opportunities
   const analysis = shadowMod.detectShadowedRules(intermediateConfig.security_policies, output.warnings);
@@ -116,9 +119,10 @@ export async function mergeConvert(configSlots, crossLsLinks = [], format = 'set
     throw new Error("format must be 'set' or 'xml'");
   }
 
-  const [converterMod, xmlMod] = await Promise.all([
+  const [converterMod, xmlMod, outputValidatorMod] = await Promise.all([
     import('../../src/converters/srx-converter.js'),
     import('../../src/converters/srx-xml-builder.js'),
+    import('../../src/security/junos-output-validation.js'),
   ]);
 
   let output;
@@ -127,6 +131,8 @@ export async function mergeConvert(configSlots, crossLsLinks = [], format = 'set
   } else {
     output = converterMod.convertMergedToSrxSetCommands(configSlots, crossLsLinks, globalConfig);
   }
+  if (format === 'xml') outputValidatorMod.validateXmlOutput(output.xml);
+  else outputValidatorMod.validateSetOutput(output.commands);
 
   return { output, format };
 }
