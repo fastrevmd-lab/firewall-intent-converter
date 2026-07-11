@@ -11,6 +11,18 @@
  */
 
 import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning, isPredefEquivalent } from '../parsers/parser-utils.js';
+import {
+  setEnum,
+  setIdentifier,
+  setInteger,
+  setToken,
+  xmlAttribute,
+  xmlComment,
+  xmlElementName,
+  xmlText,
+} from '../security/junos-serialization.js';
+import { validateJunosInput } from '../security/junos-input-validation.js';
+import { validateXmlOutput } from '../security/junos-output-validation.js';
 
 /**
  * Returns the correct ANY address for NAT rules based on whether the rule
@@ -35,6 +47,13 @@ function natAnyAddress(rule) {
  * @returns {{ xml: string, warnings: Object[] }}
  */
 export function buildSrxXml(config, interfaceMappings = {}, targetContext = null, options = {}) {
+  validateJunosInput(config);
+  validateJunosInput(interfaceMappings, 'interfaceMappings');
+  for (const [sourceName, mappedName] of Object.entries(interfaceMappings)) {
+    setToken(mappedName, `interfaceMappings.${sourceName}`, /^[A-Za-z0-9_.:/-]+$/);
+  }
+  if (targetContext) validateJunosInput(targetContext, 'targetContext');
+
   const warnings = [];
   const lines = [];
   xmlCustomfwicApps.clear();
@@ -52,32 +71,38 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   // Determine context wrapping
   const ctx = targetContext || config.target_context;
   const useContext = ctx && ctx.type && ctx.type !== 'none' && ctx.name;
+  if (ctx?.type !== undefined) {
+    setEnum(ctx.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
+    if (ctx.type !== 'none') setIdentifier(ctx.name, 'targetContext.name');
+  }
   const indent = useContext ? '    ' : '  ';
 
   const omitWrapper = options.omitConfigurationWrapper || false;
 
   if (!omitWrapper) {
     lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+    lines.push('<configuration>');
 
     // Site identification header (for SDC/Mist integration)
     const siteN = config.metadata?.siteName;
     const siteG = config.metadata?.siteGroup;
     if (siteN || siteG) {
-      let siteComment = '<!-- Site Identification:';
-      if (siteN) siteComment += ` Site: ${escapeXml(siteN)}`;
-      if (siteG) siteComment += ` | Site Group: ${escapeXml(siteG)}`;
-      siteComment += ' -->';
-      lines.push(siteComment);
+      let siteComment = 'Site Identification:';
+      if (siteN) siteComment += ` Site: ${siteN}`;
+      if (siteG) siteComment += ` | Site Group: ${siteG}`;
+      lines.push(xmlComment(siteComment, 'metadata.siteName'));
     }
-
-    lines.push('<configuration>');
   }
 
   // Open logical-system or tenant wrapper
   if (useContext) {
-    const ctxTag = ctx.type === 'logical-system' ? 'logical-systems' : 'tenants';
-    lines.push(`  <${ctxTag}>`);
-    lines.push(`    <name>${escapeXml(sanitizeJunosName(ctx.name))}</name>`);
+    const ctxTag = xmlElementName(
+      ctx.type === 'logical-system' ? 'logical-systems' : 'tenants',
+      ['logical-systems', 'tenants'],
+      'targetContext.type',
+    );
+    lines.push(ctxTag === 'logical-systems' ? '  <logical-systems>' : '  <tenants>');
+    lines.push(`    <name>${xmlText(sanitizeJunosName(ctx.name))}</name>`);
   }
 
   // System configuration (Day-0)
@@ -173,18 +198,21 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
 
   // Close context wrapper
   if (useContext) {
-    const ctxTag = ctx.type === 'logical-system' ? 'logical-systems' : 'tenants';
-    lines.push(`  </${ctxTag}>`);
+    const ctxTag = xmlElementName(
+      ctx.type === 'logical-system' ? 'logical-systems' : 'tenants',
+      ['logical-systems', 'tenants'],
+      'targetContext.type',
+    );
+    lines.push(ctxTag === 'logical-systems' ? '  </logical-systems>' : '  </tenants>');
   }
 
   if (!omitWrapper) {
     lines.push('</configuration>');
   }
 
-  return {
-    xml: lines.join('\n'),
-    warnings,
-  };
+  const xml = lines.join('\n');
+  if (!omitWrapper) validateXmlOutput(xml);
+  return { xml, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -198,9 +226,9 @@ function buildZonesXml(zones, lines, interfaceMappings = {}) {
   for (const zone of zones) {
     const name = sanitizeJunosName(zone.name);
     lines.push(`      <security-zone>`);
-    lines.push(`        <name>${escapeXml(name)}</name>`);
+    lines.push(`        <name>${xmlText(name)}</name>`);
     if (zone.description) {
-      lines.push(`        <description>${escapeXml(zone.description)}</description>`);
+      lines.push(`        <description>${xmlText(zone.description)}</description>`);
     }
     for (const iface of zone.interfaces || []) {
       // Use user-defined mapping if available, otherwise use as-is
@@ -216,7 +244,7 @@ function buildZonesXml(zones, lines, interfaceMappings = {}) {
         }
       }
       lines.push(`        <interfaces>`);
-      lines.push(`          <name>${escapeXml(srxIface)}</name>`);
+      lines.push(`          <name>${xmlText(srxIface)}</name>`);
       lines.push(`        </interfaces>`);
     }
     lines.push(`      </security-zone>`);
@@ -239,17 +267,17 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
   for (const obj of (addressObjects || [])) {
     const name = sanitizeJunosName(obj.name);
     lines.push('      <address>');
-    lines.push(`        <name>${escapeXml(name)}</name>`);
+    lines.push(`        <name>${xmlText(name)}</name>`);
 
     switch (obj.type) {
       case 'host':
       case 'subnet':
-        lines.push(`        <ip-prefix>${escapeXml(obj.value)}</ip-prefix>`);
+        lines.push(`        <ip-prefix>${xmlText(obj.value)}</ip-prefix>`);
         break;
       case 'fqdn': {
         const fqdnValue = (obj.value && obj.value.startsWith('*.')) ? obj.value.slice(2) : obj.value;
         lines.push(`        <dns-name>`);
-        lines.push(`          <name>${escapeXml(fqdnValue)}</name>`);
+        lines.push(`          <name>${xmlText(fqdnValue)}</name>`);
         if (obj.fqdn_ip_version === 'v4') {
           lines.push(`          <ipv4-only/>`);
         } else if (obj.fqdn_ip_version === 'v6') {
@@ -260,21 +288,21 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
       }
       case 'range':
         lines.push(`        <range-address>`);
-        lines.push(`          <name>${escapeXml(name)}</name>`);
+        lines.push(`          <name>${xmlText(name)}</name>`);
         const [low, high] = obj.value.split('-').map(s => s.trim());
-        lines.push(`          <low>${escapeXml(low)}</low>`);
-        lines.push(`          <high>${escapeXml(high)}</high>`);
+        lines.push(`          <low>${xmlText(low)}</low>`);
+        lines.push(`          <high>${xmlText(high)}</high>`);
         lines.push(`        </range-address>`);
         break;
       case 'geography':
       case 'dynamic':
       case 'wildcard':
-        lines.push(`        <!-- UNSUPPORTED: ${obj.type} address "${obj.name}" (${obj.value}) -->`);
+        lines.push(`        ${xmlComment(`UNSUPPORTED: ${obj.type} address "${obj.name}" (${obj.value})`, 'address_objects')}`);
         continue;
     }
 
     if (obj.description) {
-      lines.push(`        <description>${escapeXml(obj.description)}</description>`);
+      lines.push(`        <description>${xmlText(obj.description)}</description>`);
     }
 
     lines.push('      </address>');
@@ -284,20 +312,20 @@ function buildAddressBookXml(addressObjects, addressGroups, lines) {
   const addrGroupNameSet = new Set((addressGroups || []).map(g => g.name));
   for (const group of (addressGroups || [])) {
     if (group._dynamic) {
-      lines.push(`      <!-- UNSUPPORTED: Dynamic address group "${group.name}" — SRX does not support tag-based dynamic groups -->`);
+      lines.push(`      ${xmlComment(`UNSUPPORTED: Dynamic address group "${group.name}" — SRX does not support tag-based dynamic groups`, 'address_groups')}`);
       continue;
     }
     const groupName = sanitizeJunosName(group.name);
     lines.push('      <address-set>');
-    lines.push(`        <name>${escapeXml(groupName)}</name>`);
+    lines.push(`        <name>${xmlText(groupName)}</name>`);
     for (const member of group.members) {
       if (addrGroupNameSet.has(member)) {
         lines.push('        <address-set>');
-        lines.push(`          <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push(`          <name>${xmlText(sanitizeJunosName(member))}</name>`);
         lines.push('        </address-set>');
       } else {
         lines.push('        <address>');
-        lines.push(`          <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push(`          <name>${xmlText(sanitizeJunosName(member))}</name>`);
         lines.push('        </address>');
       }
     }
@@ -367,8 +395,8 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
 
   for (const pair of Object.values(zonePairs)) {
     lines.push('      <policy>');
-    lines.push(`        <from-zone-name>${escapeXml(sanitizeJunosName(pair.from))}</from-zone-name>`);
-    lines.push(`        <to-zone-name>${escapeXml(sanitizeJunosName(pair.to))}</to-zone-name>`);
+    lines.push(`        <from-zone-name>${xmlText(sanitizeJunosName(pair.from))}</from-zone-name>`);
+    lines.push(`        <to-zone-name>${xmlText(sanitizeJunosName(pair.to))}</to-zone-name>`);
 
     let currentGroup = null;
     for (const policy of pair.policies) {
@@ -376,7 +404,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
       const pIdx = policies.indexOf(policy);
       const ruleGroup = groupByIndex[pIdx] || policy._group || null;
       if (ruleGroup && ruleGroup !== currentGroup) {
-        lines.push(`        <!-- ===== Group: ${escapeXml(ruleGroup)} ===== -->`);
+        lines.push(`        ${xmlComment(`===== Group: ${ruleGroup} =====`, `security_policies[${pIdx}]._group`)}`);
         currentGroup = ruleGroup;
       }
       const name = sanitizeJunosName(policy.name);
@@ -389,32 +417,40 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
       if (dstAddrs.length === 0 && policy.dst_addresses.length > 0) dstAddrs = ['any'];
 
       lines.push('        <policy>');
-      lines.push(`          <name>${escapeXml(name)}</name>`);
+      lines.push(`          <name>${xmlText(name)}</name>`);
+      if (policy.description) {
+        lines.push(`          <description>${xmlText(policy.description, `security_policies[${pIdx}].description`)}</description>`);
+      }
 
       // Match
       lines.push('          <match>');
       for (const addr of (srcAddrs.length > 0 ? srcAddrs : ['any'])) {
-        lines.push(`            <source-address>${escapeXml(sanitizeJunosName(addr))}</source-address>`);
+        lines.push(`            <source-address>${xmlText(sanitizeJunosName(addr))}</source-address>`);
       }
       for (const addr of (dstAddrs.length > 0 ? dstAddrs : ['any'])) {
-        lines.push(`            <destination-address>${escapeXml(sanitizeJunosName(addr))}</destination-address>`);
+        lines.push(`            <destination-address>${xmlText(sanitizeJunosName(addr))}</destination-address>`);
       }
 
       const apps = resolveApps(policy.applications, policy.services, warnings, policy.name, appGroups, sourceVendor);
       for (const app of apps) {
-        lines.push(`            <application>${escapeXml(app)}</application>`);
+        lines.push(`            <application>${xmlText(app)}</application>`);
       }
       if (policy.source_users && policy.source_users.length > 0) {
         for (const identity of policy.source_users) {
-          lines.push(`            <source-identity>${escapeXml(sanitizeJunosName(identity))}</source-identity>`);
+          lines.push(`            <source-identity>${xmlText(sanitizeJunosName(identity))}</source-identity>`);
         }
       }
       lines.push('          </match>');
 
       // Then
       lines.push('          <then>');
-      const action = policy.action === 'allow' ? 'permit' : (policy.action === 'drop' ? 'deny' : (policy.action === 'deny' ? 'deny' : 'reject'));
-      lines.push(`            <${action}/>`);
+      const action = xmlElementName(
+        policy.action === 'allow' ? 'permit' : (policy.action === 'drop' || policy.action === 'deny' ? 'deny' : 'reject'),
+        ['permit', 'deny', 'reject'],
+        `security_policies[${pIdx}].action`,
+      );
+      const actionElement = { permit: '<permit/>', deny: '<deny/>', reject: '<reject/>' }[action];
+      lines.push(`            ${actionElement}`);
       if (policy.log_start || policy.log_end) {
         lines.push('            <log>');
         if (policy.log_start) lines.push('              <session-init/>');
@@ -437,12 +473,12 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
       if (hasUtm || hasIdp || hasSecIntel || hasProfileGroup || hasSslProxy) {
         lines.push('            <application-services>');
         if (hasUtm) {
-          lines.push(`              <utm-policy>${escapeXml(utmPolicyMap[policy.name])}</utm-policy>`);
+          lines.push(`              <utm-policy>${xmlText(utmPolicyMap[policy.name])}</utm-policy>`);
         } else if (hasProfileGroup) {
           lines.push('              <utm-policy>default-utm</utm-policy>');
         }
         if (hasIdp) {
-          lines.push(`              <idp-policy>${escapeXml(idpPolicyMap[policy.name])}</idp-policy>`);
+          lines.push(`              <idp-policy>${xmlText(idpPolicyMap[policy.name])}</idp-policy>`);
         }
         if (hasSecIntel) {
           lines.push('              <security-intelligence-policy>secIntel-policy</security-intelligence-policy>');
@@ -452,7 +488,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
             ? sanitizeJunosName(policy._srx_decrypt_profile)
             : 'ssl-fwd-proxy';
           lines.push('              <ssl-proxy>');
-          lines.push(`                <profile-name>${escapeXml(sslProfile)}</profile-name>`);
+          lines.push(`                <profile-name>${xmlText(sslProfile)}</profile-name>`);
           lines.push('              </ssl-proxy>');
         }
         lines.push('            </application-services>');
@@ -462,7 +498,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
 
       // Scheduler
       if (policy.schedule) {
-        lines.push(`          <scheduler-name>${escapeXml(sanitizeJunosName(policy.schedule))}</scheduler-name>`);
+        lines.push(`          <scheduler-name>${xmlText(sanitizeJunosName(policy.schedule))}</scheduler-name>`);
       }
 
       lines.push('        </policy>');
@@ -511,21 +547,21 @@ function buildNatXml(natRules, lines, warnings) {
       const [fromZone, toZone] = zonePair.split('->');
       const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
       lines.push('        <rule-set>');
-      lines.push(`          <name>${escapeXml(ruleSetName)}</name>`);
-      lines.push(`          <from><zone>${escapeXml(sanitizeJunosName(fromZone))}</zone></from>`);
-      lines.push(`          <to><zone>${escapeXml(sanitizeJunosName(toZone))}</zone></to>`);
+      lines.push(`          <name>${xmlText(ruleSetName)}</name>`);
+      lines.push(`          <from><zone>${xmlText(sanitizeJunosName(fromZone))}</zone></from>`);
+      lines.push(`          <to><zone>${xmlText(sanitizeJunosName(toZone))}</zone></to>`);
 
       for (const rule of rules) {
         const ruleName = sanitizeJunosName(rule.name);
         lines.push('          <rule>');
-        lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+        lines.push(`            <name>${xmlText(ruleName)}</name>`);
         const anyAddr = natAnyAddress(rule);
         lines.push('            <src-nat-rule-match>');
         for (const addr of (rule.src_addresses || [anyAddr])) {
-          lines.push(`              <source-address>${escapeXml(addr === 'any' ? anyAddr : addr)}</source-address>`);
+          lines.push(`              <source-address>${xmlText(addr === 'any' ? anyAddr : addr)}</source-address>`);
         }
         for (const addr of (rule.dst_addresses || [anyAddr])) {
-          lines.push(`              <destination-address>${escapeXml(addr === 'any' ? anyAddr : addr)}</destination-address>`);
+          lines.push(`              <destination-address>${xmlText(addr === 'any' ? anyAddr : addr)}</destination-address>`);
         }
         lines.push('            </src-nat-rule-match>');
         lines.push('            <then>');
@@ -534,10 +570,10 @@ function buildNatXml(natRules, lines, warnings) {
             lines.push('              <source-nat><interface/></source-nat>');
           } else if (rule.translated_src.type === 'dynamic-ip-pool') {
             const poolName = sanitizeJunosName(`pool-${rule.name}`);
-            lines.push(`              <source-nat><pool><pool-name>${escapeXml(poolName)}</pool-name></pool></source-nat>`);
+            lines.push(`              <source-nat><pool><pool-name>${xmlText(poolName)}</pool-name></pool></source-nat>`);
           } else if (rule.translated_src.type === 'static') {
             const poolName = sanitizeJunosName(`${rule.name}-static`);
-            lines.push(`              <source-nat><pool><pool-name>${escapeXml(poolName)}</pool-name></pool></source-nat>`);
+            lines.push(`              <source-nat><pool><pool-name>${xmlText(poolName)}</pool-name></pool></source-nat>`);
           }
         }
         if (rule._uturn) {
@@ -554,16 +590,16 @@ function buildNatXml(natRules, lines, warnings) {
       if (rule.translated_src && rule.translated_src.type === 'dynamic-ip-pool') {
         const poolName = sanitizeJunosName(`pool-${rule.name}`);
         lines.push('        <pool>');
-        lines.push(`          <name>${escapeXml(poolName)}</name>`);
+        lines.push(`          <name>${xmlText(poolName)}</name>`);
         for (const addr of rule.translated_src.addresses) {
-          lines.push(`          <address><name>${escapeXml(addr)}</name></address>`);
+          lines.push(`          <address><name>${xmlText(addr)}</name></address>`);
         }
         lines.push('        </pool>');
       } else if (rule.translated_src && rule.translated_src.type === 'static' && rule.translated_src.address) {
         const poolName = sanitizeJunosName(`${rule.name}-static`);
         lines.push('        <pool>');
-        lines.push(`          <name>${escapeXml(poolName)}</name>`);
-        lines.push(`          <address><name>${escapeXml(rule.translated_src.address)}</name></address>`);
+        lines.push(`          <name>${xmlText(poolName)}</name>`);
+        lines.push(`          <address><name>${xmlText(rule.translated_src.address)}</name></address>`);
         lines.push('        </pool>');
       }
     }
@@ -578,27 +614,27 @@ function buildNatXml(natRules, lines, warnings) {
       const [fromZone] = zonePair.split('->');
       const ruleSetName = sanitizeJunosName(`${fromZone}-dnat`);
       lines.push('        <rule-set>');
-      lines.push(`          <name>${escapeXml(ruleSetName)}</name>`);
-      lines.push(`          <from><zone>${escapeXml(sanitizeJunosName(fromZone))}</zone></from>`);
+      lines.push(`          <name>${xmlText(ruleSetName)}</name>`);
+      lines.push(`          <from><zone>${xmlText(sanitizeJunosName(fromZone))}</zone></from>`);
 
       for (const rule of rules) {
         const ruleName = sanitizeJunosName(rule.name);
         lines.push('          <rule>');
-        lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+        lines.push(`            <name>${xmlText(ruleName)}</name>`);
         const dnatAny = natAnyAddress(rule);
         lines.push('            <dest-nat-rule-match>');
         for (const addr of (rule.dst_addresses || [dnatAny])) {
-          lines.push(`              <destination-address>${escapeXml(addr === 'any' ? dnatAny : addr)}</destination-address>`);
+          lines.push(`              <destination-address>${xmlText(addr === 'any' ? dnatAny : addr)}</destination-address>`);
         }
         if (rule.match_port) {
-          lines.push(`              <destination-port>${escapeXml(rule.match_port)}</destination-port>`);
+          lines.push(`              <destination-port>${xmlText(rule.match_port)}</destination-port>`);
         }
         lines.push('            </dest-nat-rule-match>');
         lines.push('            <then>');
         const dstAddr = typeof rule.translated_dst === 'string' ? rule.translated_dst : (rule.translated_dst?.address || '');
         if (dstAddr) {
           const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
-          lines.push(`              <destination-nat><pool><pool-name>${escapeXml(poolName)}</pool-name></pool></destination-nat>`);
+          lines.push(`              <destination-nat><pool><pool-name>${xmlText(poolName)}</pool-name></pool></destination-nat>`);
         }
         lines.push('            </then>');
         lines.push('          </rule>');
@@ -612,10 +648,10 @@ function buildNatXml(natRules, lines, warnings) {
       if (dstAddr) {
         const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
         lines.push('        <pool>');
-        lines.push(`          <name>${escapeXml(poolName)}</name>`);
-        lines.push(`          <address><ip-prefix>${escapeXml(dstAddr)}</ip-prefix></address>`);
+        lines.push(`          <name>${xmlText(poolName)}</name>`);
+        lines.push(`          <address><ip-prefix>${xmlText(dstAddr)}</ip-prefix></address>`);
         if (rule.translated_port) {
-          lines.push(`          <address><port>${escapeXml(String(rule.translated_port))}</port></address>`);
+          lines.push(`          <address><port>${xmlText(String(rule.translated_port))}</port></address>`);
         }
         lines.push('        </pool>');
       }
@@ -631,16 +667,16 @@ function buildNatXml(natRules, lines, warnings) {
     for (const rule of staticRules) {
       const ruleName = sanitizeJunosName(rule.name);
       lines.push('          <rule>');
-      lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+      lines.push(`            <name>${xmlText(ruleName)}</name>`);
       lines.push('            <match>');
       for (const addr of (rule.dst_addresses || []).filter(a => a !== 'any')) {
-        lines.push(`              <destination-address>${escapeXml(addr)}</destination-address>`);
+        lines.push(`              <destination-address>${xmlText(addr)}</destination-address>`);
       }
       lines.push('            </match>');
       lines.push('            <then>');
       if (rule.translated_src && rule.translated_src.address) {
         lines.push('              <static-nat>');
-        lines.push(`                <prefix><addr-prefix>${escapeXml(rule.translated_src.address)}</addr-prefix></prefix>`);
+        lines.push(`                <prefix><addr-prefix>${xmlText(rule.translated_src.address)}</addr-prefix></prefix>`);
         lines.push('              </static-nat>');
       }
       lines.push('            </then>');
@@ -675,40 +711,40 @@ function buildApplicationsXml(serviceObjects, applications, serviceGroups, lines
     if (predefApp) {
       xmlPredefServiceMap.set(app.name, predefApp);
       xmlPredefServiceMap.set(name, predefApp);
-      lines.push(`    <!-- Skipped: "${app.name}" (${protocol}/${port}) → predefined ${predefApp} -->`);
+      lines.push(`    ${xmlComment(`Skipped: "${app.name}" (${protocol}/${port}) → predefined ${predefApp}`, 'service_objects')}`);
       continue;
     }
 
     if (protocol === 'icmp' || protocol === 'icmp6') {
       lines.push('    <application>');
-      lines.push(`      <name>${escapeXml(name)}</name>`);
-      lines.push(`      <protocol>${escapeXml(protocol)}</protocol>`);
+      lines.push(`      <name>${xmlText(name)}</name>`);
+      lines.push(`      <protocol>${xmlText(protocol)}</protocol>`);
       if (app.icmp_type) {
-        lines.push(`      <icmp-type>${escapeXml(app.icmp_type)}</icmp-type>`);
+        lines.push(`      <icmp-type>${xmlText(app.icmp_type)}</icmp-type>`);
       }
       if (app.icmp_code) {
-        lines.push(`      <icmp-code>${escapeXml(app.icmp_code)}</icmp-code>`);
+        lines.push(`      <icmp-code>${xmlText(app.icmp_code)}</icmp-code>`);
       }
       if (app.description) {
-        lines.push(`      <description>${escapeXml(app.description)}</description>`);
+        lines.push(`      <description>${xmlText(app.description)}</description>`);
       }
       lines.push('    </application>');
     } else if (protocol === 'ip' && app.protocol_number) {
       lines.push('    <application>');
-      lines.push(`      <name>${escapeXml(name)}</name>`);
-      lines.push(`      <protocol>${escapeXml(app.protocol_number)}</protocol>`);
+      lines.push(`      <name>${xmlText(name)}</name>`);
+      lines.push(`      <protocol>${xmlText(app.protocol_number)}</protocol>`);
       if (app.description) {
-        lines.push(`      <description>${escapeXml(app.description)}</description>`);
+        lines.push(`      <description>${xmlText(app.description)}</description>`);
       }
       lines.push('    </application>');
     } else {
       if (!port) continue;
       lines.push('    <application>');
-      lines.push(`      <name>${escapeXml(name)}</name>`);
-      lines.push(`      <protocol>${escapeXml(protocol)}</protocol>`);
-      lines.push(`      <destination-port>${escapeXml(port)}</destination-port>`);
+      lines.push(`      <name>${xmlText(name)}</name>`);
+      lines.push(`      <protocol>${xmlText(protocol)}</protocol>`);
+      lines.push(`      <destination-port>${xmlText(port)}</destination-port>`);
       if (app.description) {
-        lines.push(`      <description>${escapeXml(app.description)}</description>`);
+        lines.push(`      <description>${xmlText(app.description)}</description>`);
       }
       lines.push('    </application>');
     }
@@ -719,20 +755,20 @@ function buildApplicationsXml(serviceObjects, applications, serviceGroups, lines
   for (const group of groups) {
     const groupName = sanitizeJunosName(group.name);
     lines.push('    <application-set>');
-    lines.push(`      <name>${escapeXml(groupName)}</name>`);
+    lines.push(`      <name>${xmlText(groupName)}</name>`);
     for (const member of group.members) {
       const predefName = xmlPredefServiceMap.get(member);
       if (predefName) {
         lines.push('      <application>');
-        lines.push(`        <name>${escapeXml(predefName)}</name>`);
+        lines.push(`        <name>${xmlText(predefName)}</name>`);
         lines.push('      </application>');
       } else if (svcGroupNameSet.has(member)) {
         lines.push('      <application-set>');
-        lines.push(`        <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push(`        <name>${xmlText(sanitizeJunosName(member))}</name>`);
         lines.push('      </application-set>');
       } else {
         lines.push('      <application>');
-        lines.push(`        <name>${escapeXml(sanitizeJunosName(member))}</name>`);
+        lines.push(`        <name>${xmlText(sanitizeJunosName(member))}</name>`);
         lines.push('      </application>');
       }
     }
@@ -744,10 +780,10 @@ function buildApplicationsXml(serviceObjects, applications, serviceGroups, lines
     lines.push('    <!-- Placeholder applications (Customfwic) - REQUIRES MANUAL CONFIGURATION -->');
     for (const [customName, originalName] of customfwicMap) {
       lines.push('    <application>');
-      lines.push(`      <name>${escapeXml(customName)}</name>`);
+      lines.push(`      <name>${xmlText(customName)}</name>`);
       lines.push('      <protocol>tcp</protocol>');
       lines.push('      <destination-port>0</destination-port>');
-      lines.push(`      <description>Placeholder for ${escapeXml(originalName)} - REQUIRES MANUAL CONFIGURATION</description>`);
+      lines.push(`      <description>Placeholder for ${xmlText(originalName)} - REQUIRES MANUAL CONFIGURATION</description>`);
       lines.push('    </application>');
     }
   }
@@ -759,6 +795,13 @@ function buildApplicationsXml(serviceObjects, applications, serviceGroups, lines
 // Schedulers XML Builder
 // ---------------------------------------------------------------------------
 
+const XML_SCHEDULE_DAYS = {
+  sun: 'sunday', mon: 'monday', tue: 'tuesday', wed: 'wednesday',
+  thu: 'thursday', fri: 'friday', sat: 'saturday',
+  sunday: 'sunday', monday: 'monday', tuesday: 'tuesday', wednesday: 'wednesday',
+  thursday: 'thursday', friday: 'friday', saturday: 'saturday',
+};
+
 function buildSchedulersXml(schedules, lines) {
   if (!schedules || schedules.length === 0) return;
 
@@ -767,18 +810,30 @@ function buildSchedulersXml(schedules, lines) {
   for (const sched of schedules) {
     const name = sanitizeJunosName(sched.name);
     lines.push('    <scheduler>');
-    lines.push(`      <name>${escapeXml(name)}</name>`);
+    lines.push(`      <name>${xmlText(name)}</name>`);
 
     if (sched.type === 'recurring' && sched.days && sched.days.length > 0) {
-      for (const day of sched.days) {
-        lines.push(`      <${day.toLowerCase()}>`)
-        if (sched.start) lines.push(`        <start-time>${escapeXml(sched.start)}</start-time>`);
-        if (sched.end) lines.push(`        <stop-time>${escapeXml(sched.end)}</stop-time>`);
-        lines.push(`      </${day.toLowerCase()}>`);
+      for (let dayIndex = 0; dayIndex < sched.days.length; dayIndex += 1) {
+        const day = sched.days[dayIndex];
+        const dayTag = xmlElementName(
+          XML_SCHEDULE_DAYS[day.toLowerCase()],
+          Object.values(XML_SCHEDULE_DAYS),
+          `schedules.days[${dayIndex}]`,
+        );
+        const dayElements = {
+          sunday: ['<sunday>', '</sunday>'], monday: ['<monday>', '</monday>'],
+          tuesday: ['<tuesday>', '</tuesday>'], wednesday: ['<wednesday>', '</wednesday>'],
+          thursday: ['<thursday>', '</thursday>'], friday: ['<friday>', '</friday>'],
+          saturday: ['<saturday>', '</saturday>'],
+        }[dayTag];
+        lines.push(`      ${dayElements[0]}`);
+        if (sched.start) lines.push(`        <start-time>${xmlText(sched.start)}</start-time>`);
+        if (sched.end) lines.push(`        <stop-time>${xmlText(sched.end)}</stop-time>`);
+        lines.push(`      ${dayElements[1]}`);
       }
     } else if (sched.type === 'onetime') {
-      if (sched.start) lines.push(`      <start-date>${escapeXml(sched.start)}</start-date>`);
-      if (sched.end) lines.push(`      <stop-date>${escapeXml(sched.end)}</stop-date>`);
+      if (sched.start) lines.push(`      <start-date>${xmlText(sched.start)}</start-date>`);
+      if (sched.end) lines.push(`      <stop-date>${xmlText(sched.end)}</stop-date>`);
     }
 
     lines.push('    </scheduler>');
@@ -870,7 +925,7 @@ function buildUtmXml(utmProfiles, lines) {
       if (mapped.srxType === 'anti-virus') {
         lines.push('        <anti-virus>');
         lines.push(`          <profile>`);
-        lines.push(`            <name>${escapeXml(mapped.srxProfile)}</name>`);
+        lines.push(`            <name>${xmlText(mapped.srxProfile)}</name>`);
         lines.push('            <fallback-options><default>log-and-permit</default><content-size>log-and-permit</content-size></fallback-options>');
         lines.push('            <scan-options><content-size-limit>20000</content-size-limit><timeout>180</timeout></scan-options>');
         lines.push('          </profile>');
@@ -878,7 +933,7 @@ function buildUtmXml(utmProfiles, lines) {
       } else if (mapped.srxType === 'web-filtering') {
         lines.push('        <web-filtering>');
         lines.push(`          <profile>`);
-        lines.push(`            <name>${escapeXml(mapped.srxProfile)}</name>`);
+        lines.push(`            <name>${xmlText(mapped.srxProfile)}</name>`);
         lines.push('            <type>juniper-enhanced</type>');
         lines.push('            <default>block</default>');
         lines.push('          </profile>');
@@ -886,13 +941,13 @@ function buildUtmXml(utmProfiles, lines) {
       } else if (mapped.srxType === 'content-filtering') {
         lines.push('        <content-filtering>');
         lines.push(`          <profile>`);
-        lines.push(`            <name>${escapeXml(mapped.srxProfile)}</name>`);
+        lines.push(`            <name>${xmlText(mapped.srxProfile)}</name>`);
         lines.push('          </profile>');
         lines.push('        </content-filtering>');
       } else if (mapped.srxType === 'anti-spam') {
         lines.push('        <anti-spam>');
         lines.push(`          <profile>`);
-        lines.push(`            <name>${escapeXml(mapped.srxProfile)}</name>`);
+        lines.push(`            <name>${xmlText(mapped.srxProfile)}</name>`);
         lines.push('          </profile>');
         lines.push('        </anti-spam>');
       } else if (mapped.srxType === 'dns-security') {
@@ -904,17 +959,17 @@ function buildUtmXml(utmProfiles, lines) {
 
   // UTM policies
   for (const combo of utmProfiles) {
-    lines.push(`      <utm-policy name="${escapeXml(combo.policyName)}">`);
+    lines.push(`      <utm-policy name="${xmlAttribute(combo.policyName, 'utm.policyName')}">`);
     for (const mapped of Object.values(combo.profiles)) {
       if (mapped.srxFeature !== 'utm') continue;
       if (mapped.srxType === 'anti-virus') {
-        lines.push(`        <anti-virus><http-profile>${escapeXml(mapped.srxProfile)}</http-profile></anti-virus>`);
+        lines.push(`        <anti-virus><http-profile>${xmlText(mapped.srxProfile)}</http-profile></anti-virus>`);
       } else if (mapped.srxType === 'web-filtering') {
-        lines.push(`        <web-filtering><http-profile>${escapeXml(mapped.srxProfile)}</http-profile></web-filtering>`);
+        lines.push(`        <web-filtering><http-profile>${xmlText(mapped.srxProfile)}</http-profile></web-filtering>`);
       } else if (mapped.srxType === 'content-filtering') {
-        lines.push(`        <content-filtering><rule-set>${escapeXml(mapped.srxProfile)}</rule-set></content-filtering>`);
+        lines.push(`        <content-filtering><rule-set>${xmlText(mapped.srxProfile)}</rule-set></content-filtering>`);
       } else if (mapped.srxType === 'anti-spam') {
-        lines.push(`        <anti-spam><smtp-profile>${escapeXml(mapped.srxProfile)}</smtp-profile></anti-spam>`);
+        lines.push(`        <anti-spam><smtp-profile>${xmlText(mapped.srxProfile)}</smtp-profile></anti-spam>`);
       }
     }
     lines.push('      </utm-policy>');
@@ -956,7 +1011,7 @@ function buildIdpXml(policies, lines) {
 
   for (const [, combo] of comboMap) {
     lines.push(`      <idp-policy>`);
-    lines.push(`        <name>${escapeXml(combo.policyName)}</name>`);
+    lines.push(`        <name>${xmlText(combo.policyName)}</name>`);
     lines.push('        <rulebase-ips>');
 
     let ruleIdx = 0;
@@ -974,14 +1029,25 @@ function buildIdpXml(policies, lines) {
       }
 
       lines.push('          <rule>');
-      lines.push(`            <name>${escapeXml(ruleName)}</name>`);
+      lines.push(`            <name>${xmlText(ruleName)}</name>`);
       lines.push('            <match>');
       lines.push('              <attacks>');
       lines.push('                <predefined-attack-groups>Recommended</predefined-attack-groups>');
       lines.push('              </attacks>');
       lines.push('            </match>');
       lines.push('            <then>');
-      lines.push(`              <action><${idpAction}/></action>`);
+      const actionTag = xmlElementName(
+        idpAction,
+        ['recommended', 'drop-connection', 'drop-packet', 'no-action'],
+        'security_profiles.idp.action',
+      );
+      const actionElement = {
+        recommended: '<recommended/>',
+        'drop-connection': '<drop-connection/>',
+        'drop-packet': '<drop-packet/>',
+        'no-action': '<no-action/>',
+      }[actionTag];
+      lines.push(`              <action>${actionElement}</action>`);
       lines.push('              <notification><log-attacks/></notification>');
       lines.push('            </then>');
       lines.push('          </rule>');
@@ -1010,7 +1076,7 @@ function buildSecIntelXml(blockLists, lines) {
   blockLists.forEach((bl, i) => {
     const ruleName = `secIntel-rule-${i + 1}`;
     lines.push(`        <rule>`);
-    lines.push(`          <name>${escapeXml(ruleName)}</name>`);
+    lines.push(`          <name>${xmlText(ruleName)}</name>`);
     lines.push('          <match><threat-level>10</threat-level></match>');
     lines.push('          <then><action>block close</action><log/></then>');
     lines.push('        </rule>');
@@ -1142,10 +1208,10 @@ function buildRoutingXml(config, lines) {
         lines.push('    </autonomous-system>');
       }
       if (globalBgp.router_id) {
-        lines.push(`    <router-id>${escapeXml(globalBgp.router_id)}</router-id>`);
+        lines.push(`    <router-id>${xmlText(globalBgp.router_id)}</router-id>`);
       }
     } else if (globalOspf?.router_id) {
-      lines.push(`    <router-id>${escapeXml(globalOspf.router_id)}</router-id>`);
+      lines.push(`    <router-id>${xmlText(globalOspf.router_id)}</router-id>`);
     }
 
     // Static routes
@@ -1153,13 +1219,13 @@ function buildRoutingXml(config, lines) {
       lines.push('    <static>');
       for (const route of globalRoutes) {
         lines.push('      <route>');
-        lines.push(`        <name>${escapeXml(route.destination)}</name>`);
+        lines.push(`        <name>${xmlText(route.destination)}</name>`);
         if (route.next_hop_type === 'discard') {
           lines.push('        <discard/>');
         } else if (route.next_hop_type === 'next-vr' && route.next_hop) {
-          lines.push(`        <next-table>${escapeXml(route.next_hop)}.inet.0</next-table>`);
+          lines.push(`        <next-table>${xmlText(route.next_hop)}.inet.0</next-table>`);
         } else if (route.next_hop) {
-          lines.push(`        <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+          lines.push(`        <next-hop>${xmlText(route.next_hop)}</next-hop>`);
         }
         if (route.metric && route.metric !== 10) {
           lines.push(`        <metric>${route.metric}</metric>`);
@@ -1181,28 +1247,28 @@ function buildRoutingXml(config, lines) {
       lines.push('    <bgp>');
       for (const group of globalBgp.peer_groups || []) {
         lines.push('      <group>');
-        lines.push(`        <name>${escapeXml(group.name)}</name>`);
-        lines.push(`        <type>${escapeXml(group.type || 'external')}</type>`);
+        lines.push(`        <name>${xmlText(group.name)}</name>`);
+        lines.push(`        <type>${xmlText(group.type || 'external')}</type>`);
         for (const neighbor of group.neighbors || []) {
           lines.push('        <neighbor>');
-          lines.push(`          <name>${escapeXml(neighbor.address)}</name>`);
+          lines.push(`          <name>${xmlText(neighbor.address)}</name>`);
           if (neighbor.peer_as) {
             lines.push(`          <peer-as>${neighbor.peer_as}</peer-as>`);
           }
           if (neighbor.description) {
-            lines.push(`          <description>${escapeXml(neighbor.description)}</description>`);
+            lines.push(`          <description>${xmlText(neighbor.description)}</description>`);
           }
           if (neighbor.local_address) {
-            lines.push(`          <local-address>${escapeXml(neighbor.local_address)}</local-address>`);
+            lines.push(`          <local-address>${xmlText(neighbor.local_address)}</local-address>`);
           }
           if (neighbor.import_policy) {
-            lines.push(`          <import>${escapeXml(neighbor.import_policy)}</import>`);
+            lines.push(`          <import>${xmlText(neighbor.import_policy)}</import>`);
           }
           if (neighbor.export_policy) {
-            lines.push(`          <export>${escapeXml(neighbor.export_policy)}</export>`);
+            lines.push(`          <export>${xmlText(neighbor.export_policy)}</export>`);
           }
           if (neighbor.authentication_key) {
-            lines.push(`          <authentication-key>${escapeXml(neighbor.authentication_key)}</authentication-key>`);
+            lines.push(`          <authentication-key>${xmlText(neighbor.authentication_key)}</authentication-key>`);
           }
           lines.push('        </neighbor>');
         }
@@ -1215,11 +1281,11 @@ function buildRoutingXml(config, lines) {
     if (globalOspf) {
       lines.push('    <ospf>');
       if (globalOspf.reference_bandwidth) {
-        lines.push(`      <reference-bandwidth>${escapeXml(String(globalOspf.reference_bandwidth))}</reference-bandwidth>`);
+        lines.push(`      <reference-bandwidth>${xmlText(String(globalOspf.reference_bandwidth))}</reference-bandwidth>`);
       }
       for (const area of globalOspf.areas || []) {
         lines.push('      <area>');
-        lines.push(`        <name>${escapeXml(area.area_id)}</name>`);
+        lines.push(`        <name>${xmlText(area.area_id)}</name>`);
         if (area.area_type === 'stub' || area.area_type === 'totally-stub') {
           lines.push('        <stub>');
           if (area.area_type === 'totally-stub') lines.push('          <no-summaries/>');
@@ -1231,21 +1297,21 @@ function buildRoutingXml(config, lines) {
         }
         for (const iface of area.interfaces || []) {
           lines.push('        <interface>');
-          lines.push(`          <name>${escapeXml(iface.name)}</name>`);
+          lines.push(`          <name>${xmlText(iface.name)}</name>`);
           if (iface.cost != null) lines.push(`          <metric>${iface.cost}</metric>`);
           if (iface.hello_interval != null) lines.push(`          <hello-interval>${iface.hello_interval}</hello-interval>`);
           if (iface.dead_interval != null) lines.push(`          <dead-interval>${iface.dead_interval}</dead-interval>`);
           if (iface.passive) lines.push('          <passive/>');
-          if (iface.network_type) lines.push(`          <interface-type>${escapeXml(iface.network_type)}</interface-type>`);
+          if (iface.network_type) lines.push(`          <interface-type>${xmlText(iface.network_type)}</interface-type>`);
           if (iface.authentication) {
             lines.push('          <authentication>');
             if (iface.authentication.type === 'md5') {
               lines.push('            <md5>');
               lines.push(`              <name>${iface.authentication.key_id || 1}</name>`);
-              lines.push(`              <key>${escapeXml(iface.authentication.key || '')}</key>`);
+              lines.push(`              <key>${xmlText(iface.authentication.key || '')}</key>`);
               lines.push('            </md5>');
             } else if (iface.authentication.type === 'simple') {
-              lines.push(`            <simple-password>${escapeXml(iface.authentication.key || '')}</simple-password>`);
+              lines.push(`            <simple-password>${xmlText(iface.authentication.key || '')}</simple-password>`);
             }
             lines.push('          </authentication>');
           }
@@ -1255,7 +1321,7 @@ function buildRoutingXml(config, lines) {
       }
       for (const redist of globalOspf.redistribute || []) {
         const stmtName = `OSPF-REDIST-${redist.protocol.toUpperCase()}`;
-        lines.push(`      <export>${escapeXml(stmtName)}</export>`);
+        lines.push(`      <export>${xmlText(stmtName)}</export>`);
       }
       lines.push('    </ospf>');
     }
@@ -1264,11 +1330,11 @@ function buildRoutingXml(config, lines) {
     if (globalOspf3) {
       lines.push('    <ospf3>');
       if (globalOspf3.reference_bandwidth) {
-        lines.push(`      <reference-bandwidth>${escapeXml(String(globalOspf3.reference_bandwidth))}</reference-bandwidth>`);
+        lines.push(`      <reference-bandwidth>${xmlText(String(globalOspf3.reference_bandwidth))}</reference-bandwidth>`);
       }
       for (const area of globalOspf3.areas || []) {
         lines.push('      <area>');
-        lines.push(`        <name>${escapeXml(area.area_id)}</name>`);
+        lines.push(`        <name>${xmlText(area.area_id)}</name>`);
         if (area.area_type === 'stub' || area.area_type === 'totally-stub') {
           lines.push('        <stub>');
           if (area.area_type === 'totally-stub') lines.push('          <no-summaries/>');
@@ -1280,12 +1346,12 @@ function buildRoutingXml(config, lines) {
         }
         for (const iface of area.interfaces || []) {
           lines.push('        <interface>');
-          lines.push(`          <name>${escapeXml(iface.name)}</name>`);
+          lines.push(`          <name>${xmlText(iface.name)}</name>`);
           if (iface.cost != null) lines.push(`          <metric>${iface.cost}</metric>`);
           if (iface.hello_interval != null) lines.push(`          <hello-interval>${iface.hello_interval}</hello-interval>`);
           if (iface.dead_interval != null) lines.push(`          <dead-interval>${iface.dead_interval}</dead-interval>`);
           if (iface.passive) lines.push('          <passive/>');
-          if (iface.network_type) lines.push(`          <interface-type>${escapeXml(iface.network_type)}</interface-type>`);
+          if (iface.network_type) lines.push(`          <interface-type>${xmlText(iface.network_type)}</interface-type>`);
           if (iface.instance_id != null) lines.push(`          <instance-id>${iface.instance_id}</instance-id>`);
           lines.push('        </interface>');
         }
@@ -1293,7 +1359,7 @@ function buildRoutingXml(config, lines) {
       }
       for (const redist of globalOspf3.redistribute || []) {
         const stmtName = `OSPF3-REDIST-${redist.protocol.toUpperCase()}`;
-        lines.push(`      <export>${escapeXml(stmtName)}</export>`);
+        lines.push(`      <export>${xmlText(stmtName)}</export>`);
       }
       lines.push('    </ospf3>');
     }
@@ -1301,9 +1367,9 @@ function buildRoutingXml(config, lines) {
     // EVPN
     if (globalEvpn) {
       lines.push('    <evpn>');
-      lines.push(`      <encapsulation>${escapeXml(globalEvpn.encapsulation || 'vxlan')}</encapsulation>`);
+      lines.push(`      <encapsulation>${xmlText(globalEvpn.encapsulation || 'vxlan')}</encapsulation>`);
       if (globalEvpn.multicast_mode) {
-        lines.push(`      <multicast-mode>${escapeXml(globalEvpn.multicast_mode)}</multicast-mode>`);
+        lines.push(`      <multicast-mode>${xmlText(globalEvpn.multicast_mode)}</multicast-mode>`);
       }
       if (globalEvpn.extended_vni_list && globalEvpn.extended_vni_list.length > 0) {
         for (const vni of globalEvpn.extended_vni_list) {
@@ -1319,13 +1385,13 @@ function buildRoutingXml(config, lines) {
   // Switch-options (for EVPN/VxLAN — vtep-source-interface, route-distinguisher, vrf-target)
   if (globalEvpn && globalEvpn.route_distinguisher) {
     lines.push('  <switch-options>');
-    lines.push(`    <vtep-source-interface>${escapeXml(globalEvpn.vtep_source_interface || 'lo0.0')}</vtep-source-interface>`);
+    lines.push(`    <vtep-source-interface>${xmlText(globalEvpn.vtep_source_interface || 'lo0.0')}</vtep-source-interface>`);
     lines.push(`    <route-distinguisher>`);
-    lines.push(`      <rd-type>${escapeXml(globalEvpn.route_distinguisher)}</rd-type>`);
+    lines.push(`      <rd-type>${xmlText(globalEvpn.route_distinguisher)}</rd-type>`);
     lines.push(`    </route-distinguisher>`);
     if (globalEvpn.vrf_target) {
       lines.push(`    <vrf-target>`);
-      lines.push(`      <community>${escapeXml(globalEvpn.vrf_target)}</community>`);
+      lines.push(`      <community>${xmlText(globalEvpn.vrf_target)}</community>`);
       lines.push(`    </vrf-target>`);
     }
     lines.push('  </switch-options>');
@@ -1341,7 +1407,7 @@ function buildRoutingXml(config, lines) {
     for (const vlan of allVlans) {
       const vlanName = sanitizeJunosName(vlan.name);
       lines.push(`    <vlan>`);
-      lines.push(`      <name>${escapeXml(vlanName)}</name>`);
+      lines.push(`      <name>${xmlText(vlanName)}</name>`);
       lines.push(`      <vlan-id>${vlan.vlan_id}</vlan-id>`);
       lines.push('      <vxlan>');
       lines.push(`        <vni>${vlan.vni}</vni>`);
@@ -1383,9 +1449,9 @@ function buildRoutingXml(config, lines) {
       const instEvpn = instEvpnMap[instName];
 
       lines.push('    <instance>');
-      lines.push(`      <name>${escapeXml(name)}</name>`);
+      lines.push(`      <name>${xmlText(name)}</name>`);
       const instType = instEvpn?.instance_type || 'virtual-router';
-      lines.push(`      <instance-type>${escapeXml(instType)}</instance-type>`);
+      lines.push(`      <instance-type>${xmlText(instType)}</instance-type>`);
 
       // Routing-options (static + BGP AS/router-id)
       if (instRoutes.length > 0 || instBgp) {
@@ -1396,17 +1462,17 @@ function buildRoutingXml(config, lines) {
           lines.push('        </autonomous-system>');
         }
         if (instBgp?.router_id || instOspf?.router_id) {
-          lines.push(`        <router-id>${escapeXml(instBgp?.router_id || instOspf?.router_id)}</router-id>`);
+          lines.push(`        <router-id>${xmlText(instBgp?.router_id || instOspf?.router_id)}</router-id>`);
         }
         if (instRoutes.length > 0) {
           lines.push('        <static>');
           for (const route of instRoutes) {
             lines.push('          <route>');
-            lines.push(`            <name>${escapeXml(route.destination)}</name>`);
+            lines.push(`            <name>${xmlText(route.destination)}</name>`);
             if (route.next_hop_type === 'discard') {
               lines.push('            <discard/>');
             } else if (route.next_hop) {
-              lines.push(`            <next-hop>${escapeXml(route.next_hop)}</next-hop>`);
+              lines.push(`            <next-hop>${xmlText(route.next_hop)}</next-hop>`);
             }
             lines.push('          </route>');
           }
@@ -1422,13 +1488,13 @@ function buildRoutingXml(config, lines) {
           lines.push('        <bgp>');
           for (const group of instBgp.peer_groups || []) {
             lines.push('          <group>');
-            lines.push(`            <name>${escapeXml(group.name)}</name>`);
-            lines.push(`            <type>${escapeXml(group.type || 'external')}</type>`);
+            lines.push(`            <name>${xmlText(group.name)}</name>`);
+            lines.push(`            <type>${xmlText(group.type || 'external')}</type>`);
             for (const neighbor of group.neighbors || []) {
               lines.push('            <neighbor>');
-              lines.push(`              <name>${escapeXml(neighbor.address)}</name>`);
+              lines.push(`              <name>${xmlText(neighbor.address)}</name>`);
               if (neighbor.peer_as) lines.push(`              <peer-as>${neighbor.peer_as}</peer-as>`);
-              if (neighbor.description) lines.push(`              <description>${escapeXml(neighbor.description)}</description>`);
+              if (neighbor.description) lines.push(`              <description>${xmlText(neighbor.description)}</description>`);
               lines.push('            </neighbor>');
             }
             lines.push('          </group>');
@@ -1439,10 +1505,10 @@ function buildRoutingXml(config, lines) {
           lines.push('        <ospf>');
           for (const area of instOspf.areas || []) {
             lines.push('          <area>');
-            lines.push(`            <name>${escapeXml(area.area_id)}</name>`);
+            lines.push(`            <name>${xmlText(area.area_id)}</name>`);
             for (const iface of area.interfaces || []) {
               lines.push('            <interface>');
-              lines.push(`              <name>${escapeXml(iface.name)}</name>`);
+              lines.push(`              <name>${xmlText(iface.name)}</name>`);
               if (iface.cost != null) lines.push(`              <metric>${iface.cost}</metric>`);
               if (iface.passive) lines.push('              <passive/>');
               lines.push('            </interface>');
@@ -1455,10 +1521,10 @@ function buildRoutingXml(config, lines) {
           lines.push('        <ospf3>');
           for (const area of instOspf3.areas || []) {
             lines.push('          <area>');
-            lines.push(`            <name>${escapeXml(area.area_id)}</name>`);
+            lines.push(`            <name>${xmlText(area.area_id)}</name>`);
             for (const iface of area.interfaces || []) {
               lines.push('            <interface>');
-              lines.push(`              <name>${escapeXml(iface.name)}</name>`);
+              lines.push(`              <name>${xmlText(iface.name)}</name>`);
               if (iface.cost != null) lines.push(`              <metric>${iface.cost}</metric>`);
               if (iface.passive) lines.push('              <passive/>');
               if (iface.instance_id != null) lines.push(`              <instance-id>${iface.instance_id}</instance-id>`);
@@ -1470,9 +1536,9 @@ function buildRoutingXml(config, lines) {
         }
         if (instEvpn) {
           lines.push('        <evpn>');
-          lines.push(`          <encapsulation>${escapeXml(instEvpn.encapsulation || 'vxlan')}</encapsulation>`);
+          lines.push(`          <encapsulation>${xmlText(instEvpn.encapsulation || 'vxlan')}</encapsulation>`);
           if (instEvpn.multicast_mode) {
-            lines.push(`          <multicast-mode>${escapeXml(instEvpn.multicast_mode)}</multicast-mode>`);
+            lines.push(`          <multicast-mode>${xmlText(instEvpn.multicast_mode)}</multicast-mode>`);
           }
           lines.push('        </evpn>');
         }
@@ -1498,7 +1564,7 @@ function buildVpnXml(tunnels, lines) {
     if (vpn.ike_proposal && !emittedProposals.has(vpn.ike_proposal.name)) {
       emittedProposals.add(vpn.ike_proposal.name);
       lines.push('      <proposal>');
-      lines.push(`        <name>${escapeXml(vpn.ike_proposal.name)}</name>`);
+      lines.push(`        <name>${xmlText(vpn.ike_proposal.name)}</name>`);
       lines.push(`        <authentication-method>${vpn.ike_proposal.auth_method || 'pre-shared-keys'}</authentication-method>`);
       lines.push(`        <dh-group>${vpn.ike_proposal.dh_group || 'group14'}</dh-group>`);
       lines.push(`        <encryption-algorithm>${vpn.ike_proposal.encryption || 'aes-256-cbc'}</encryption-algorithm>`);
@@ -1510,9 +1576,9 @@ function buildVpnXml(tunnels, lines) {
     // IKE gateway
     const gwName = vpn.ike_gateway?.name || `gw-${vpn.name}`;
     lines.push('      <gateway>');
-    lines.push(`        <name>${escapeXml(gwName)}</name>`);
+    lines.push(`        <name>${xmlText(gwName)}</name>`);
     if (vpn.ike_gateway?.address) lines.push(`        <address>${vpn.ike_gateway.address}</address>`);
-    lines.push(`        <ike-policy>ike-pol-${escapeXml(vpn.name)}</ike-policy>`);
+    lines.push(`        <ike-policy>ike-pol-${xmlText(vpn.name)}</ike-policy>`);
     if (vpn.ike_gateway?.ike_version === 'v2') lines.push('        <version>v2-only</version>');
     lines.push('      </gateway>');
   }
@@ -1525,7 +1591,7 @@ function buildVpnXml(tunnels, lines) {
     if (vpn.ipsec_proposal && !emittedIpsec.has(vpn.ipsec_proposal.name)) {
       emittedIpsec.add(vpn.ipsec_proposal.name);
       lines.push('      <proposal>');
-      lines.push(`        <name>${escapeXml(vpn.ipsec_proposal.name)}</name>`);
+      lines.push(`        <name>${xmlText(vpn.ipsec_proposal.name)}</name>`);
       lines.push(`        <protocol>${vpn.ipsec_proposal.protocol || 'esp'}</protocol>`);
       lines.push(`        <encryption-algorithm>${vpn.ipsec_proposal.encryption || 'aes-256-cbc'}</encryption-algorithm>`);
       lines.push(`        <authentication-algorithm>${vpn.ipsec_proposal.authentication || 'hmac-sha-256-128'}</authentication-algorithm>`);
@@ -1535,8 +1601,8 @@ function buildVpnXml(tunnels, lines) {
 
     // VPN definition
     lines.push('      <vpn>');
-    lines.push(`        <name>${escapeXml(vpn.name)}</name>`);
-    lines.push(`        <ike><gateway>${escapeXml(vpn.ike_gateway?.name || 'gw-' + vpn.name)}</gateway></ike>`);
+    lines.push(`        <name>${xmlText(vpn.name)}</name>`);
+    lines.push(`        <ike><gateway>${xmlText(vpn.ike_gateway?.name || 'gw-' + vpn.name)}</gateway></ike>`);
     if (vpn.tunnel_interface) {
       const bindIf = vpn.tunnel_interface.startsWith('st0') ? vpn.tunnel_interface : 'st0.0';
       lines.push(`        <bind-interface>${bindIf}</bind-interface>`);
@@ -1565,7 +1631,7 @@ function buildScreenXml(screens, lines) {
   for (const screen of screens) {
     const name = screen.name || 'default-screen';
     lines.push('      <ids-option>');
-    lines.push(`        <name>${escapeXml(name)}</name>`);
+    lines.push(`        <name>${xmlText(name)}</name>`);
 
     // ICMP
     if (screen.icmp && (screen.icmp.ping_death || screen.icmp.flood_threshold)) {
@@ -1674,13 +1740,13 @@ function buildHaXml(haConfig, lines) {
     if ((name === 'fab0' || name === 'fab1') && iface.interface) {
       lines.push('  <interfaces>');
       lines.push(`    <interface><name>${name}</name>`);
-      lines.push(`      <fabric-options><member-interfaces><name>${escapeXml(iface.interface)}</name></member-interfaces></fabric-options>`);
+      lines.push(`      <fabric-options><member-interfaces><name>${xmlText(iface.interface)}</name></member-interfaces></fabric-options>`);
       lines.push('    </interface>');
       lines.push('  </interfaces>');
     }
   }
 
-  lines.push(`  <!-- Source HA: ${escapeXml(haConfig.description || haConfig.mode)} -->`);
+  lines.push(`  ${xmlComment(`Source HA: ${haConfig.description || haConfig.mode}`, 'ha_config.description')}`);
   lines.push('  <!-- NOTE: Review chassis cluster config for target hardware -->');
 }
 
@@ -1695,7 +1761,7 @@ function buildMnhaXml(haConfig, lines) {
   lines.push('      <local-id>');
   lines.push(`        <id>${localId}</id>`);
   if (haConfig.local_ip) {
-    lines.push(`        <local-ip>${escapeXml(haConfig.local_ip)}</local-ip>`);
+    lines.push(`        <local-ip>${xmlText(haConfig.local_ip)}</local-ip>`);
   }
   lines.push('      </local-id>');
 
@@ -1703,13 +1769,13 @@ function buildMnhaXml(haConfig, lines) {
   lines.push('      <peer-id>');
   lines.push(`        <id>${peerId}</id>`);
   if (haConfig.peer_ip) {
-    lines.push(`        <peer-ip>${escapeXml(haConfig.peer_ip)}</peer-ip>`);
+    lines.push(`        <peer-ip>${xmlText(haConfig.peer_ip)}</peer-ip>`);
   }
   if (haConfig.icl_interface) {
-    lines.push(`        <interface>${escapeXml(haConfig.icl_interface)}</interface>`);
+    lines.push(`        <interface>${xmlText(haConfig.icl_interface)}</interface>`);
   }
   if (haConfig.vpn_profile) {
-    lines.push(`        <vpn-profile>${escapeXml(haConfig.vpn_profile)}</vpn-profile>`);
+    lines.push(`        <vpn-profile>${xmlText(haConfig.vpn_profile)}</vpn-profile>`);
   }
   lines.push('        <liveness-detection>');
   lines.push(`          <minimum-interval>${haConfig.liveness_interval || 400}</minimum-interval>`);
@@ -1726,7 +1792,7 @@ function buildMnhaXml(haConfig, lines) {
   // SRG1
   lines.push('      <services-redundancy-group>');
   lines.push('        <name>1</name>');
-  lines.push(`        <deployment-type>${escapeXml(haConfig.deployment_type || 'routing')}</deployment-type>`);
+  lines.push(`        <deployment-type>${xmlText(haConfig.deployment_type || 'routing')}</deployment-type>`);
   lines.push(`        <peer-id>${peerId}</peer-id>`);
   lines.push(`        <activeness-priority>${haConfig.activeness_priority || 200}</activeness-priority>`);
   if (haConfig.preemption) {
@@ -1737,7 +1803,7 @@ function buildMnhaXml(haConfig, lines) {
     for (const lg of (haConfig.monitoring.link_groups || [])) {
       if (lg.enabled && lg.interfaces) {
         for (const iface of lg.interfaces) {
-          lines.push(`        <interface-monitor><name>${escapeXml(iface)}</name><weight>255</weight></interface-monitor>`);
+          lines.push(`        <interface-monitor><name>${xmlText(iface)}</name><weight>255</weight></interface-monitor>`);
         }
       }
     }
@@ -1746,7 +1812,7 @@ function buildMnhaXml(haConfig, lines) {
 
   lines.push('    </high-availability>');
   lines.push('  </chassis>');
-  lines.push(`  <!-- MNHA: ${escapeXml(haConfig.description || haConfig.mode || 'active-passive')} -->`);
+  lines.push(`  ${xmlComment(`MNHA: ${haConfig.description || haConfig.mode || 'active-passive'}`, 'ha_config.description')}`);
   lines.push('  <!-- NOTE: Review MNHA config — verify ICL, VPN profile, and SRG settings -->');
 }
 
@@ -1764,7 +1830,7 @@ function buildSyslogXml(syslogConfig, lines) {
     if (!srv.server || srv.transport === 'file') continue;
 
     lines.push('      <host>');
-    lines.push(`        <name>${escapeXml(srv.server)}</name>`);
+    lines.push(`        <name>${xmlText(srv.server)}</name>`);
     lines.push('        <any><any/></any>');
 
     if (srv.port && srv.port !== 514) {
@@ -1776,7 +1842,7 @@ function buildSyslogXml(syslogConfig, lines) {
     }
 
     if (srv.source_address) {
-      lines.push(`        <source-address>${escapeXml(srv.source_address)}</source-address>`);
+      lines.push(`        <source-address>${xmlText(srv.source_address)}</source-address>`);
     }
 
     if (srv.structured_data) {
@@ -1795,6 +1861,11 @@ function buildSyslogXml(syslogConfig, lines) {
 // SNMP XML Builder
 // ---------------------------------------------------------------------------
 
+const SNMP_CATEGORY_NAMES = [
+  'authentication', 'chassis', 'configuration', 'link', 'remote-operations',
+  'routing', 'rmon-alarm', 'services', 'startup',
+];
+
 function buildSnmpXml(snmpConfig, lines) {
   if (!snmpConfig || snmpConfig.length === 0) return;
 
@@ -1804,22 +1875,22 @@ function buildSnmpXml(snmpConfig, lines) {
   const contactEntry = snmpConfig.find(e => e.contact);
   const locationEntry = snmpConfig.find(e => e.location);
   if (contactEntry?.contact) {
-    lines.push(`    <contact>${escapeXml(contactEntry.contact)}</contact>`);
+    lines.push(`    <contact>${xmlText(contactEntry.contact)}</contact>`);
   }
   if (locationEntry?.location) {
-    lines.push(`    <location>${escapeXml(locationEntry.location)}</location>`);
+    lines.push(`    <location>${xmlText(locationEntry.location)}</location>`);
   }
 
   for (const entry of snmpConfig) {
     if (entry.type === 'community') {
       lines.push('    <community>');
-      lines.push(`      <name>${escapeXml(entry.name)}</name>`);
+      lines.push(`      <name>${xmlText(entry.name)}</name>`);
       const auth = entry.authorization === 'read-write' ? 'read-write' : 'read-only';
       lines.push(`      <authorization>${auth}</authorization>`);
       if (entry.clients && entry.clients.length > 0) {
         lines.push('      <clients>');
         for (const client of entry.clients) {
-          lines.push(`        <name>${escapeXml(client)}</name>`);
+          lines.push(`        <name>${xmlText(client)}</name>`);
         }
         lines.push('      </clients>');
       }
@@ -1828,15 +1899,22 @@ function buildSnmpXml(snmpConfig, lines) {
 
     if (entry.type === 'trap-group') {
       lines.push('    <trap-group>');
-      lines.push(`      <name>${escapeXml(entry.name)}</name>`);
+      lines.push(`      <name>${xmlText(entry.name)}</name>`);
       if (entry.version) {
-        lines.push(`      <version>${escapeXml(entry.version)}</version>`);
+        lines.push(`      <version>${xmlText(entry.version)}</version>`);
       }
       for (const target of (entry.targets || [])) {
-        lines.push(`      <targets><name>${escapeXml(target)}</name></targets>`);
+        lines.push(`      <targets><name>${xmlText(target)}</name></targets>`);
       }
       for (const cat of (entry.categories || [])) {
-        lines.push(`      <categories><${escapeXml(cat)}/></categories>`);
+        const category = xmlElementName(cat, SNMP_CATEGORY_NAMES, 'snmp_config.categories');
+        const categoryElement = {
+          authentication: '<authentication/>', chassis: '<chassis/>',
+          configuration: '<configuration/>', link: '<link/>',
+          'remote-operations': '<remote-operations/>', routing: '<routing/>',
+          'rmon-alarm': '<rmon-alarm/>', services: '<services/>', startup: '<startup/>',
+        }[category];
+        lines.push(`      <categories>${categoryElement}</categories>`);
       }
       lines.push('    </trap-group>');
     }
@@ -1848,7 +1926,7 @@ function buildSnmpXml(snmpConfig, lines) {
       lines.push('      <usm>');
       lines.push('        <local-engine>');
       lines.push('          <user>');
-      lines.push(`            <name>${escapeXml(entry.name)}</name>`);
+      lines.push(`            <name>${xmlText(entry.name)}</name>`);
       if (entry.auth_protocol && entry.auth_protocol !== 'none' && VALID_AUTH.includes(entry.auth_protocol)) {
         lines.push(`            <authentication-${entry.auth_protocol}/>`);
       }
@@ -1883,26 +1961,26 @@ function buildAaaXml(aaaConfig, lines) {
 
     for (const srv of radiusServers) {
       lines.push('    <radius-server>');
-      lines.push(`      <name>${escapeXml(srv.server)}</name>`);
+      lines.push(`      <name>${xmlText(srv.server)}</name>`);
       lines.push(`      <port>${srv.port || 1812}</port>`);
       if (srv.secret) {
-        lines.push(`      <secret>${escapeXml(srv.secret)}</secret>`);
+        lines.push(`      <secret>${xmlText(srv.secret)}</secret>`);
       }
       if (srv.timeout) {
         lines.push(`      <timeout>${srv.timeout}</timeout>`);
       }
       if (srv.source_address) {
-        lines.push(`      <source-address>${escapeXml(srv.source_address)}</source-address>`);
+        lines.push(`      <source-address>${xmlText(srv.source_address)}</source-address>`);
       }
       lines.push('    </radius-server>');
     }
 
     for (const srv of tacplusServers) {
       lines.push('    <tacplus-server>');
-      lines.push(`      <name>${escapeXml(srv.server)}</name>`);
+      lines.push(`      <name>${xmlText(srv.server)}</name>`);
       lines.push(`      <port>${srv.port || 49}</port>`);
       if (srv.secret) {
-        lines.push(`      <secret>${escapeXml(srv.secret)}</secret>`);
+        lines.push(`      <secret>${xmlText(srv.secret)}</secret>`);
       }
       if (srv.timeout) {
         lines.push(`      <timeout>${srv.timeout}</timeout>`);
@@ -1916,7 +1994,7 @@ function buildAaaXml(aaaConfig, lines) {
     for (const ao of authOrders) {
       if (ao.authentication_order) {
         for (const method of ao.authentication_order) {
-          lines.push(`    <authentication-order>${escapeXml(method)}</authentication-order>`);
+          lines.push(`    <authentication-order>${xmlText(method)}</authentication-order>`);
         }
       }
     }
@@ -1928,10 +2006,10 @@ function buildAaaXml(aaaConfig, lines) {
     lines.push('  <access>');
     for (const profile of profiles) {
       lines.push('    <profile>');
-      lines.push(`      <name>${escapeXml(profile.name)}</name>`);
+      lines.push(`      <name>${xmlText(profile.name)}</name>`);
       if (profile.authentication_order) {
         for (const method of profile.authentication_order) {
-          lines.push(`      <authentication-order>${escapeXml(method)}</authentication-order>`);
+          lines.push(`      <authentication-order>${xmlText(method)}</authentication-order>`);
         }
       }
       lines.push('    </profile>');
@@ -1964,9 +2042,9 @@ function buildDhcpXml(dhcpConfig, lines) {
     for (const cfg of dhcpConfig) {
       if (cfg.type !== 'relay') continue;
       const iface = cfg.interface || 'ge-0/0/0.0';
-      lines.push(`        <interface><name>${escapeXml(iface)}</name>`);
+      lines.push(`        <interface><name>${xmlText(iface)}</name>`);
       for (const srv of (cfg.servers || [])) {
-        lines.push(`          <server>${escapeXml(srv)}</server>`);
+        lines.push(`          <server>${xmlText(srv)}</server>`);
       }
       lines.push('        </interface>');
     }
@@ -1982,16 +2060,16 @@ function buildDhcpXml(dhcpConfig, lines) {
     for (const cfg of dhcpConfig) {
       if (cfg.type !== 'server' && cfg.type !== 'pool') continue;
       const poolName = cfg.name || cfg.interface || 'dhcp-pool';
-      lines.push(`      <pool><name>${escapeXml(poolName)}</name>`);
+      lines.push(`      <pool><name>${xmlText(poolName)}</name>`);
       lines.push('        <family><inet>');
 
       if (cfg.network) {
-        lines.push(`          <network>${escapeXml(cfg.network)}</network>`);
+        lines.push(`          <network>${xmlText(cfg.network)}</network>`);
       }
 
       if (cfg.ranges) {
         for (const range of cfg.ranges) {
-          lines.push(`          <range><name>${escapeXml(range.name || 'range1')}</name>`);
+          lines.push(`          <range><name>${xmlText(range.name || 'range1')}</name>`);
           if (range.low) lines.push(`            <low>${range.low}</low>`);
           if (range.high) lines.push(`            <high>${range.high}</high>`);
           lines.push('          </range>');
@@ -2012,9 +2090,9 @@ function buildDhcpXml(dhcpConfig, lines) {
       const dns = cfg.dns_servers || [];
       if (gw || dns.length > 0) {
         lines.push('          <dhcp-attributes>');
-        if (gw) lines.push(`            <router>${escapeXml(gw)}</router>`);
+        if (gw) lines.push(`            <router>${xmlText(gw)}</router>`);
         for (const d of dns) {
-          lines.push(`            <name-server>${escapeXml(d)}</name-server>`);
+          lines.push(`            <name-server>${xmlText(d)}</name-server>`);
         }
         lines.push('          </dhcp-attributes>');
       }
@@ -2040,16 +2118,16 @@ function buildQosXml(qosConfig, lines) {
   for (const qos of qosConfig) {
     if (qos.type === 'scheduler') {
       lines.push('    <schedulers>');
-      lines.push(`      <name>${escapeXml(qos.name)}</name>`);
-      if (qos.transmit_rate) lines.push(`      <transmit-rate>${escapeXml(qos.transmit_rate)}</transmit-rate>`);
-      if (qos.buffer_size) lines.push(`      <buffer-size>${escapeXml(qos.buffer_size)}</buffer-size>`);
-      if (qos.priority) lines.push(`      <priority>${escapeXml(qos.priority)}</priority>`);
+      lines.push(`      <name>${xmlText(qos.name)}</name>`);
+      if (qos.transmit_rate) lines.push(`      <transmit-rate>${xmlText(qos.transmit_rate)}</transmit-rate>`);
+      if (qos.buffer_size) lines.push(`      <buffer-size>${xmlText(qos.buffer_size)}</buffer-size>`);
+      if (qos.priority) lines.push(`      <priority>${xmlText(qos.priority)}</priority>`);
       lines.push('    </schedulers>');
     } else if (qos.type === 'interface-cos') {
       lines.push('    <interfaces>');
-      lines.push(`      <interface><name>${escapeXml(qos.interface)}</name>`);
-      if (qos.scheduler_map) lines.push(`        <scheduler-map>${escapeXml(qos.scheduler_map)}</scheduler-map>`);
-      if (qos.shaping_rate) lines.push(`        <shaping-rate>${escapeXml(qos.shaping_rate)}</shaping-rate>`);
+      lines.push(`      <interface><name>${xmlText(qos.interface)}</name>`);
+      if (qos.scheduler_map) lines.push(`        <scheduler-map>${xmlText(qos.scheduler_map)}</scheduler-map>`);
+      if (qos.shaping_rate) lines.push(`        <shaping-rate>${xmlText(qos.shaping_rate)}</shaping-rate>`);
       lines.push('      </interface>');
       lines.push('    </interfaces>');
     } else {
@@ -2057,11 +2135,11 @@ function buildQosXml(qosConfig, lines) {
       const classes = qos.classes || [];
       if (classes.length > 0) {
         lines.push('    <scheduler-maps>');
-        lines.push(`      <name>${escapeXml(qos.name)}</name>`);
+        lines.push(`      <name>${xmlText(qos.name)}</name>`);
         for (const cls of classes) {
           const clsName = cls.name || 'default';
-          lines.push(`      <forwarding-class><class-name>${escapeXml(clsName)}</class-name>`);
-          lines.push(`        <scheduler>${escapeXml(clsName)}</scheduler>`);
+          lines.push(`      <forwarding-class><class-name>${xmlText(clsName)}</class-name>`);
+          lines.push(`        <scheduler>${xmlText(clsName)}</scheduler>`);
           lines.push('      </forwarding-class>');
         }
         lines.push('    </scheduler-maps>');
@@ -2070,7 +2148,7 @@ function buildQosXml(qosConfig, lines) {
         for (const cls of classes) {
           const clsName = cls.name || 'default';
           lines.push('    <schedulers>');
-          lines.push(`      <name>${escapeXml(clsName)}</name>`);
+          lines.push(`      <name>${xmlText(clsName)}</name>`);
           if (cls.guaranteed_bandwidth || cls.maximum_bandwidth || cls.police_rate) {
             lines.push(`      <transmit-rate>${cls.police_rate || cls.maximum_bandwidth || cls.guaranteed_bandwidth}</transmit-rate>`);
           }
@@ -2105,10 +2183,10 @@ function buildL2Xml(config, lines, interfaceMappings = {}) {
   for (const bd of bridgeDomains) {
     const bdName = sanitizeJunosName(bd.name);
     lines.push('    <domain>');
-    lines.push(`      <name>${escapeXml(bdName)}</name>`);
+    lines.push(`      <name>${xmlText(bdName)}</name>`);
     lines.push('      <domain-type>bridge</domain-type>');
-    if (bd.vlan_id) lines.push(`      <vlan-id>${escapeXml(String(bd.vlan_id))}</vlan-id>`);
-    if (bd.irb_interface) lines.push(`      <routing-interface>${escapeXml(bd.irb_interface)}</routing-interface>`);
+    if (bd.vlan_id) lines.push(`      <vlan-id>${xmlText(String(bd.vlan_id))}</vlan-id>`);
+    if (bd.irb_interface) lines.push(`      <routing-interface>${xmlText(bd.irb_interface)}</routing-interface>`);
     lines.push('    </domain>');
   }
 
@@ -2116,13 +2194,13 @@ function buildL2Xml(config, lines, interfaceMappings = {}) {
   for (const vw of vwirePairs) {
     const bdName = sanitizeJunosName(`vwire-${vw.name}`);
     lines.push('    <domain>');
-    lines.push(`      <name>${escapeXml(bdName)}</name>`);
+    lines.push(`      <name>${xmlText(bdName)}</name>`);
     lines.push('      <domain-type>bridge</domain-type>');
     if (vw.tag_allowed && vw.tag_allowed.length === 1 && vw.tag_allowed[0] !== '0') {
-      lines.push(`      <vlan-id>${escapeXml(String(vw.tag_allowed[0]))}</vlan-id>`);
+      lines.push(`      <vlan-id>${xmlText(String(vw.tag_allowed[0]))}</vlan-id>`);
     }
     if (vw.tag_allowed && vw.tag_allowed.length > 1) {
-      lines.push(`      <vlan-id-list>${escapeXml(vw.tag_allowed.join(' '))}</vlan-id-list>`);
+      lines.push(`      <vlan-id-list>${xmlText(vw.tag_allowed.join(' '))}</vlan-id-list>`);
     }
     lines.push('    </domain>');
   }
@@ -2163,16 +2241,16 @@ function buildL2Xml(config, lines, interfaceMappings = {}) {
     for (const bi of bridgeInterfaces) {
       const [baseName, unitNum = '0'] = bi.srxName.split('.');
       lines.push('    <interface>');
-      lines.push(`      <name>${escapeXml(baseName)}</name>`);
+      lines.push(`      <name>${xmlText(baseName)}</name>`);
       lines.push('      <unit>');
-      lines.push(`        <name>${escapeXml(unitNum)}</name>`);
+      lines.push(`        <name>${xmlText(unitNum)}</name>`);
       lines.push('        <family>');
       lines.push('          <bridge>');
       if (bi.vlanList && bi.vlanList.length > 1) {
         lines.push('            <interface-mode>trunk</interface-mode>');
-        lines.push(`            <vlan-id-list>${escapeXml(bi.vlanList.join(' '))}</vlan-id-list>`);
+        lines.push(`            <vlan-id-list>${xmlText(bi.vlanList.join(' '))}</vlan-id-list>`);
       } else if (bi.bdName) {
-        lines.push(`            <bridge-domain-name>${escapeXml(sanitizeJunosName(bi.bdName))}</bridge-domain-name>`);
+        lines.push(`            <bridge-domain-name>${xmlText(sanitizeJunosName(bi.bdName))}</bridge-domain-name>`);
       }
       lines.push('          </bridge>');
       lines.push('        </family>');
@@ -2211,13 +2289,13 @@ function buildPbfXml(pbfRules, lines, interfaceMappings = {}) {
     for (const [nextHop, instName] of instances) {
       const defaultRoute = nextHop.includes(':') ? '::/0' : '0.0.0.0/0';
       lines.push('    <instance>');
-      lines.push(`      <name>${escapeXml(instName)}</name>`);
+      lines.push(`      <name>${xmlText(instName)}</name>`);
       lines.push('      <instance-type>forwarding</instance-type>');
       lines.push('      <routing-options>');
       lines.push('        <static>');
       lines.push('          <route>');
-      lines.push(`            <name>${escapeXml(defaultRoute)}</name>`);
-      lines.push(`            <next-hop>${escapeXml(nextHop)}</next-hop>`);
+      lines.push(`            <name>${xmlText(defaultRoute)}</name>`);
+      lines.push(`            <next-hop>${xmlText(nextHop)}</next-hop>`);
       lines.push('          </route>');
       lines.push('        </static>');
       lines.push('      </routing-options>');
@@ -2235,7 +2313,7 @@ function buildPbfXml(pbfRules, lines, interfaceMappings = {}) {
   for (const rule of activeRules) {
     const termName = sanitizeJunosName(rule.name);
     lines.push('      <term>');
-    lines.push(`        <name>${escapeXml(termName)}</name>`);
+    lines.push(`        <name>${xmlText(termName)}</name>`);
 
     // from clause
     const hasSrc = (rule.src_addresses || []).some(a => a !== 'any');
@@ -2243,10 +2321,10 @@ function buildPbfXml(pbfRules, lines, interfaceMappings = {}) {
     if (hasSrc || hasDst) {
       lines.push('        <from>');
       for (const src of (rule.src_addresses || []).filter(a => a !== 'any')) {
-        lines.push(`          <source-address>${escapeXml(src)}</source-address>`);
+        lines.push(`          <source-address>${xmlText(src)}</source-address>`);
       }
       for (const dst of (rule.dst_addresses || []).filter(a => a !== 'any')) {
-        lines.push(`          <destination-address>${escapeXml(dst)}</destination-address>`);
+        lines.push(`          <destination-address>${xmlText(dst)}</destination-address>`);
       }
       lines.push('        </from>');
     }
@@ -2255,7 +2333,7 @@ function buildPbfXml(pbfRules, lines, interfaceMappings = {}) {
     lines.push('        <then>');
     if (rule.action === 'forward' && rule.next_hop_value) {
       const instName = instances.get(rule.next_hop_value);
-      lines.push(`          <routing-instance>${escapeXml(instName)}</routing-instance>`);
+      lines.push(`          <routing-instance>${xmlText(instName)}</routing-instance>`);
     } else if (rule.action === 'discard') {
       lines.push('          <discard/>');
     } else {
@@ -2338,7 +2416,7 @@ function buildSslProxyXml(config, lines) {
 
   for (const profileName of fwdProxyProfiles) {
     lines.push('        <profile>');
-    lines.push(`          <name>${escapeXml(profileName)}</name>`);
+    lines.push(`          <name>${xmlText(profileName)}</name>`);
     lines.push('          <root-ca>FPIC-CA</root-ca>');
     lines.push('          <protocol-version>tls12-and-above</protocol-version>');
     lines.push('          <actions>');
@@ -2350,8 +2428,8 @@ function buildSslProxyXml(config, lines) {
 
   for (const [profileName, certName] of inboundProfiles) {
     lines.push('        <profile>');
-    lines.push(`          <name>${escapeXml(profileName)}</name>`);
-    lines.push(`          <server-certificate>${escapeXml(certName)}</server-certificate>`);
+    lines.push(`          <name>${xmlText(profileName)}</name>`);
+    lines.push(`          <server-certificate>${xmlText(certName)}</server-certificate>`);
     lines.push('          <protocol-version>tls12-and-above</protocol-version>');
     lines.push('          <actions>');
     lines.push('            <log/>');
@@ -2385,7 +2463,7 @@ function buildFlowMonitoringXml(flowConfig, lines) {
   lines.push('  <forwarding-options>');
   lines.push('    <sampling>');
   lines.push('      <instance>');
-  lines.push(`        <name>${escapeXml(instanceName)}</name>`);
+  lines.push(`        <name>${xmlText(instanceName)}</name>`);
   lines.push('        <input>');
   lines.push(`          <rate>${rate}</rate>`);
   lines.push('        </input>');
@@ -2400,15 +2478,15 @@ function buildFlowMonitoringXml(flowConfig, lines) {
     const isIpfix = !collector.protocol || collector.protocol === 'ipfix' || collector.protocol === 'netflow-v10';
 
     lines.push('              <flow-server>');
-    lines.push(`                <name>${escapeXml(collector.address)}</name>`);
+    lines.push(`                <name>${xmlText(collector.address)}</name>`);
     lines.push(`                <port>${collector.port || 2055}</port>`);
     if (isIpfix) {
       lines.push('                <version-ipfix>');
-      lines.push(`                  <template>${escapeXml(tplName)}</template>`);
+      lines.push(`                  <template>${xmlText(tplName)}</template>`);
       lines.push('                </version-ipfix>');
     } else {
       lines.push('                <version9>');
-      lines.push(`                  <template>${escapeXml(tplName)}</template>`);
+      lines.push(`                  <template>${xmlText(tplName)}</template>`);
       lines.push('                </version9>');
     }
     lines.push('              </flow-server>');
@@ -2418,7 +2496,7 @@ function buildFlowMonitoringXml(flowConfig, lines) {
   const srcAddr = flowConfig.collectors.find(c => c.source_address)?.source_address;
   if (srcAddr) {
     lines.push('              <inline-jflow>');
-    lines.push(`                <source-address>${escapeXml(srcAddr)}</source-address>`);
+    lines.push(`                <source-address>${xmlText(srcAddr)}</source-address>`);
     lines.push('              </inline-jflow>');
   }
 
@@ -2438,7 +2516,7 @@ function buildFlowMonitoringXml(flowConfig, lines) {
       const tplName = sanitizeJunosName(tpl.name);
       lines.push('      <version-ipfix>');
       lines.push('        <template>');
-      lines.push(`          <name>${escapeXml(tplName)}</name>`);
+      lines.push(`          <name>${xmlText(tplName)}</name>`);
       lines.push(`          <flow-active-timeout>${tpl.active_timeout || 60}</flow-active-timeout>`);
       lines.push('          <template-refresh-rate>');
       lines.push(`            <packets>${tpl.refresh_rate || 1000}</packets>`);
@@ -2485,27 +2563,27 @@ function buildInterfaceAddressesXml(interfaces, lines, interfaceMappings = {}, i
 
     const [baseName, unitNum = '0'] = srxName.split('.');
     lines.push(`${indent}  <interface>`);
-    lines.push(`${indent}    <name>${escapeXml(baseName)}</name>`);
+    lines.push(`${indent}    <name>${xmlText(baseName)}</name>`);
     lines.push(`${indent}    <unit>`);
-    lines.push(`${indent}      <name>${escapeXml(unitNum)}</name>`);
+    lines.push(`${indent}      <name>${xmlText(unitNum)}</name>`);
     if (iface.description) {
-      lines.push(`${indent}      <description>${escapeXml(iface.description)}</description>`);
+      lines.push(`${indent}      <description>${xmlText(iface.description)}</description>`);
     }
     if (iface.ip) {
       lines.push(`${indent}      <family>`);
       lines.push(`${indent}        <inet>`);
-      lines.push(`${indent}          <address><name>${escapeXml(iface.ip)}</name></address>`);
+      lines.push(`${indent}          <address><name>${xmlText(iface.ip)}</name></address>`);
       lines.push(`${indent}        </inet>`);
       if (iface.ipv6) {
         lines.push(`${indent}        <inet6>`);
-        lines.push(`${indent}          <address><name>${escapeXml(iface.ipv6)}</name></address>`);
+        lines.push(`${indent}          <address><name>${xmlText(iface.ipv6)}</name></address>`);
         lines.push(`${indent}        </inet6>`);
       }
       lines.push(`${indent}      </family>`);
     } else if (iface.ipv6) {
       lines.push(`${indent}      <family>`);
       lines.push(`${indent}        <inet6>`);
-      lines.push(`${indent}          <address><name>${escapeXml(iface.ipv6)}</name></address>`);
+      lines.push(`${indent}          <address><name>${xmlText(iface.ipv6)}</name></address>`);
       lines.push(`${indent}        </inet6>`);
       lines.push(`${indent}      </family>`);
     }
@@ -2530,20 +2608,20 @@ function buildSystemConfigXml(systemConfig, lines, indent = '  ') {
   lines.push(`${indent}<system>`);
 
   if (systemConfig.hostname) {
-    lines.push(`${indent}  <host-name>${escapeXml(systemConfig.hostname)}</host-name>`);
+    lines.push(`${indent}  <host-name>${xmlText(systemConfig.hostname)}</host-name>`);
   }
   if (systemConfig.domain_name) {
-    lines.push(`${indent}  <domain-name>${escapeXml(systemConfig.domain_name)}</domain-name>`);
+    lines.push(`${indent}  <domain-name>${xmlText(systemConfig.domain_name)}</domain-name>`);
   }
   for (const dns of (systemConfig.dns_servers || [])) {
-    lines.push(`${indent}  <name-server><name>${escapeXml(dns)}</name></name-server>`);
+    lines.push(`${indent}  <name-server><name>${xmlText(dns)}</name></name-server>`);
   }
   if (systemConfig.timezone) {
-    lines.push(`${indent}  <time-zone>${escapeXml(systemConfig.timezone)}</time-zone>`);
+    lines.push(`${indent}  <time-zone>${xmlText(systemConfig.timezone)}</time-zone>`);
   }
   if (systemConfig.login_banner) {
     lines.push(`${indent}  <login>`);
-    lines.push(`${indent}    <message>${escapeXml(systemConfig.login_banner)}</message>`);
+    lines.push(`${indent}    <message>${xmlText(systemConfig.login_banner)}</message>`);
     lines.push(`${indent}  </login>`);
   }
 
@@ -2565,7 +2643,7 @@ function buildSystemConfigXml(systemConfig, lines, indent = '  ') {
   if (systemConfig.ntp_servers && systemConfig.ntp_servers.length > 0) {
     lines.push(`${indent}  <ntp>`);
     for (const ntp of systemConfig.ntp_servers) {
-      lines.push(`${indent}    <server><name>${escapeXml(ntp)}</name></server>`);
+      lines.push(`${indent}    <server><name>${xmlText(ntp)}</name></server>`);
     }
     lines.push(`${indent}  </ntp>`);
   }
@@ -2587,17 +2665,33 @@ function buildSystemConfigXml(systemConfig, lines, indent = '  ') {
  * @returns {{ xml: string, warnings: Object[], summary: Object }}
  */
 export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig = {}) {
+  if (!Array.isArray(configSlots) || !Array.isArray(crossLsLinks)) {
+    throw new TypeError('configSlots and crossLsLinks must be arrays');
+  }
+  validateJunosInput(globalConfig, 'globalConfig');
+  configSlots.forEach((slot, index) => {
+    validateJunosInput({ lsName: slot.lsName }, `configSlots[${index}]`);
+    validateJunosInput(slot.intermediateConfig, `configSlots[${index}].intermediateConfig`);
+    validateJunosInput(slot.interfaceMappings || {}, `configSlots[${index}].interfaceMappings`);
+  });
+  validateJunosInput({ crossLsLinks }, 'merge');
+
   const allLines = [];
   const allWarnings = [];
   const perLsSummaries = [];
 
   allLines.push('<?xml version="1.0" encoding="UTF-8"?>');
-  allLines.push(`<!-- Multi-Firewall Merge: ${configSlots.map(s => s.lsName).join(', ')} -->`);
   allLines.push('<configuration>');
+  allLines.push(xmlComment(
+    `Multi-Firewall Merge: ${configSlots.map(s => s.lsName).join(', ')}`,
+    'configSlots',
+  ));
 
   // Per-LS sections
-  for (const slot of configSlots) {
-    const ctx = { type: 'logical-system', name: slot.lsName };
+  for (let slotIndex = 0; slotIndex < configSlots.length; slotIndex += 1) {
+    const slot = configSlots[slotIndex];
+    const safeLsName = setIdentifier(slot.lsName, `configSlots[${slotIndex}].lsName`);
+    const ctx = { type: 'logical-system', name: safeLsName };
     const result = buildSrxXml(
       slot.intermediateConfig,
       slot.interfaceMappings || {},
@@ -2605,22 +2699,23 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
       { omitConfigurationWrapper: true }
     );
     allLines.push('');
-    allLines.push(`  <!-- Logical-System: ${escapeXml(slot.lsName)} -->`);
+    allLines.push(`  ${xmlComment(`Logical-System: ${slot.lsName}`, `configSlots[${slotIndex}].lsName`)}`);
     allLines.push(result.xml);
-    allWarnings.push(...result.warnings.map(w => ({ ...w, _ls: slot.lsName })));
-    perLsSummaries.push({ lsName: slot.lsName });
+    allWarnings.push(...result.warnings.map(w => ({ ...w, _ls: safeLsName })));
+    perLsSummaries.push({ lsName: safeLsName });
   }
 
   // Cross-LS lt- tunnel interfaces
   if (crossLsLinks.length > 0) {
     allLines.push('');
     allLines.push('  <!-- Cross-Logical-System Tunnel Interfaces (lt-) -->');
-    for (const link of crossLsLinks) {
-      const ls1 = escapeXml(sanitizeJunosName(link.ls1));
-      const ls2 = escapeXml(sanitizeJunosName(link.ls2));
-      const zone = escapeXml(sanitizeJunosName(link.sharedZone));
-      const u1 = link.lt1Unit;
-      const u2 = link.lt2Unit;
+    for (let linkIndex = 0; linkIndex < crossLsLinks.length; linkIndex += 1) {
+      const link = crossLsLinks[linkIndex];
+      const ls1 = xmlText(setIdentifier(link.ls1, `crossLsLinks[${linkIndex}].ls1`));
+      const ls2 = xmlText(setIdentifier(link.ls2, `crossLsLinks[${linkIndex}].ls2`));
+      const zone = xmlText(setIdentifier(link.sharedZone, `crossLsLinks[${linkIndex}].sharedZone`));
+      const u1 = setInteger(link.lt1Unit, { min: 0, max: 16385 }, `crossLsLinks[${linkIndex}].lt1Unit`);
+      const u2 = setInteger(link.lt2Unit, { min: 0, max: 16385 }, `crossLsLinks[${linkIndex}].lt2Unit`);
 
       // Side A lt- interface in LS1
       allLines.push(`  <logical-systems>`);
@@ -2684,15 +2779,7 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
     per_ls: perLsSummaries,
   };
 
-  return { xml: allLines.join('\n'), warnings: allWarnings, summary };
-}
-
-function escapeXml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  const xml = allLines.join('\n');
+  validateXmlOutput(xml);
+  return { xml, warnings: allWarnings, summary };
 }

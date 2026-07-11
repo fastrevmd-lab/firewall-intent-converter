@@ -12,6 +12,14 @@ import { useUIContext } from '../contexts/UIContext.jsx';
 import { useMergeContext } from '../contexts/MergeContext.jsx';
 import { convertConfig, mergeConvert } from '../utils/engine.js';
 import { validateHardwareCapacity } from '../data/hardware-db.js';
+import { JunosSerializationError } from '../../src/security/junos-serialization.js';
+
+export function formatJunosSerializationError(error, prefix) {
+  if (error instanceof JunosSerializationError) {
+    return `${prefix} blocked: ${error.fieldPath} — ${error.reason}`;
+  }
+  return `${prefix} error: ${error instanceof Error ? error.message : 'Unexpected conversion failure'}`;
+}
 
 export default function useConversion() {
   const { state: configState } = useConfigContext();
@@ -40,6 +48,7 @@ export default function useConversion() {
 
     uiDispatch({ type: 'SET_LOADING', isLoading: true, message: 'Converting to SRX format...' });
     uiDispatch({ type: 'CLEAR_ERROR' });
+    conversionDispatch({ type: 'CLEAR_OUTPUT' });
 
     try {
       // Merge translated policies into the config for conversion
@@ -92,7 +101,12 @@ export default function useConversion() {
       // Switch to Output > SRX Config in the nav tree
       uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'output' });
     } catch (err) {
-      uiDispatch({ type: 'SET_FIELD', field: 'error', value: `Conversion error: ${err.message}` });
+      conversionDispatch({ type: 'CLEAR_OUTPUT' });
+      uiDispatch({
+        type: 'SET_FIELD',
+        field: 'error',
+        value: formatJunosSerializationError(err, 'Conversion'),
+      });
     } finally {
       uiDispatch({ type: 'SET_LOADING', isLoading: false });
     }
@@ -126,6 +140,7 @@ export default function useConversion() {
 
     uiDispatch({ type: 'SET_LOADING', isLoading: true, message: 'Merging and converting to SRX format...' });
     uiDispatch({ type: 'CLEAR_ERROR' });
+    conversionDispatch({ type: 'CLEAR_OUTPUT' });
 
     try {
       const slotsPayload = parsedSlots.map(slot => ({
@@ -154,7 +169,12 @@ export default function useConversion() {
 
       uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'output' });
     } catch (err) {
-      uiDispatch({ type: 'SET_FIELD', field: 'error', value: `Merge conversion error: ${err.message}` });
+      conversionDispatch({ type: 'CLEAR_OUTPUT' });
+      uiDispatch({
+        type: 'SET_FIELD',
+        field: 'error',
+        value: formatJunosSerializationError(err, 'Merge conversion'),
+      });
     } finally {
       uiDispatch({ type: 'SET_LOADING', isLoading: false });
     }
