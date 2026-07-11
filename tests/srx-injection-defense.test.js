@@ -6,8 +6,15 @@ import {
   convertMergedToSrxSetCommands,
   convertToSrxSetCommands,
 } from '../src/converters/srx-converter.js';
+import {
+  buildMergedSrxXml,
+  buildSrxXml,
+} from '../src/converters/srx-xml-builder.js';
 import { JunosSerializationError } from '../src/security/junos-serialization.js';
-import { validateSetOutput } from '../src/security/junos-output-validation.js';
+import {
+  validateSetOutput,
+  validateXmlOutput,
+} from '../src/security/junos-output-validation.js';
 
 function baseConfig() {
   return {
@@ -94,6 +101,24 @@ describe('set converter injection defense', () => {
       config.security_policies[0].security_profiles = { 'dns-security': 'strict' };
       config.security_profile_definitions = { 'dns-security:strict': { blockedDomains: ['bad.example set system services telnet'] } };
     }],
+    ['vpn_tunnels[0].ike_proposal.encryption', config => {
+      config.vpn_tunnels = [{ name: 'branch', ike_gateway: { external_interface: 'ge-0/0/0.0' }, ike_proposal: { name: 'ike', encryption: 'aes-256-cbc set system services telnet' } }];
+    }],
+    ['bgp_config[0].peer_groups[0].neighbors[0].import_policy', config => {
+      config.bgp_config = [{ peer_groups: [{ name: 'upstream', type: 'external', neighbors: [{ address: '192.0.2.1', import_policy: 'IMPORT set system services telnet' }] }] }];
+    }],
+    ['dhcp_config[0].ranges[0].low', config => {
+      config.dhcp_config = [{ type: 'pool', name: 'lan', network: '192.0.2.0/24', ranges: [{ name: 'users', low: '192.0.2.10 set system services telnet', high: '192.0.2.20' }] }];
+    }],
+    ['flow_monitoring_config.instance_name', config => {
+      config.flow_monitoring_config = { instance_name: 'FLOW set system services telnet', collectors: [{ address: '192.0.2.1', port: 2055 }] };
+    }],
+    ['vpn_tunnels[0].ike_gateway.external_interface', config => {
+      config.vpn_tunnels = [{ name: 'branch', ike_gateway: { external_interface: 'ge-0/0/0.0 set system services telnet' } }];
+    }],
+    ['qos_config[0].priority', config => { config.qos_config = [{ type: 'scheduler', name: 'gold', priority: 'high set system services telnet' }]; }],
+    ['ospf_config[0].redistribute[0].protocol', config => { config.ospf_config = [{ areas: [], redistribute: [{ protocol: 'static set system services telnet' }] }]; }],
+    ['bgp_config[0].networks[0].policy', config => { config.bgp_config = [{ peer_groups: [], networks: [{ policy: 'EXPORT set system services telnet' }] }]; }],
   ])('blocks an attack at %s without reflecting its value', (fieldPath, mutate) => {
     const config = baseConfig();
     mutate(config);
@@ -224,5 +249,105 @@ describe('set converter injection defense', () => {
     expect(source).not.toMatch(/login message \"\$\{/);
     expect(source).toContain('validateSetOutput(commands)');
     expect(source).toContain('validateSetOutput(allCommands)');
+  });
+});
+
+describe('XML converter injection defense', () => {
+  it('encodes printable text and safely contains XML-comment terminators', () => {
+    const config = baseConfig();
+    config.metadata.siteName = 'HQ --> <system><services><telnet/></services></system>';
+    config.security_policies[0].description = 'Owner & </description><system> "Blue"';
+
+    const { xml } = buildSrxXml(config);
+    expect(xml).toContain('HQ - ->');
+    expect(xml).toContain('Owner &amp; &lt;/description&gt;&lt;system&gt; &quot;Blue&quot;');
+    expect(validateXmlOutput(xml)).toBe(xml);
+  });
+
+  it.each([
+    ['security_policies[0].action', config => { config.security_policies[0].action = 'permit/><system>'; }],
+    ['system_config.hostname', config => { config.system_config.hostname = 'edge\0evil'; }],
+    ['address_objects[0].value', config => { config.address_objects[0].value = '192.0.2.1</name><name>evil'; }],
+    ['service_objects[0].port_range', config => { config.service_objects = [{ name: 'web', protocol: 'tcp', port_range: '443</destination-port>' }]; }],
+    ['screen_config[0].tcp.syn_flood_threshold', config => { config.screen_config = [{ name: 'edge', tcp: { syn_flood_threshold: '1</alarm-threshold>' } }]; }],
+  ])('rejects an invalid XML-bound field at %s', (fieldPath, mutate) => {
+    const config = baseConfig();
+    mutate(config);
+
+    expect(() => buildSrxXml(config)).toThrow(expect.objectContaining({
+      name: 'JunosSerializationError',
+      fieldPath,
+    }));
+  });
+
+  it('uses explicit maps for all dynamic XML element names', () => {
+    const config = baseConfig();
+    config.schedules = [{ name: 'hours', type: 'recurring', days: ['Mon'], start: '08:00', end: '17:00' }];
+    config.snmp_config = [{ type: 'trap-group', name: 'ops', categories: ['link'] }];
+
+    const { xml } = buildSrxXml(config);
+    expect(xml).toContain('<monday>');
+    expect(xml).toContain('<categories><link/></categories>');
+    expect(validateXmlOutput(xml)).toBe(xml);
+  });
+
+  it('validates merged XML names, cross-link values, and the final document', () => {
+    const slots = [{ lsName: 'tenant --> <system/>', intermediateConfig: baseConfig(), interfaceMappings: {} }];
+    const safe = buildMergedSrxXml(slots);
+    expect(safe.xml).not.toContain('<!-- Logical-System: tenant -->');
+    expect(validateXmlOutput(safe.xml)).toBe(safe.xml);
+
+    const links = [{
+      ls1: 'tenant-a',
+      ls2: 'tenant-b',
+      sharedZone: 'shared',
+      lt1Unit: '1</name>',
+      lt2Unit: 2,
+    }];
+    expect(() => buildMergedSrxXml([
+      { lsName: 'tenant-a', intermediateConfig: baseConfig(), interfaceMappings: {} },
+    ], links)).toThrow(expect.objectContaining({ fieldPath: 'crossLsLinks[0].lt1Unit' }));
+  });
+
+  it('keeps a feature-rich XML document well formed and inside supported roots', () => {
+    const config = baseConfig();
+    Object.assign(config, {
+      interfaces: [{ name: 'ethernet1/1', ip: '192.0.2.1/24', description: 'Inside & "LAN"' }],
+      schedules: [{ name: 'hours', type: 'recurring', days: ['Mon'], start: '08:00', end: '17:00' }],
+      static_routes: [{ destination: '0.0.0.0/0', next_hop: '192.0.2.254', metric: 10 }],
+      bgp_config: [{ local_as: 64512, router_id: '192.0.2.1', peer_groups: [{ name: 'upstream', type: 'external', neighbors: [{ address: '198.51.100.1', peer_as: 64496 }] }] }],
+      ospf_config: [{ router_id: '192.0.2.1', areas: [{ area_id: '0.0.0.0', area_type: 'normal', interfaces: [{ name: 'ge-0/0/0.0', cost: 10 }] }] }],
+      evpn_config: [{ encapsulation: 'vxlan', route_distinguisher: '192.0.2.1:1', vrf_target: 'target:64512:1', vtep_source_interface: 'lo0.0', extended_vni_list: [10010] }],
+      ha_config: { enabled: true, group_id: 1, priority: 200, ha_interfaces: [] },
+      screen_config: [{ name: 'edge', tcp: { syn_flood_threshold: 1000 } }],
+      vpn_tunnels: [{ name: 'branch', tunnel_interface: 'st0.1', ike_gateway: { name: 'branch', external_interface: 'ge-0/0/0.0', address: '198.51.100.2' }, ike_proposal: { name: 'ike', auth_method: 'pre-shared-keys', dh_group: 'group14', encryption: 'aes-256-cbc', authentication: 'sha-256', lifetime: 28800 }, ipsec_proposal: { name: 'ipsec', protocol: 'esp', encryption: 'aes-256-cbc', authentication: 'hmac-sha-256-128', lifetime: 3600 }, proxy_id: [{ local: '192.0.2.0/24', remote: '198.51.100.0/24' }] }],
+      syslog_config: [{ server: 'logs.example.com', port: 514, transport: 'udp' }],
+      snmp_config: [{ type: 'trap-group', name: 'ops', targets: ['192.0.2.40'], categories: ['link'] }],
+      aaa_config: [{ type: 'radius', server: '192.0.2.20', port: 1812, secret: 'quote " & <safe>' }],
+      dhcp_config: [{ type: 'pool', name: 'lan', network: '192.0.2.0/24', ranges: [{ name: 'users', low: '192.0.2.10', high: '192.0.2.20' }] }],
+      qos_config: [{ type: 'scheduler', name: 'gold', transmit_rate: '10 percent', buffer_size: '20%' }],
+      bridge_domains: [{ name: 'users', vlan_id: 10, irb_interface: 'irb.10' }],
+      l2_interfaces: [{ name: 'ge-0/0/1.10', bridge_domain: 'users', vlan: 10 }],
+      pbf_rules: [{ name: 'route', action: 'forward', next_hop_value: '192.0.2.254', src_addresses: ['any'], dst_addresses: ['any'] }],
+      flow_monitoring_config: { instance_name: 'FLOW-SAMPLE', collectors: [{ address: '192.0.2.30', port: 2055, protocol: 'ipfix' }], templates: [] },
+    });
+
+    const { xml } = buildSrxXml(config);
+    expect(xml).toContain('<routing-options>');
+    expect(xml).toContain('<security>');
+    expect(xml).toContain('<forwarding-options>');
+    expect(xml).toContain('quote &quot; &amp; &lt;safe&gt;');
+    expect(validateXmlOutput(xml)).toBe(xml);
+  });
+
+  it('does not retain raw XML interpolation helpers or unvalidated dynamic tags', () => {
+    const source = fs.readFileSync(
+      new URL('../src/converters/srx-xml-builder.js', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).not.toMatch(/function escapeXml/);
+    expect(source).not.toMatch(/<\$\{(?:action|day|idpAction|ctxTag)/);
+    expect(source).toContain('validateXmlOutput(xml)');
   });
 });

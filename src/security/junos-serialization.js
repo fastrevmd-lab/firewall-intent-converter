@@ -192,11 +192,11 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
-export function xmlText(value, fieldPath) {
+export function xmlText(value, fieldPath = 'XML value') {
   return escapeXml(assertSafeScalar(value, fieldPath));
 }
 
-export function xmlAttribute(value, fieldPath) {
+export function xmlAttribute(value, fieldPath = 'XML attribute') {
   return escapeXml(assertSafeScalar(value, fieldPath));
 }
 

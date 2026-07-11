@@ -235,6 +235,11 @@ function validateOspf(configs, basePath) {
         if (iface.authentication?.key_id) setInteger(iface.authentication.key_id, { min: 0, max: 255 }, `${ifacePath}.authentication.key_id`);
       });
     });
+    (ospf.redistribute || []).forEach((item, itemIndex) => {
+      const itemPath = `${ospfPath}.redistribute[${itemIndex}]`;
+      if (item.protocol) setToken(item.protocol, `${itemPath}.protocol`, /^[A-Za-z0-9-]+$/);
+      if (item.metric_type) setToken(item.metric_type, `${itemPath}.metric_type`, /^[A-Za-z0-9-]+$/);
+    });
   });
 }
 
@@ -252,7 +257,17 @@ function validateBgp(configs, basePath) {
         if (neighbor.address) validateNetworkEndpoint(neighbor.address, `${neighborPath}.address`);
         if (neighbor.local_address) setAddressOrPrefix(neighbor.local_address, `${neighborPath}.local_address`);
         if (neighbor.peer_as) setInteger(neighbor.peer_as, { min: 1, max: 4294967295 }, `${neighborPath}.peer_as`);
+        for (const key of ['import_policy', 'export_policy']) {
+          if (neighbor[key]) setToken(neighbor[key], `${neighborPath}.${key}`, /^[A-Za-z0-9_.:/-]+$/);
+        }
       });
+    });
+    (bgp.networks || []).forEach((network, networkIndex) => {
+      if (network.policy) setToken(network.policy, `${bgpPath}.networks[${networkIndex}].policy`, /^[A-Za-z0-9_.:/-]+$/);
+    });
+    (bgp.redistribute || []).forEach((item, itemIndex) => {
+      if (item.protocol) setToken(item.protocol, `${bgpPath}.redistribute[${itemIndex}].protocol`, /^[A-Za-z0-9-]+$/);
+      if (item.policy) setToken(item.policy, `${bgpPath}.redistribute[${itemIndex}].policy`, /^[A-Za-z0-9_.:/-]+$/);
     });
   });
 }
@@ -262,6 +277,8 @@ function validateVpn(tunnels, basePath) {
   tunnels.forEach((vpn, index) => {
     const vpnPath = `${basePath}[${index}]`;
     const gateway = vpn.ike_gateway || {};
+    if (gateway.external_interface) validateInterfaceName(gateway.external_interface, `${vpnPath}.ike_gateway.external_interface`);
+    if (vpn.tunnel_interface) validateInterfaceName(vpn.tunnel_interface, `${vpnPath}.tunnel_interface`);
     if (gateway.address) validateNetworkEndpoint(gateway.address, `${vpnPath}.ike_gateway.address`);
     if (gateway.local_address && !/^(?:ge|xe|et|ae|lo|irb|reth)-?\d/i.test(gateway.local_address)) {
       setAddressOrPrefix(gateway.local_address, `${vpnPath}.ike_gateway.local_address`);
@@ -276,6 +293,11 @@ function validateVpn(tunnels, basePath) {
     ]) {
       if (proposal?.lifetime) {
         setInteger(proposal.lifetime, { min: 1, max: 4294967295 }, `${vpnPath}.${proposalKey}.lifetime`);
+      }
+      if (proposal) {
+        for (const key of ['auth_method', 'dh_group', 'encryption', 'authentication', 'protocol', 'pfs_group']) {
+          if (proposal[key]) setToken(proposal[key], `${vpnPath}.${proposalKey}.${key}`, /^[A-Za-z0-9-]+$/);
+        }
       }
     }
   });
@@ -338,11 +360,23 @@ function validateNat(rules, basePath) {
 
 function validateFlow(flowConfig, basePath) {
   if (!flowConfig || typeof flowConfig !== 'object') return;
+  if (flowConfig.instance_name) setToken(flowConfig.instance_name, `${basePath}.instance_name`, /^[A-Za-z0-9_.:/-]+$/);
+  for (const key of ['input_rate', 'run_length']) {
+    if (flowConfig.sampling?.[key]) setInteger(flowConfig.sampling[key], { min: 0 }, `${basePath}.sampling.${key}`);
+  }
   (flowConfig.collectors || []).forEach((collector, index) => {
     const collectorPath = `${basePath}.collectors[${index}]`;
     if (collector.address) validateNetworkEndpoint(collector.address, `${collectorPath}.address`);
     if (collector.source_address) setAddressOrPrefix(collector.source_address, `${collectorPath}.source_address`);
     if (collector.port) setPort(collector.port, `${collectorPath}.port`);
+    if (collector.protocol) setEnum(collector.protocol, ['ipfix', 'netflow-v10', 'netflow-v9'], `${collectorPath}.protocol`);
+  });
+  (flowConfig.templates || []).forEach((template, index) => {
+    const templatePath = `${basePath}.templates[${index}]`;
+    for (const key of ['active_timeout', 'refresh_rate']) {
+      if (template[key]) setInteger(template[key], { min: 1 }, `${templatePath}.${key}`);
+    }
+    if (template.flow_type) setEnum(template.flow_type, ['ipv4', 'ipv6'], `${templatePath}.flow_type`);
   });
 }
 
@@ -388,6 +422,12 @@ function validateSnmp(entries, basePath) {
     (entry.targets || []).forEach((target, targetIndex) => (
       validateNetworkEndpoint(target, `${entryPath}.targets[${targetIndex}]`)
     ));
+    (entry.categories || []).forEach((category, categoryIndex) => setEnum(
+      category,
+      ['authentication', 'chassis', 'configuration', 'link', 'remote-operations', 'routing', 'rmon-alarm', 'services', 'startup'],
+      `${entryPath}.categories[${categoryIndex}]`,
+    ));
+    if (entry.version) setToken(entry.version, `${entryPath}.version`, /^[A-Za-z0-9-]+$/);
   });
 }
 
@@ -404,6 +444,11 @@ function validateDhcp(entries, basePath) {
       if (entry[key]) setAddressOrPrefix(entry[key], `${entryPath}.${key}`);
     }
     (entry.dns_servers || []).forEach((server, serverIndex) => validateNetworkEndpoint(server, `${entryPath}.dns_servers[${serverIndex}]`));
+    (entry.ranges || []).forEach((range, rangeIndex) => {
+      if (range.low) setAddressOrPrefix(range.low, `${entryPath}.ranges[${rangeIndex}].low`);
+      if (range.high) setAddressOrPrefix(range.high, `${entryPath}.ranges[${rangeIndex}].high`);
+    });
+    (entry.pools || []).forEach((range, rangeIndex) => validateAddressRange(range, `${entryPath}.pools[${rangeIndex}]`));
     if (entry.lease_time) setInteger(entry.lease_time, { min: 1 }, `${entryPath}.lease_time`);
   });
 }
@@ -423,9 +468,15 @@ function validateQos(entries, basePath) {
     for (const key of ['transmit_rate', 'buffer_size', 'shaping_rate', 'max_bandwidth']) {
       if (entry[key]) validateRate(entry[key], `${entryPath}.${key}`);
     }
+    if (entry.priority && entry.priority !== true) {
+      setToken(entry.priority, `${entryPath}.priority`, /^[A-Za-z0-9-]+$/);
+    }
     (entry.classes || []).forEach((item, classIndex) => {
       for (const key of ['guaranteed_bandwidth', 'maximum_bandwidth', 'police_rate']) {
         if (item[key]) validateRate(item[key], `${entryPath}.classes[${classIndex}].${key}`);
+      }
+      if (item.priority && item.priority !== true) {
+        setToken(item.priority, `${entryPath}.classes[${classIndex}].priority`, /^[A-Za-z0-9-]+$/);
       }
     });
   });
