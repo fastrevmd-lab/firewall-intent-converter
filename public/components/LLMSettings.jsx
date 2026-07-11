@@ -4,7 +4,7 @@
  * Modal dialog for configuring the LLM provider used by the interview engine.
  * Includes provider selection, API key, model, temperature, and editable system prompt.
  *
- * Settings are stored in localStorage only — API keys never leave the browser.
+ * Preferences are persisted locally; API keys are scoped to the browser session.
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -13,7 +13,7 @@ import {
   VENDOR_PROMPT_KEYS,
   loadVendorTranslatePrompt,
 } from '../utils/llm-client.js';
-import { safeJsonParse } from '../utils/safe-json.js';
+import { loadLLMSettings, saveLLMSettings } from '../utils/llm-settings.js';
 import {
   bridgeFetch,
   bridgeResponseError,
@@ -94,37 +94,34 @@ export default function LLMSettings({ onClose, initialTab }) {
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [newDevice, setNewDevice] = useState({ name: '', host: '', port: 830, username: '', password: '', ssh_key: '' });
 
-  // Load saved settings from localStorage on mount
+  // Load saved settings on mount
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('llm-settings');
-      if (saved) {
-        const settings = safeJsonParse(saved);
-        const savedProvider = settings.provider || 'claude';
-        // If local-only mode and saved provider is cloud, switch to ollama
-        if (localOnly && CLOUD_PROVIDER_IDS.includes(savedProvider)) {
-          setProvider('ollama');
-          setModel('qwen2.5-coder:7b');
-          setBaseUrl('http://localhost:11434');
-        } else {
-          setProvider(savedProvider);
-          setModel(settings.model || 'claude-sonnet-4-6');
-        }
-        setApiKey(settings.apiKey || '');
-        setBaseUrl(settings.baseUrl || '');
-        setTemperature(settings.temperature ?? 0.2);
-        setFullReviewSystemPrompt(settings.fullReviewSystemPrompt || DEFAULT_FULL_REVIEW_SYSTEM_PROMPT);
-        setGreenfieldSystemPrompt(settings.greenfieldSystemPrompt || DEFAULT_GREENFIELD_SYSTEM_PROMPT);
-        // Load vendor-specific translate prompts from localStorage
-        const vp = {};
-        for (const v of VENDOR_PROMPT_KEYS) {
-          const k = `translateSystemPrompt_${v}`;
-          if (settings[k]) vp[v] = settings[k];
-        }
-        if (Object.keys(vp).length > 0) setVendorPrompts(vp);
+      const settings = loadLLMSettings();
+      const savedProvider = settings.provider || 'claude';
+      // If local-only mode and saved provider is cloud, switch to ollama
+      if (localOnly && CLOUD_PROVIDER_IDS.includes(savedProvider)) {
+        setProvider('ollama');
+        setModel('qwen2.5-coder:7b');
+        setBaseUrl('http://localhost:11434');
+      } else {
+        setProvider(savedProvider);
+        setModel(settings.model || 'claude-sonnet-4-6');
       }
+      setApiKey(settings.apiKey || '');
+      setBaseUrl(settings.baseUrl || '');
+      setTemperature(settings.temperature ?? 0.2);
+      setFullReviewSystemPrompt(settings.fullReviewSystemPrompt || DEFAULT_FULL_REVIEW_SYSTEM_PROMPT);
+      setGreenfieldSystemPrompt(settings.greenfieldSystemPrompt || DEFAULT_GREENFIELD_SYSTEM_PROMPT);
+      // Load vendor-specific translate prompts from saved settings
+      const vp = {};
+      for (const v of VENDOR_PROMPT_KEYS) {
+        const k = `translateSystemPrompt_${v}`;
+        if (settings[k]) vp[v] = settings[k];
+      }
+      if (Object.keys(vp).length > 0) setVendorPrompts(vp);
     } catch {
-      // Ignore parse errors
+      setApiKey('');
     }
     const savedBridge = loadBridgeSettings();
     const savedBridgeUrl = savedBridge.url;
@@ -158,7 +155,7 @@ export default function LLMSettings({ onClose, initialTab }) {
     }
   }, []);
 
-  /** Save settings to localStorage */
+  /** Save LLM settings */
   const handleSave = () => {
     const settings = {
       provider, apiKey, model, baseUrl, temperature,
@@ -168,7 +165,7 @@ export default function LLMSettings({ onClose, initialTab }) {
     for (const [v, prompt] of Object.entries(vendorPrompts)) {
       if (prompt && prompt.trim()) settings[`translateSystemPrompt_${v}`] = prompt;
     }
-    localStorage.setItem('llm-settings', JSON.stringify(settings));
+    saveLLMSettings(settings);
     saveBridgeSettings({ url: bridgeUrl, token: bridgeToken });
     onClose();
   };
@@ -621,7 +618,7 @@ export default function LLMSettings({ onClose, initialTab }) {
               style={inputStyle}
             />
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
-              Stored in browser localStorage only — never sent to our server.
+              Stored for this browser tab session; closing the tab/session removes it.
             </div>
           </SettingsField>
         )}
