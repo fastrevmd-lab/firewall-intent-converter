@@ -35,6 +35,39 @@ beforeEach(() => {
 });
 
 describe('credential source invariants', () => {
+  it('runs both credential security suites in CI', () => {
+    const ci = read('.github/workflows/ci.yml');
+    expect(ci).toContain('tests/llm-settings.test.js');
+    expect(ci).toContain('tests/credential-security.test.js');
+  });
+
+  it('has no tracked runtime device inventory', () => {
+    expect(read('tools/pyez-bridge/devices.example.yaml')).toContain('192.0.2.10');
+    expect(read('.gitignore')).toContain('tools/pyez-bridge/devices.yaml');
+  });
+
+  it('does not track the runtime inventory', () => {
+    expect(() => execFileSync(
+      'git',
+      ['ls-files', '--error-unmatch', 'tools/pyez-bridge/devices.yaml'],
+      { stdio: 'pipe' },
+    )).toThrow();
+  });
+
+  it('contains no raw bridge exception reflection', () => {
+    const source = read('tools/pyez-bridge/app.py');
+    expect(source).not.toMatch(/details\s*=\s*str\s*\(/);
+    expect(source).not.toMatch(/f["'][^"'\n]*\{(?:e|exc|error)\}/);
+    expect(source).not.toMatch(/print\([^\n]*(?:line\[|str\()/);
+  });
+
+  it('exposes no inventory password or private-key fields', () => {
+    const example = read('tools/pyez-bridge/devices.example.yaml');
+    expect(example).not.toMatch(/^\s+(?:password|passwd|ssh_key|ssh_private_key_file):/m);
+    const ui = read('public/components/LLMSettings.jsx');
+    expect(ui).not.toMatch(/newDevice\.(?:password|ssh_key)\b/);
+  });
+
   it('builds agent registrations without secret fields', () => {
     expect(buildDeviceRegistration({
       ...EMPTY_DEVICE_REGISTRATION,
