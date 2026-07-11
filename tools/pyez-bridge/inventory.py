@@ -87,10 +87,56 @@ def validate_device(value):
     return result
 
 
-def _check_parent(path):
-    parent_stat = path.parent.lstat()
-    if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+def _parent_anchor_and_components(path):
+    parent = path.parent
+    if parent.anchor:
+        return parent.anchor, parent.parts[1:]
+    return ".", parent.parts
+
+
+def _walk_parent_with_descriptors(path):
+    anchor, components = _parent_anchor_and_components(path)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open(anchor, flags)
+    try:
+        for component in components:
+            next_fd = os.open(component, flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        return os.fstat(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _walk_parent_with_lstat(path):
+    anchor, components = _parent_anchor_and_components(path)
+    current = Path(anchor)
+    current_stat = current.lstat()
+    if stat.S_ISLNK(current_stat.st_mode) or not stat.S_ISDIR(
+        current_stat.st_mode
+    ):
         raise InventoryError()
+    for component in components:
+        current = current / component
+        current_stat = current.lstat()
+        if stat.S_ISLNK(current_stat.st_mode) or not stat.S_ISDIR(
+            current_stat.st_mode
+        ):
+            raise InventoryError()
+    return current_stat
+
+
+def _check_parent(path):
+    can_walk_with_descriptors = (
+        os.name == "posix"
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and os.open in os.supports_dir_fd
+    )
+    if can_walk_with_descriptors:
+        parent_stat = _walk_parent_with_descriptors(path)
+    else:
+        parent_stat = _walk_parent_with_lstat(path)
     if os.name == "posix":
         if (
             parent_stat.st_uid != os.getuid()

@@ -159,6 +159,49 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(InventoryError):
             save_devices(linked_path, [AGENT_DEVICE])
 
+    def test_load_rejects_valid_symlink_in_intermediate_ancestor(self):
+        real_parent = self.root / "real" / "subdir"
+        real_parent.mkdir(parents=True, mode=0o700)
+        real_path = real_parent / "devices.yaml"
+        save_devices(real_path, [AGENT_DEVICE])
+        (self.root / "linked").symlink_to(
+            self.root / "real", target_is_directory=True
+        )
+
+        linked_path = self.root / "linked" / "subdir" / "devices.yaml"
+        with self.assertRaises(InventoryError):
+            load_devices(linked_path)
+
+    def test_save_rejects_valid_symlink_in_intermediate_ancestor(self):
+        real_parent = self.root / "real" / "subdir"
+        real_parent.mkdir(parents=True, mode=0o700)
+        (self.root / "linked").symlink_to(
+            self.root / "real", target_is_directory=True
+        )
+
+        linked_path = self.root / "linked" / "subdir" / "devices.yaml"
+        with self.assertRaises(InventoryError):
+            save_devices(linked_path, [AGENT_DEVICE])
+        self.assertFalse((real_parent / "devices.yaml").exists())
+
+    def test_load_rejects_dangling_symlink_in_intermediate_ancestor(self):
+        (self.root / "linked").symlink_to(
+            self.root / "missing", target_is_directory=True
+        )
+        linked_path = self.root / "linked" / "subdir" / "devices.yaml"
+
+        self.assert_generic_error(lambda: load_devices(linked_path))
+
+    def test_save_rejects_dangling_symlink_in_intermediate_ancestor(self):
+        (self.root / "linked").symlink_to(
+            self.root / "missing", target_is_directory=True
+        )
+        linked_path = self.root / "linked" / "subdir" / "devices.yaml"
+
+        self.assert_generic_error(
+            lambda: save_devices(linked_path, [AGENT_DEVICE])
+        )
+
     def test_rejects_valid_and_dangling_destination_symlinks(self):
         target = self.root / "target.yaml"
         target.write_text("devices: []\n", encoding="utf-8")
