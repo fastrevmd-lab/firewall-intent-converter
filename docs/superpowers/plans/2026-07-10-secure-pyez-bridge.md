@@ -91,7 +91,7 @@ git commit -m "test: declare existing Vitest runner"
 - Produces: `WindowRateLimiter(read_limit=120, mutation_limit=30, window_seconds=60, clock=time.monotonic)` with `check(key, method) -> tuple[bool, int]`
 - Produces: `install_security(app, token, allowed_origins, limiter=None) -> None`
 
-- [ ] **Step 1: Write failing unit tests for configuration validation**
+- [x] **Step 1: Write failing unit tests for configuration validation**
 
 Add tests that assert:
 
@@ -117,13 +117,13 @@ self.assertTrue(generated)
 self.assertGreaterEqual(len(token), 32)
 ```
 
-- [ ] **Step 2: Run the configuration tests and verify RED**
+- [x] **Step 2: Run the configuration tests and verify RED**
 
 Run: `python -m unittest tools/pyez-bridge/tests/test_security.py -v`
 
 Expected: import failure because `tools/pyez-bridge/security.py` does not exist.
 
-- [ ] **Step 3: Implement configuration validation**
+- [x] **Step 3: Implement configuration validation**
 
 Implement `validate_loopback_bind` with `ipaddress.ip_address(host).is_loopback`. Implement origin validation with `urllib.parse.urlsplit`, requiring scheme `http` or `https`, a hostname, no username/password/path/query/fragment, and exact serialized origin equality. Merge repeatable CLI values with comma-separated environment values, de-duplicate without reordering, and default to:
 
@@ -136,13 +136,13 @@ DEFAULT_ALLOWED_ORIGINS = (
 
 Implement `resolve_token` with a 32-character minimum and `secrets.token_urlsafe(32)`.
 
-- [ ] **Step 4: Run configuration tests and verify GREEN**
+- [x] **Step 4: Run configuration tests and verify GREEN**
 
 Run: `python -m unittest tools/pyez-bridge/tests/test_security.py -v`
 
 Expected: configuration-validation tests pass.
 
-- [ ] **Step 5: Write failing tests for real Flask request security**
+- [x] **Step 5: Write failing tests for real Flask request security**
 
 Create a small Flask application in the test with `/health`, `/devices`, and `/devices/demo/load` routes, install security, and assert:
 
@@ -170,13 +170,13 @@ self.assertNotIn("Access-Control-Allow-Origin", denied.headers)
 
 Also test constant external behavior for malformed/wrong tokens, `413` above 10 MiB, `429` at both thresholds with `Retry-After`, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`.
 
-- [ ] **Step 6: Run request-security tests and verify RED**
+- [x] **Step 6: Run request-security tests and verify RED**
 
 Run: `python -m unittest tools/pyez-bridge/tests/test_security.py -v`
 
 Expected: failures because the request hooks and limiter are not implemented.
 
-- [ ] **Step 7: Implement the limiter and Flask hooks**
+- [x] **Step 7: Implement the limiter and Flask hooks**
 
 Use `threading.Lock`, monotonic window timestamps, and a dictionary keyed by `(remote_addr, "read"|"mutation")`. Treat `GET`, `HEAD`, and `OPTIONS` as reads, but exempt `OPTIONS` and `GET /health` before authentication and limiting. Authenticate with exact `Authorization: Bearer <token>` parsing and `hmac.compare_digest`.
 
@@ -197,7 +197,7 @@ CORS(
 
 Return generic JSON `401` and `429` responses. Add `Retry-After` to rate-limit responses and security headers to every response.
 
-- [ ] **Step 8: Run all Python security tests and commit**
+- [x] **Step 8: Run all Python security tests and commit**
 
 Run: `python -m unittest tools/pyez-bridge/tests/test_security.py -v`
 
