@@ -290,7 +290,7 @@ git commit -m "security: enforce authenticated local bridge"
 - Produces: `bridgeFetch(url: string, options?: RequestInit, requestOptions?: {timeout?: number, authenticated?: boolean}) -> Promise<Response>`
 - Produces: `bridgeResponseError(response: Response) -> Promise<Error>`
 
-- [ ] **Step 1: Write failing browser-client tests**
+- [x] **Step 1: Write failing browser-client tests**
 
 Stub `localStorage`, `sessionStorage`, and `fetch`. Assert that `saveBridgeSettings` stores JSON containing only `url` in `pyez-bridge-settings`, stores the token under `pyez-bridge-token` in session storage, and never writes the token to local storage. Assert URL migration from `mcp-settings` still works.
 
@@ -308,13 +308,13 @@ Assert an authenticated request receives:
 
 Assert `{ authenticated: false }` omits `Authorization`; missing tokens reject before fetch; caller headers are preserved; `401`, `403`, and `429` map to actionable messages; and timeout aborts the request.
 
-- [ ] **Step 2: Run client tests and verify RED**
+- [x] **Step 2: Run client tests and verify RED**
 
 Run: `node tests/bridge-client.test.js`
 
 Expected: module-not-found failure.
 
-- [ ] **Step 3: Implement the shared client**
+- [x] **Step 3: Implement the shared client**
 
 Use the existing strict URL rules from `usePush`: only HTTP(S), no embedded username/password, and no trailing slash. Persist the URL in local storage and the token in session storage. Clone headers through `new Headers(options.headers || {})`, set but do not overwrite `Authorization`, and always set `mode: "cors"`. Use `AbortController` and clear the timer in `finally`.
 
@@ -326,7 +326,7 @@ Use the existing strict URL rules from `usePush`: only HTTP(S), no embedded user
 429: 'Bridge request limit reached. Wait and try again.'
 ```
 
-- [ ] **Step 4: Run client tests and commit**
+- [x] **Step 4: Run client tests and commit**
 
 Run: `node tests/bridge-client.test.js`
 
