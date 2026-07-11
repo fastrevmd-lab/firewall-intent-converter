@@ -15,6 +15,7 @@ import { validateHardwareCapacity } from '../data/hardware-db.js';
 import { JunosSerializationError } from '../../src/security/junos-serialization.js';
 import {
   ConversionOutputError,
+  filterEffectiveSetCommands,
   replaceSetCommands,
 } from '../../src/conversion/conversion-output.js';
 
@@ -224,7 +225,7 @@ export default function useConversion() {
       const newWarnings = [...existingNonValidation, ...result.findings];
 
       if (result.filteredCommands !== null) {
-        if (result.filteredCommands.length === 0) {
+        if (filterEffectiveSetCommands(result.filteredCommands).length === 0) {
           conversionDispatch({ type: 'CLEAR_OUTPUT' });
           conversionDispatch({ type: 'SET_FIELD', field: 'convertWarnings', value: newWarnings });
           conversionDispatch({ type: 'SET_FIELD', field: 'validationFindings', value: result.findings });

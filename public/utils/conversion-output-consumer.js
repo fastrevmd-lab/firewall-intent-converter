@@ -1,4 +1,7 @@
-import { assertConversionOutput } from '../../src/conversion/conversion-output.js';
+import {
+  assertConversionOutput,
+  filterEffectiveSetCommands,
+} from '../../src/conversion/conversion-output.js';
 
 function inspectConversionOutput(output) {
   const canonical = assertConversionOutput(output);
@@ -33,13 +36,7 @@ export function buildDeviceLoadPayload(output, restoreText = text => text) {
   let config = restoreText(text);
 
   if (canonical.format === 'set') {
-    config = config
-      .split('\n')
-      .filter(line => {
-        const trimmed = line.trim();
-        return trimmed && !trimmed.startsWith('#');
-      })
-      .join('\n');
+    config = filterEffectiveSetCommands(config.split('\n')).join('\n');
   }
 
   return { config, format: canonical.format };

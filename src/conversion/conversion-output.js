@@ -109,6 +109,16 @@ export function getSetCommands(output) {
   return [...canonical.commands];
 }
 
+export function filterEffectiveSetCommands(commands) {
+  try {
+    validateSetOutput(commands);
+  } catch {
+    fail('Set Commands output failed Junos artifact validation.');
+  }
+
+  return commands.filter(command => /^(?:set|deactivate)\s/u.test(command.trim()));
+}
+
 export function replaceSetCommands(output, commands) {
   const canonical = assertConversionOutput(output);
   if (canonical.format !== 'set') {

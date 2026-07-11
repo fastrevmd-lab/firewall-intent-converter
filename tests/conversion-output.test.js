@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ConversionOutputError,
   assertConversionOutput,
+  filterEffectiveSetCommands,
   getConversionOutputText,
   getSetCommands,
   hasConversionOutput,
@@ -62,6 +63,18 @@ describe('canonical conversion output', () => {
       auditId: 'conversion-7',
     });
     expect(original.commands).toEqual(SET_COMMANDS);
+  });
+
+  it('identifies only effective Set and deactivate device commands', () => {
+    expect(filterEffectiveSetCommands([
+      '# generated configuration',
+      '  # retained converter note',
+      'set system host-name edge-1',
+      'deactivate system services ssh',
+    ])).toEqual([
+      'set system host-name edge-1',
+      'deactivate system services ssh',
+    ]);
   });
 
   it.each([

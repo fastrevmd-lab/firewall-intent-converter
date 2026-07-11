@@ -2,7 +2,11 @@ import fs from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { normalizeConversionOutput, replaceSetCommands } from '../src/conversion/conversion-output.js';
+import {
+  filterEffectiveSetCommands,
+  normalizeConversionOutput,
+  replaceSetCommands,
+} from '../src/conversion/conversion-output.js';
 import { runValidation } from '../src/validators/srx-validation-engine.js';
 
 const modelDb = {};
@@ -88,13 +92,39 @@ describe('canonical license enforcement', () => {
     expect(() => replaceSetCommands(output, result.filteredCommands)).toThrow(/at least one command/);
   });
 
+  it('treats comments left after license enforcement as no effective device output', () => {
+    const output = normalizeConversionOutput({
+      commands: [
+        '# generated configuration',
+        '# license-gated feature follows',
+        'set services idp active-policy recommended',
+      ],
+    }, 'set');
+    const result = runValidation({
+      intermediateConfig,
+      conversionOutput: output,
+      targetModel: null,
+      srxLicense: 'Base',
+      enforceLicense: true,
+      modelDb,
+      capacityLimits,
+      sourceModel: null,
+    });
+
+    expect(result.filteredCommands).toEqual([
+      '# generated configuration',
+      '# license-gated feature follows',
+    ]);
+    expect(filterEffectiveSetCommands(result.filteredCommands)).toEqual([]);
+  });
+
   it('removes every srxCommands read and write from the conversion hook', () => {
     const source = fs.readFileSync(new URL('../public/hooks/useConversion.js', import.meta.url), 'utf8');
 
     expect(source).not.toContain('srxCommands');
     expect(source).toContain('conversionOutput: srxOutput');
     expect(source).toContain('replaceSetCommands(srxOutput, result.filteredCommands)');
-    expect(source).toContain('result.filteredCommands.length === 0');
+    expect(source).toContain('filterEffectiveSetCommands(result.filteredCommands).length === 0');
     expect(source).toContain("conversionDispatch({ type: 'CLEAR_OUTPUT' })");
   });
 });

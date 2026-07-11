@@ -40,6 +40,23 @@ describe('canonical conversion output consumer behavior', () => {
     expect(restoreText).toHaveBeenCalledWith(setOutput.commands.join('\n'));
   });
 
+  it('uses the shared effective-command filter for bridge Set payloads', () => {
+    expect(buildDeviceLoadPayload({
+      format: 'set',
+      commands: [
+        '# generated configuration',
+        'set system host-name edge-1',
+        '# end generated configuration',
+      ],
+    })).toEqual({
+      config: 'set system host-name edge-1',
+      format: 'set',
+    });
+
+    const consumerSource = read('public/utils/conversion-output-consumer.js');
+    expect(consumerSource).toContain('filterEffectiveSetCommands(config.split');
+  });
+
   it('builds an XML device payload with XML format despite a conflicting former format hint', () => {
     expect(buildDeviceLoadPayload(xmlOutput, text => text, 'set')).toEqual({
       config: xmlOutput.xml,
