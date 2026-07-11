@@ -2,7 +2,13 @@
  * Project Save/Load — Serialization, validation, and migration for .fpic.json files
  */
 
-const CURRENT_VERSION = 2;
+import {
+  ConversionOutputError,
+  assertConversionOutput,
+  normalizeConversionOutput,
+} from '../../src/conversion/conversion-output.js';
+
+const CURRENT_VERSION = 3;
 
 const VENDOR_NAMES = {
   panos: 'PAN-OS', srx: 'SRX', fortigate: 'FortiGate',
@@ -64,6 +70,10 @@ export function buildProjectPayload(stateBag, projectName) {
   for (const key of STATE_KEYS) {
     state[key] = stateBag[key] ?? STATE_DEFAULTS[key];
   }
+  if (state.srxOutput !== null) {
+    state.srxOutput = assertConversionOutput(state.srxOutput);
+    state.outputFormat = state.srxOutput.format;
+  }
   return {
     fpic_version: CURRENT_VERSION,
     name: projectName,
@@ -102,7 +112,15 @@ export function validateProjectFile(json) {
     warnings.push('Project has no parsed config or source text. You may need to re-parse.');
   }
 
-  const project = migrateProject(json);
+  let project;
+  try {
+    project = migrateProject(json);
+  } catch (error) {
+    if (error instanceof ConversionOutputError) {
+      return { valid: false, error: `Project conversion output is invalid: ${error.reason}` };
+    }
+    throw error;
+  }
 
   return { valid: true, project, warnings };
 }
@@ -130,8 +148,17 @@ function migrateProject(project) {
     p.fpic_version = 2;
   }
 
-  // Future migrations:
-  // if (p.fpic_version < 3) { ... p.fpic_version = 3; }
+  if (p.state.srxOutput !== null) {
+    p.state.srxOutput = normalizeConversionOutput(
+      p.state.srxOutput,
+      p.state.outputFormat,
+    );
+    p.state.outputFormat = p.state.srxOutput.format;
+  }
+
+  if (p.fpic_version < 3) {
+    p.fpic_version = 3;
+  }
 
   return p;
 }
