@@ -146,13 +146,18 @@ function staticConstBindings(nodes, parents) {
     'Program', 'BlockStatement', 'CatchClause',
     'FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression',
     'ClassExpression', 'ForStatement', 'ForInStatement', 'ForOfStatement',
+    'SwitchStatement', 'StaticBlock',
   ]);
   const scopes = new Map();
 
   const nearestScope = node => {
     let current = node;
+    let child = null;
     while (current) {
-      if (scopes.has(current)) return scopes.get(current);
+      const outsideSwitchScope = current.type === 'SwitchStatement'
+        && child === current.discriminant;
+      if (scopes.has(current) && !outsideSwitchScope) return scopes.get(current);
+      child = current;
       current = parents.get(current);
     }
     return null;
@@ -170,7 +175,7 @@ function staticConstBindings(nodes, parents) {
   const executionScope = node => {
     let scope = nearestScope(node);
     while (scope && !['Program', 'FunctionDeclaration', 'FunctionExpression',
-      'ArrowFunctionExpression'].includes(scope.node.type)) scope = scope.parent;
+      'ArrowFunctionExpression', 'StaticBlock'].includes(scope.node.type)) scope = scope.parent;
     return scope;
   };
   const resolveName = (name, node) => {
@@ -591,6 +596,46 @@ describe('set converter injection defense', () => {
       'for-loop shadow isolation',
       "const key = 'sanitizeJunosName';\nobj[key](value);\nfor (let key of values) {}",
       ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'switch lexical shadow isolation',
+      "const key = 'sanitizeJunosName';\nobj[key](value);\nswitch (mode) {\n  case 0: const key = 'ordinary'; break;\n}",
+      ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'switch discriminant outer protected access',
+      "const key = 'sanitizeJunosName';\nswitch (obj[key](value)) {\n  case 0: const key = 'ordinary'; break;\n}",
+      ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'switch inner protected const access',
+      "const key = 'ordinary';\nswitch (mode) {\n  case 0:\n    const key = 'sanitizeJunosName';\n    obj[key](value);\n}",
+      ['fixture.js:5 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'switch cross-case lexical binding',
+      "switch (mode) {\n  case 0:\n    const key = 'sanitizeJunosName';\n    break;\n  case 1:\n    obj[key](value);\n}",
+      ['fixture.js:6 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'static-block bindings do not suppress outer protected consts',
+      "const letKey = 'sanitizeJunosName';\nconst constKey = 'sanitizeJunosName';\nconst classKey = 'sanitizeJunosName';\nconst varKey = 'sanitizeJunosName';\nclass C {\n  static {\n    let letKey = 'ordinary';\n    const constKey = 'ordinary';\n    class classKey {}\n    var varKey = 'ordinary';\n  }\n}\nobj[letKey](value);\nobj[constKey](value);\nobj[classKey](value);\nobj[varKey](value);",
+      [
+        'fixture.js:13 forbidden computed sanitizeJunosName access',
+        'fixture.js:14 forbidden computed sanitizeJunosName access',
+        'fixture.js:15 forbidden computed sanitizeJunosName access',
+        'fixture.js:16 forbidden computed sanitizeJunosName access',
+      ],
+    ],
+    [
+      'static-block inner protected const access',
+      "const key = 'ordinary';\nclass C {\n  static {\n    const key = 'sanitizeJunosName';\n    obj[key](value);\n  }\n}",
+      ['fixture.js:5 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'static-block var shadow ownership',
+      "const key = 'sanitizeJunosName';\nclass C {\n  static {\n    var key = 'ordinary';\n    obj[key](value);\n  }\n}\nobj[key](value);",
+      ['fixture.js:8 forbidden computed sanitizeJunosName access'],
     ],
     [
       'computed destructuring alias',
