@@ -53,6 +53,16 @@ function aadObject(security) {
   };
 }
 
+function validEnvelopeFixture() {
+  const salt = toBase64(new Uint8Array(16));
+  const nonce = toBase64(new Uint8Array(12));
+  return {
+    fpic_version: 5,
+    security: aadObject({ salt, nonce }).security,
+    ciphertext: toBase64(new Uint8Array(16)),
+  };
+}
+
 async function encryptArbitraryBytes(bytes) {
   const salt = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
   const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12));
@@ -271,6 +281,73 @@ describe('reversible project crypto', () => {
     const stringifyCalls = stringifySpy.mock.calls.length;
     stringifySpy.mockRestore();
     expect(stringifyCalls).toBe(0);
+  });
+
+  it.each(['mode', 'cipher', 'kdf'])(
+    'rejects oversized fixed %s before serialization at envelope boundaries',
+    async field => {
+      const envelope = validEnvelopeFixture();
+      envelope.security[field] = 'A'.repeat(MAX_PROJECT_FILE_BYTES + 1);
+      const observations = [];
+      for (const [boundary, operation] of [
+        ['inspection', () => inspectEncryptedEnvelope(envelope)],
+        ['decryption', () => decryptReversibleEnvelope(envelope, passphrase)],
+      ]) {
+        const stringifySpy = vi.spyOn(JSON, 'stringify');
+        let thrown;
+        try {
+          await operation();
+        } catch (error) {
+          thrown = error;
+        }
+        observations.push({ boundary, stringifyCalls: stringifySpy.mock.calls.length, thrown });
+        stringifySpy.mockRestore();
+      }
+      expect(observations.map(({ boundary, stringifyCalls, thrown }) => ({
+        boundary,
+        stringifyCalls,
+        code: thrown?.code,
+        message: thrown?.message,
+      }))).toEqual([
+        {
+          boundary: 'inspection',
+          stringifyCalls: 0,
+          code: 'invalid_envelope',
+          message: 'Encrypted project file is invalid.',
+        },
+        {
+          boundary: 'decryption',
+          stringifyCalls: 0,
+          code: 'decryption_failed',
+          message: 'Encrypted project could not be opened.',
+        },
+      ]);
+    },
+  );
+
+  it.each([
+    ['fpic_version', envelope => { envelope.fpic_version = 6; }],
+    ['schema', envelope => { envelope.security.schema = 2; }],
+    ['mode', envelope => { envelope.security.mode = 'sanitized'; }],
+    ['containsOriginals', envelope => { envelope.security.containsOriginals = false; }],
+    ['reversible', envelope => { envelope.security.reversible = false; }],
+    ['cipher', envelope => { envelope.security.cipher = 'AES-128-GCM'; }],
+    ['tagBits', envelope => { envelope.security.tagBits = 96; }],
+    ['kdf', envelope => { envelope.security.kdf = 'PBKDF2-HMAC-SHA-1'; }],
+    ['iterations', envelope => { envelope.security.iterations = 600_001; }],
+    ['aadVersion', envelope => { envelope.security.aadVersion = 2; }],
+  ])('rejects invalid fixed identifier %s before serialization', (field, mutate) => {
+    const envelope = validEnvelopeFixture();
+    mutate(envelope);
+    const stringifySpy = vi.spyOn(JSON, 'stringify');
+    expectCryptoError(
+      () => inspectEncryptedEnvelope(envelope),
+      'invalid_envelope',
+      'Encrypted project file is invalid.',
+    );
+    const stringifyCalls = stringifySpy.mock.calls.length;
+    stringifySpy.mockRestore();
+    expect(stringifyCalls, field).toBe(0);
   });
 
   it.each([

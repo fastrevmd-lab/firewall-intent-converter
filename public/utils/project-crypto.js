@@ -128,9 +128,8 @@ function decodeCanonicalBase64(value, { exactBytes, minimumBytes, maximumBytes }
   return bytes;
 }
 
-function assertExactEnvelopeIdentifiers(envelope) {
-  const { security } = envelope;
-  if (envelope.fpic_version !== 5
+function assertExactEnvelopeIdentifiers(fpicVersion, security) {
+  if (fpicVersion !== 5
       || security.schema !== 1
       || security.mode !== 'reversible-encrypted'
       || security.containsOriginals !== true
@@ -165,6 +164,7 @@ function parseEnvelopeShape(envelope) {
       || outer.ciphertext.length > MAX_PROJECT_FILE_BYTES) {
     invalidEnvelope();
   }
+  assertExactEnvelopeIdentifiers(outer.fpic_version, security);
   const clone = {
     fpic_version: outer.fpic_version,
     security: {
@@ -275,7 +275,6 @@ function aadBytes(security) {
 
 export function inspectEncryptedEnvelope(envelope) {
   const parsed = parseEnvelopeShape(envelope);
-  assertExactEnvelopeIdentifiers(parsed.clone);
   Object.freeze(parsed.clone.security);
   return Object.freeze(parsed.clone);
 }
@@ -334,7 +333,6 @@ export async function decryptReversibleEnvelope(
   }
   try {
     const parsed = parseEnvelopeShape(envelope);
-    assertExactEnvelopeIdentifiers(parsed.clone);
     const key = await deriveKey(passphrase, parsed.saltBytes, cryptoImpl);
     const plaintext = await cryptoImpl.subtle.decrypt({
       name: 'AES-GCM',
