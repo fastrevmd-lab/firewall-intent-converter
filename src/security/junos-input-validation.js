@@ -513,7 +513,12 @@ function validatePbf(rules, basePath, addressObjects = []) {
   rules.forEach((rule, index) => {
     const rulePath = `${basePath}[${index}]`;
     if (rule.action) setEnum(rule.action, ['forward', 'discard', 'no-pbf', 'forward-to-vsys'], `${rulePath}.action`);
-    if (rule.next_hop_value) setAddressOrPrefix(rule.next_hop_value, `${rulePath}.next_hop_value`);
+    const nextHopPath = `${rulePath}.next_hop_value`;
+    let nextHopFamily;
+    if (rule.next_hop_value) {
+      const validatedFamily = pbfAddressFamily(rule.next_hop_value, nextHopPath);
+      if (rule.action === 'forward') nextHopFamily = validatedFamily;
+    }
 
     let family;
     for (const field of ['src_addresses', 'dst_addresses']) {
@@ -535,6 +540,13 @@ function validatePbf(rules, basePath, addressObjects = []) {
         }
         family = currentFamily;
       });
+    }
+    if (family !== undefined && nextHopFamily !== undefined && family !== nextHopFamily) {
+      throw new JunosSerializationError(
+        nextHopPath,
+        'address-family',
+        'PBF matches and next hop must use the same address family',
+      );
     }
     (rule.services || []).forEach((service, serviceIndex) => (
       validatePbfService(service, `${rulePath}.services[${serviceIndex}]`)

@@ -4299,7 +4299,15 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
     ].filter(value => value !== 'any').map(value => (
       isIpOrPrefixLiteral(value) ? value : addrLookup.get(value)
     )).filter(Boolean);
-    const family = matchedValues.length > 0 ? pbfAddressFamily(matchedValues[0]) : 'inet';
+    const familyValues = [...matchedValues];
+    if (
+      rule.action === 'forward'
+      && rule.next_hop_value
+      && isIpOrPrefixLiteral(rule.next_hop_value)
+    ) {
+      familyValues.push(rule.next_hop_value);
+    }
+    const family = familyValues.length > 0 ? pbfAddressFamily(familyValues[0]) : 'inet';
     usedFamilies.add(family);
     const termBase = `set firewall family ${family} filter ${filterName} term ${termName}`;
 
@@ -4431,13 +4439,17 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
  */
 function convertSslProxyConfig(config, commands, warnings, summary, identifiers, identifierPath) {
   const decryptionRules = config.decryption_rules || [];
-  if (decryptionRules.length === 0) return;
-
-  // Also check security_policies for _srx_decrypt without explicit decryption rules
-  const hasDecryptPolicies = (config.security_policies || []).some(p => p._srx_decrypt);
+  const fallbackDecryptPolicies = (config.security_policies || [])
+    .map((policy, index) => ({ policy, index }))
+    .filter(({ policy }) => (
+      policy._srx_decrypt && policy.action === 'allow' && !policy._srx_decrypt_profile
+    ));
+  const hasDecryptPolicies = fallbackDecryptPolicies.length > 0;
   const hasDecryptRules = decryptionRules.some(r => (
     !r.disabled && ['decrypt', 'decrypt-and-forward'].includes(r.action)
   ));
+
+  if (decryptionRules.length === 0 && !hasDecryptPolicies) return;
 
   if (!hasDecryptRules && !hasDecryptPolicies) {
     // Only no-decrypt rules — no SSL proxy needed, just note it
@@ -4519,14 +4531,30 @@ function convertSslProxyConfig(config, commands, warnings, summary, identifiers,
     }
   }
 
-  // If no explicit forward-proxy profiles but policies have _srx_decrypt, create default
-  if (fwdProxyProfiles.size === 0 && hasDecryptPolicies) {
-    const fallbackPolicyIndex = (config.security_policies || []).findIndex(policy => (
-      policy._srx_decrypt && policy.action === 'allow' && !policy._srx_decrypt_profile
+  if (hasDecryptPolicies) {
+    const hasRuleFallbackProfile = decryptionRules.some(rule => (
+      !rule.disabled
+      && ['decrypt', 'decrypt-and-forward'].includes(rule.action)
+      && rule.decryption_type !== 'ssl-inbound-inspection'
+      && rule.decryption_type !== 'ssh-proxy'
+      && (
+        rule.decryption_type !== 'ssl-forward-proxy'
+        || !rule.decryption_profile
+        || rule.decryption_profile === 'ssl-fwd-proxy'
+      )
     ));
-    if (fallbackPolicyIndex >= 0) {
+    if (!hasRuleFallbackProfile) {
+      const owner = [...fallbackDecryptPolicies].sort((left, right) => (
+        String(left.policy.name || '').localeCompare(String(right.policy.name || ''))
+      ))[0];
+      identifiers.nameForGenerated(
+        identifierPath(`security_policies[${owner.index}]`),
+        'ssl-forward-profile',
+      );
+    }
+    for (const { index } of fallbackDecryptPolicies) {
       fwdProxyProfiles.add(identifiers.nameForReference(
-        identifierPath(`security_policies[${fallbackPolicyIndex}]#ssl-proxy-profile`),
+        identifierPath(`security_policies[${index}]#ssl-proxy-profile`),
       ));
     }
   }

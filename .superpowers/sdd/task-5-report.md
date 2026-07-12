@@ -114,3 +114,30 @@ The formal Task 5 review findings were resolved in a follow-up TDD wave.
 - `git diff --check`: passed.
 
 The existing non-failing Node `localStorage` warning and Vite ineffective-dynamic-import warnings remain unchanged.
+
+## Final Task 5 guard and family fix wave
+
+### RED evidence
+
+- The focused policy-only SSL regression failed because `convertSslProxyConfig()` returned when `decryption_rules` was empty, before inspecting the allow policy with `_srx_decrypt`. The mapping contained PKI identities and an unresolved fallback SSL reference, but no matching SSL/PKI output was emitted.
+- A catalog/emitter parity regression using an explicit rule profile named `ssl-fwd-proxy` failed with `missing_catalog_coverage` when the emitter attempted to consume a second generated policy owner.
+- The IPv6-next-hop PBF regression emitted the filter and interface binding under `family inet` when both matches were `any`.
+- Both IPv4-match/IPv6-next-hop and IPv6-match/IPv4-next-hop regressions converted without an error instead of failing at `pbf_rules[0].next_hop_value`.
+
+### Implemented corrections
+
+- The SSL emitter now derives eligible fallback decrypt policies before its early-return guard. The catalog generates the fallback `ssl-fwd-proxy` definition on the canonical policy owner only when no active rule already owns that shared identity, and the emitter consumes the exact generated definition, every fallback reference, and the planned PKI CA profile/identity.
+- The SSL catalog and emitter use matching guards for allow policies without explicit profiles and for rule-owned shared fallback definitions. Configurations with neither decrypt rules nor fallback decrypt policies still catalog and emit no SSL fallback state.
+- PBF validation now compares a forward rule's literal next-hop family with all concrete source/destination match families and reports conflicts safely at the exact next-hop field.
+- PBF emission includes the literal forward next hop in family inference, so IPv6 next hops with `any` matches use `family inet6` for both filter terms and interface bindings.
+
+### TDD and verification results
+
+- Targeted red/green command: 1 file passed, 6 tests passed, 0 failed after fixes.
+- Focused four-file command: 4 files passed, 234 tests passed, 0 failed.
+- Broader sixteen-file command: 16 files passed, 365 tests passed, 0 failed.
+- `node --check` passed for `srx-converter.js`, `junos-identifier-catalog.js`, and `junos-input-validation.js`.
+- `npm run build`: passed.
+- `git diff --check`: passed.
+
+No new concerns were found in self-review. The existing non-failing Node `localStorage` and Vite ineffective-dynamic-import warnings remain unchanged.

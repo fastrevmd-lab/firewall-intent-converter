@@ -1086,6 +1086,29 @@ function collectSecurityProfiles(config, state) {
     }
   }
 
+  const fallbackDecryptPolicies = (config.security_policies || [])
+    .map((policy, index) => ({ policy, index }))
+    .filter(({ policy }) => (
+      policy._srx_decrypt && policy.action === 'allow' && !policy._srx_decrypt_profile
+    ));
+  const fallbackSslSharedKey = `${device}\0ssl-proxy-profile\0ssl-forward-profile\0ssl-fwd-proxy`;
+  if (fallbackDecryptPolicies.length > 0 && !sharedDefinitions.has(fallbackSslSharedKey)) {
+    const owner = [...fallbackDecryptPolicies].sort((left, right) => (
+      String(left.policy.name || '').localeCompare(String(right.policy.name || ''))
+    ))[0];
+    sharedDefinitions.add(fallbackSslSharedKey);
+    collector.addGenerated({
+      catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+      context: profileContext,
+      namespace: 'ssl-proxy-profile',
+      kind: 'ssl-forward-profile',
+      sourceName: 'ssl-fwd-proxy',
+      definitionPath: joinedPath(prefix, `security_policies[${owner.index}]`),
+      role: 'ssl-forward-profile',
+      stableParentKey: 'decryption-profile:ssl-forward-profile:ssl-fwd-proxy',
+    });
+  }
+
   for (let index = 0; index < (config.security_policies || []).length; index += 1) {
     const policy = config.security_policies[index];
     if (!policy._srx_decrypt || policy.action !== 'allow') continue;

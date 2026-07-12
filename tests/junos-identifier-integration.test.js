@@ -450,6 +450,50 @@ describe('Set identifier-plan integration', () => {
     }));
   });
 
+  it('infers family inet6 from an IPv6 PBF next hop when all matches are any', () => {
+    const config = baseAdvancedConfig();
+    config.pbf_rules = [{
+      name: 'IPv6 Default Route',
+      action: 'forward',
+      next_hop_value: '2001:db8::1',
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+      from_type: 'interface',
+      from_value: ['ge-0/0/1.0'],
+    }];
+
+    const result = convertToSrxSetCommands(config);
+    const term = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'firewall-filter-term' && entry.sourceName === 'IPv6 Default Route'
+    )).outputName;
+
+    expect(result.commands.some(command => command.includes(
+      `set firewall family inet6 filter PBF-FILTER term ${term}`,
+    ))).toBe(true);
+    expect(result.commands).toContain(
+      'set interfaces ge-0/0/1 unit 0 family inet6 filter input PBF-FILTER',
+    );
+  });
+
+  it.each([
+    ['IPv4 match with IPv6 next hop', '192.0.2.0/24', '2001:db8::1'],
+    ['IPv6 match with IPv4 next hop', '2001:db8:1::/64', '192.0.2.1'],
+  ])('rejects a PBF family conflict for %s at the next-hop field', (_label, source, nextHop) => {
+    const config = baseAdvancedConfig();
+    config.pbf_rules = [{
+      name: 'Conflicting Route',
+      action: 'forward',
+      next_hop_value: nextHop,
+      src_addresses: [source],
+      dst_addresses: ['any'],
+    }];
+
+    expect(() => convertToSrxSetCommands(config)).toThrow(expect.objectContaining({
+      name: 'JunosSerializationError',
+      fieldPath: 'pbf_rules[0].next_hop_value',
+    }));
+  });
+
   it('uses the planned SSL profile for decrypt-and-forward rules', () => {
     const config = baseAdvancedConfig();
     config.decryption_rules = [{
@@ -502,6 +546,62 @@ describe('Set identifier-plan integration', () => {
     expect(result.commands).toContain(
       `set security pki ca-profile ${caProfile.outputName} ca-identity ${caIdentity.outputName}`,
     );
+  });
+
+  it('plans and emits the policy-only fallback SSL profile and PKI identities', () => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [policy('Decrypt Policy', 'trust', 'untrust', 'any', {
+      _srx_decrypt: true,
+    })];
+
+    const result = convertToSrxSetCommands(config);
+    const sslProfile = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'ssl-proxy-profile' && entry.sourceName === 'ssl-fwd-proxy'
+    ));
+    const caProfile = result.identifierMappings.entries.find(entry => entry.namespace === 'pki-ca-profile');
+    const caIdentity = result.identifierMappings.entries.find(entry => entry.namespace === 'pki-ca-identity');
+
+    expect(result.commands).toContain(
+      `set security pki ca-profile ${caProfile.outputName} ca-identity ${caIdentity.outputName}`,
+    );
+    expect(result.commands).toContain(
+      `#   set services ssl proxy profile ${sslProfile.outputName} root-ca <CA_PROFILE>`,
+    );
+  });
+
+  it('reuses a rule-owned ssl-fwd-proxy definition for a fallback decrypt policy', () => {
+    const config = baseAdvancedConfig();
+    config.decryption_rules = [{
+      name: 'Explicit Default Name',
+      action: 'decrypt',
+      decryption_type: 'ssl-forward-proxy',
+      decryption_profile: 'ssl-fwd-proxy',
+    }];
+    config.security_policies = [policy('Decrypt Policy', 'trust', 'untrust', 'any', {
+      _srx_decrypt: true,
+    })];
+
+    const result = convertToSrxSetCommands(config);
+    const sslProfile = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'ssl-proxy-profile' && entry.sourceName === 'ssl-fwd-proxy'
+    ));
+
+    expect(sslProfile.definitionPath).toContain('decryption_rules[0]#generated:');
+    expect(result.commands).toContain(
+      `#   set services ssl proxy profile ${sslProfile.outputName} root-ca <CA_PROFILE>`,
+    );
+  });
+
+  it('does not catalog or emit SSL fallback state without rules or decrypt policies', () => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [policy('Plain Policy', 'trust', 'untrust', 'any')];
+
+    const result = convertToSrxSetCommands(config);
+
+    expect(result.identifierMappings.entries.some(entry => (
+      entry.namespace === 'ssl-proxy-profile' || entry.namespace.startsWith('pki-ca-')
+    ))).toBe(false);
+    expect(result.commands.some(command => command.includes('SSL Proxy / PKI Configuration'))).toBe(false);
   });
 
   it('uses the planned semantic traffic-selector name for each VPN proxy ID', () => {
