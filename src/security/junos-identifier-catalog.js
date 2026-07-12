@@ -120,6 +120,12 @@ function isEmittedDhcpPoolRange(value) {
   return parts.length === 2 && parts.every(part => part.trim().length > 0);
 }
 
+function isIpOrPrefixLiteral(value) {
+  if (typeof value !== 'string') return false;
+  return /^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,3})?$/.test(value)
+    || (value.includes(':') && /^[0-9A-Fa-f:.]+(?:\/\d{1,3})?$/.test(value));
+}
+
 function flowCollectorKey(collector) {
   return JSON.stringify([
     collector.address || '',
@@ -924,6 +930,7 @@ function collectSecurityProfiles(config, state) {
     }
   }
 
+  const sslProfileSources = new Map();
   for (let index = 0; index < (config.decryption_rules || []).length; index += 1) {
     const rule = config.decryption_rules[index];
     if (rule.disabled || !['decrypt', 'decrypt-and-forward'].includes(rule.action)) continue;
@@ -940,6 +947,9 @@ function collectSecurityProfiles(config, state) {
       sourceName = 'ssl-fwd-proxy';
     }
     if (!role) continue;
+    if (rule.decryption_profile && !sslProfileSources.has(rule.decryption_profile)) {
+      sslProfileSources.set(rule.decryption_profile, sourceName);
+    }
     const sharedKey = `${device}\0ssl-proxy-profile\0${sourceName}`;
     if (!sharedDefinitions.has(sharedKey)) {
       sharedDefinitions.add(sharedKey);
@@ -965,6 +975,29 @@ function collectSecurityProfiles(config, state) {
         literals: [],
       });
     }
+  }
+
+  for (let index = 0; index < (config.security_policies || []).length; index += 1) {
+    const policy = config.security_policies[index];
+    if (!policy._srx_decrypt || policy.action !== 'allow') continue;
+    const sourceName = policy._srx_decrypt_profile
+      ? sslProfileSources.get(policy._srx_decrypt_profile)
+        || `ssl-fwd-${policy._srx_decrypt_profile}`
+      : 'ssl-fwd-proxy';
+    collector.addReference({
+      catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+      context: profileContext,
+      namespace: 'ssl-proxy-profile',
+      compatibleKinds: ['ssl-proxy-profile'],
+      sourceName,
+      referencePath: joinedPath(
+        prefix,
+        policy._srx_decrypt_profile
+          ? `security_policies[${index}]._srx_decrypt_profile`
+          : `security_policies[${index}]#ssl-proxy-profile`,
+      ),
+      literals: [],
+    });
   }
 }
 
@@ -1198,7 +1231,9 @@ function collectNat(config, state) {
 }
 
 function collectRouting(config, state) {
-  const { collector, device, prefix } = state;
+  const {
+    collector, device, prefix, sharedDefinitions,
+  } = state;
   for (let index = 0; index < (config.static_routes || []).length; index += 1) {
     const route = config.static_routes[index];
     if (route.vrf) addRoutingInstanceSymbol(state, route.vrf, joinedPath(prefix, `static_routes[${index}].vrf`));
@@ -1211,6 +1246,33 @@ function collectRouting(config, state) {
     const bgp = config.bgp_config[index];
     if (bgp.instance) addRoutingInstanceSymbol(state, bgp.instance, joinedPath(prefix, `bgp_config[${index}].instance`));
     const context = routingInstanceContext(device, bgp.instance);
+    const needsDefaultGroup = (bgp.networks || []).some(network => network.policy)
+      && !bgp.peer_groups?.[0]?.name;
+    if (needsDefaultGroup) {
+      const sharedKey = `${context}\0bgp-group\0BGP-PEERS`;
+      if (!sharedDefinitions.has(sharedKey)) {
+        sharedDefinitions.add(sharedKey);
+        collector.addGenerated({
+          catalogKey: JUNOS_IDENTIFIER_CATALOG.BGP_GROUP,
+          context,
+          namespace: 'bgp-group',
+          kind: 'bgp-group',
+          sourceName: 'BGP-PEERS',
+          definitionPath: joinedPath(prefix, `bgp_config[${index}]`),
+          role: 'default-bgp-group',
+          stableParentKey: `bgp:${bgp.instance || 'default'}:default-group`,
+        });
+      }
+      collector.addReference({
+        catalogKey: JUNOS_IDENTIFIER_CATALOG.BGP_GROUP,
+        context,
+        namespace: 'bgp-group',
+        compatibleKinds: ['bgp-group'],
+        sourceName: 'BGP-PEERS',
+        referencePath: joinedPath(prefix, `bgp_config[${index}]#default-bgp-group`),
+        literals: [],
+      });
+    }
     for (let groupIndex = 0; groupIndex < (bgp.peer_groups || []).length; groupIndex += 1) {
       const group = bgp.peer_groups[groupIndex];
       collector.addDefinition({
@@ -1545,7 +1607,9 @@ function collectL2AndPbf(config, state) {
     }
     for (const field of ['src_addresses', 'dst_addresses']) {
       for (let addressIndex = 0; addressIndex < (rule[field] || []).length; addressIndex += 1) {
-        addAddressReference(collector, device, rule[field][addressIndex], joinedPath(prefix, `pbf_rules[${index}].${field}[${addressIndex}]`));
+        const address = rule[field][addressIndex];
+        if (address === 'any' || isIpOrPrefixLiteral(address)) continue;
+        addAddressReference(collector, device, address, joinedPath(prefix, `pbf_rules[${index}].${field}[${addressIndex}]`));
       }
     }
   }
@@ -1624,9 +1688,7 @@ function collectDhcpQosFlow(config, state) {
   for (let index = 0; index < (config.qos_config || []).length; index += 1) {
     const qos = config.qos_config[index];
     const path = joinedPath(prefix, `qos_config[${index}].name`);
-    if (qos.type === 'classifier') {
-      collector.addDefinition({ catalogKey: JUNOS_IDENTIFIER_CATALOG.QOS, context: device, namespace: 'cos-classifier', kind: 'cos-classifier', sourceName: qos.name, definitionPath: path });
-    } else if (qos.type === 'scheduler') {
+    if (qos.type === 'scheduler') {
       collector.addDefinition({ catalogKey: JUNOS_IDENTIFIER_CATALOG.QOS, context: device, namespace: 'cos-scheduler', kind: 'cos-scheduler', sourceName: qos.name, definitionPath: path });
     } else if (qos.type === 'interface-cos') {
       if (qos.scheduler_map) {

@@ -71,7 +71,390 @@ function collisionConfig() {
   });
 }
 
+function baseAdvancedConfig() {
+  return baseConfig({
+    zones: [
+      { name: 'trust', interfaces: [] },
+      { name: 'untrust', interfaces: [] },
+    ],
+  });
+}
+
+function addRoutingInstanceCollision(config) {
+  config.static_routes = [
+    { destination: '192.0.2.0/24', next_hop: '198.51.100.1', vrf: 'Blue VRF' },
+    { destination: '198.51.100.0/24', next_hop: '198.51.100.2', vrf: 'Blue@VRF' },
+  ];
+}
+
+function addBgpGroupCollision(config) {
+  config.bgp_config = [{
+    peer_groups: [
+      { name: 'Edge Peers', type: 'external', neighbors: [] },
+      { name: 'Edge@Peers', type: 'external', neighbors: [] },
+    ],
+  }];
+}
+
+function addBgpFallbackGroupCollision(config) {
+  config.bgp_config = [
+    { networks: [{ policy: 'EXPORT-FALLBACK' }] },
+    { peer_groups: [{ name: 'BGP@PEERS', type: 'external', neighbors: [] }] },
+  ];
+}
+
+function addScreenCollision(config) {
+  config.screen_config = [
+    { name: 'Edge Screen', tcp: { land_attack: true } },
+    { name: 'Edge@Screen', tcp: { land_attack: true } },
+  ];
+}
+
+function collidingVpn(separator) {
+  return {
+    name: `Branch${separator}VPN`,
+    ike_proposal: {
+      name: `IKE${separator}Proposal`,
+      auth_method: 'pre-shared-keys',
+      dh_group: 'group14',
+      encryption: 'aes-256-cbc',
+      authentication: 'sha-256',
+    },
+    ike_gateway: {
+      name: `IKE${separator}Gateway`,
+      external_interface: 'ge-0/0/0.0',
+      address: separator === ' ' ? '198.51.100.1' : '198.51.100.2',
+    },
+    ipsec_proposal: {
+      name: `IPsec${separator}Proposal`,
+      protocol: 'esp',
+      encryption: 'aes-256-cbc',
+      authentication: 'hmac-sha-256-128',
+    },
+  };
+}
+
+function addVpnCollision(config) {
+  config.vpn_tunnels = [collidingVpn(' '), collidingVpn('@')];
+}
+
+function addSnmpCollision(config) {
+  config.snmp_config = [
+    { type: 'community', name: 'Monitor Community' },
+    { type: 'community', name: 'Monitor@Community' },
+  ];
+}
+
+function addDhcpCollision(config) {
+  config.dhcp_config = [
+    { type: 'pool', name: 'Branch Pool', network: '10.0.0.0/24' },
+    { type: 'pool', name: 'Branch@Pool', network: '10.0.1.0/24' },
+  ];
+}
+
+function addBridgeDomainCollision(config) {
+  config.bridge_domains = [
+    { name: 'Tenant Bridge', vlan_id: 100 },
+    { name: 'Tenant@Bridge', vlan_id: 200 },
+  ];
+}
+
+function addPbfCollision(config) {
+  config.pbf_rules = [
+    { name: 'Prefer ISP', action: 'discard', src_addresses: ['any'], dst_addresses: ['any'] },
+    { name: 'Prefer@ISP', action: 'discard', src_addresses: ['any'], dst_addresses: ['any'] },
+  ];
+}
+
+function addFlowTemplateCollision(config) {
+  config.flow_monitoring_config = {
+    instance_name: 'FLOW-SAMPLE',
+    collectors: [
+      { address: '192.0.2.10', protocol: 'ipfix' },
+      { address: '192.0.2.11', protocol: 'ipfix' },
+    ],
+    templates: [
+      { name: 'Branch Template', active_timeout: 60, refresh_rate: 1000 },
+      { name: 'Branch@Template', active_timeout: 60, refresh_rate: 1000 },
+    ],
+  };
+}
+
+function addUtmCollision(config) {
+  config.security_policies = [
+    policy('UTM One', 'trust', 'untrust', 'any', { security_profiles: { virus: 'Strict AV' } }),
+    policy('UTM Two', 'trust', 'untrust', 'any', { security_profiles: { virus: 'Strict@AV' } }),
+  ];
+}
+
+function addIdpCoverage(config) {
+  config.security_policies = [
+    policy('IDP One', 'trust', 'untrust', 'any', { security_profiles: { spyware: 'Strict Spyware' } }),
+    policy('IDP Two', 'trust', 'untrust', 'any', { security_profiles: { spyware: 'Strict@Spyware' } }),
+  ];
+}
+
+function addSecIntelCoverage(config) {
+  config.external_lists = [
+    { name: 'Bad Hosts', isBlockList: true, listType: 'ip' },
+    { name: 'Bad@Hosts', isBlockList: true, listType: 'ip' },
+  ];
+}
+
+function addAppFwCollision(config) {
+  config.security_policies = [
+    policy('AppFW One', 'trust', 'untrust', 'any', { security_profiles: { 'application-control': 'Risky Apps' } }),
+    policy('AppFW Two', 'trust', 'untrust', 'any', { security_profiles: { 'application-control': 'Risky@Apps' } }),
+  ];
+  config.security_profile_definitions = {
+    'application-control:Risky Apps': { categories: { malware: 'block' } },
+    'application-control:Risky@Apps': { categories: { tunneling: 'block' } },
+  };
+}
+
+function addSslCollision(config) {
+  config.decryption_rules = [
+    { name: 'Decrypt One', action: 'decrypt', decryption_type: 'ssl-forward-proxy', decryption_profile: 'Corp TLS' },
+    { name: 'Decrypt Two', action: 'decrypt', decryption_type: 'ssl-forward-proxy', decryption_profile: 'Corp@TLS' },
+  ];
+}
+
+function addSslPolicyReferenceCollision(config) {
+  config.security_policies = [
+    policy('Decrypt Policy One', 'trust', 'untrust', 'any', {
+      _srx_decrypt: true,
+      _srx_decrypt_profile: 'Corp TLS',
+    }),
+    policy('Decrypt Policy Two', 'trust', 'untrust', 'any', {
+      _srx_decrypt: true,
+      _srx_decrypt_profile: 'Corp@TLS',
+    }),
+  ];
+}
+
+function addVlanCollision(config) {
+  config.evpn_config = [{
+    vlans: [
+      { name: 'Tenant VLAN', vlan_id: 100, vni: 10100 },
+      { name: 'Tenant@VLAN', vlan_id: 200, vni: 10200 },
+    ],
+  }];
+}
+
+function addQosCollision(config) {
+  config.qos_config = [
+    { type: 'scheduler', name: 'Voice Scheduler', transmit_rate: '10 percent' },
+    { type: 'scheduler', name: 'Voice@Scheduler', transmit_rate: '20 percent' },
+  ];
+}
+
+function addQosClassifierMapCollision(config) {
+  config.qos_config = [
+    {
+      type: 'classifier',
+      name: 'Branch Map',
+      classes: [{ name: 'Voice Class', guaranteed_bandwidth: 10 }],
+    },
+    {
+      type: 'shaping-profile',
+      name: 'Branch@Map',
+      classes: [{ name: 'Voice@Class', guaranteed_bandwidth: 20 }],
+    },
+  ];
+}
+
+function addAaaCollision(config) {
+  config.aaa_config = [
+    { type: 'profile', name: 'Admin Access', authentication_order: ['radius'] },
+    { type: 'profile', name: 'Admin@Access', authentication_order: ['tacacs'] },
+  ];
+}
+
+function addGeneratedRoutingPolicyCollision(config) {
+  const shared = 'a'.repeat(60);
+  config.bgp_config = [{
+    redistribute: [
+      { protocol: `${shared}x` },
+      { protocol: `${shared}y` },
+    ],
+  }];
+}
+
+function expectNamespaceOutputsUnique(mapping, namespace, commands, commandPattern, predicate = () => true) {
+  const entries = mapping.entries.filter(entry => (
+    entry.namespace === namespace && predicate(entry)
+  ));
+  expect(entries).toHaveLength(2);
+  expect(new Set(entries.map(entry => entry.outputName)).size).toBe(2);
+  for (const entry of entries) {
+    expect(commands.some(command => (
+      commandPattern.test(command) && command.split(/\s+/).includes(entry.outputName)
+    ))).toBe(true);
+  }
+}
+
 describe('Set identifier-plan integration', () => {
+  it.each([
+    ['routing instance', addRoutingInstanceCollision, /set routing-instances /, 'routing-instance'],
+    ['BGP group', addBgpGroupCollision, / protocols bgp group |set protocols bgp group /, 'bgp-group'],
+    ['BGP fallback group', addBgpFallbackGroupCollision, / protocols bgp group |set protocols bgp group /, 'bgp-group'],
+    ['screen profile', addScreenCollision, / screen ids-option /, 'screen-profile'],
+    ['VPN', addVpnCollision, / security ipsec vpn /, 'ipsec-vpn'],
+    ['IKE proposal', addVpnCollision, / security ike proposal /, 'ike-proposal'],
+    ['IKE policy', addVpnCollision, / security ike policy /, 'ike-policy'],
+    ['IKE gateway', addVpnCollision, / security ike gateway /, 'ike-gateway'],
+    ['IPsec proposal', addVpnCollision, / security ipsec proposal /, 'ipsec-proposal'],
+    ['IPsec policy', addVpnCollision, / security ipsec policy /, 'ipsec-policy'],
+    ['SNMP community', addSnmpCollision, /set snmp community /, 'snmp-community'],
+    ['DHCP pool', addDhcpCollision, / access address-assignment pool /, 'dhcp-pool'],
+    ['bridge domain', addBridgeDomainCollision, /set bridge-domains /, 'bridge-domain'],
+    ['PBF term', addPbfCollision, / firewall family inet filter .* term /, 'firewall-filter-term', entry => entry.definitionPath?.endsWith('.name')],
+    ['flow template', addFlowTemplateCollision, / services flow-monitoring version/, 'flow-template'],
+    ['UTM profile', addUtmCollision, / utm feature-profile anti-virus profile /, 'utm-anti-virus-profile'],
+    ['IDP policy', addIdpCoverage, / security idp idp-policy /, 'idp-policy'],
+    ['SecIntel rule', addSecIntelCoverage, / security-intelligence profile .* rule /, 'security-intelligence-rule'],
+    ['AppFW rule set', addAppFwCollision, / application-firewall rule-sets /, 'application-firewall-rule-set'],
+    ['SSL profile', addSslCollision, / services ssl proxy profile /, 'ssl-proxy-profile'],
+    ['SSL policy profile reference', addSslPolicyReferenceCollision, / ssl-proxy profile-name /, 'ssl-proxy-profile'],
+    ['VLAN', addVlanCollision, /set vlans /, 'vlan'],
+    ['QoS scheduler', addQosCollision, / class-of-service schedulers /, 'cos-scheduler'],
+    ['QoS classifier scheduler map', addQosClassifierMapCollision, / class-of-service scheduler-maps /, 'cos-scheduler-map'],
+    ['AAA profile', addAaaCollision, /set access profile /, 'access-profile'],
+    ['generated routing policy', addGeneratedRoutingPolicyCollision, / policy-options policy-statement /, 'routing-policy'],
+  ])('keeps colliding %s identifiers distinct', (_label, mutate, commandPattern, namespace, predicate) => {
+    const config = baseAdvancedConfig();
+    mutate(config);
+    const result = convertToSrxSetCommands(config);
+
+    expect(result.commands.some(command => commandPattern.test(command))).toBe(true);
+    expectNamespaceOutputsUnique(
+      result.identifierMappings,
+      namespace,
+      result.commands,
+      commandPattern,
+      predicate,
+    );
+  });
+
+  it('keeps routing-instance lookup roles aligned when an earlier route is not emitted', () => {
+    const config = baseAdvancedConfig();
+    config.static_routes = [{ vrf: 'Shared VRF' }];
+    config.bgp_config = [{ instance: 'Shared VRF', local_as: 64512 }];
+
+    const result = convertToSrxSetCommands(config);
+    const instance = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'routing-instance',
+    );
+
+    expect(result.commands).toContain(
+      `set routing-instances ${instance.outputName} routing-options autonomous-system 64512`,
+    );
+  });
+
+  it('does not look up PBF filter identifiers when every rule is disabled', () => {
+    const config = baseAdvancedConfig();
+    config.pbf_rules = [{
+      name: 'Disabled PBF',
+      disabled: true,
+      action: 'discard',
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+    }];
+
+    const result = convertToSrxSetCommands(config);
+
+    expect(result.commands.some(command => command.startsWith('set firewall family inet filter '))).toBe(false);
+    expect(result.identifierMappings.entries.some(entry => entry.catalogKey === 'pbf')).toBe(false);
+  });
+
+  it('keeps raw PBF IP prefixes outside identifier planning', () => {
+    const config = baseAdvancedConfig();
+    config.pbf_rules = [{
+      name: 'Raw Prefixes',
+      action: 'discard',
+      src_addresses: ['192.0.2.0/24', '::ffff:192.0.2.0/120'],
+      dst_addresses: ['2001:db8::/64'],
+    }];
+
+    const result = convertToSrxSetCommands(config);
+    const term = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'firewall-filter-term' && entry.sourceName === 'Raw Prefixes'
+    )).outputName;
+
+    expect(result.commands).toContain(
+      `set firewall family inet filter PBF-FILTER term ${term} from source-address 192.0.2.0/24`,
+    );
+    expect(result.commands).toContain(
+      `set firewall family inet filter PBF-FILTER term ${term} from source-address ::ffff:192.0.2.0/120`,
+    );
+    expect(result.commands).toContain(
+      `set firewall family inet filter PBF-FILTER term ${term} from destination-address 2001:db8::/64`,
+    );
+    expect(result.identifierMappings.entries.some(entry => (
+      ['192.0.2.0/24', '::ffff:192.0.2.0/120', '2001:db8::/64'].includes(entry.sourceName)
+    ))).toBe(false);
+  });
+
+  it('uses the planned SSL profile for decrypt-and-forward rules', () => {
+    const config = baseAdvancedConfig();
+    config.decryption_rules = [{
+      name: 'Decrypt Forward',
+      action: 'decrypt-and-forward',
+      decryption_type: 'ssl-forward-proxy',
+      decryption_profile: 'Forward TLS',
+    }];
+
+    const result = convertToSrxSetCommands(config);
+    const profile = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'ssl-proxy-profile',
+    );
+
+    expect(result.commands).toContain(
+      `#   set services ssl proxy profile ${profile.outputName} root-ca <CA_PROFILE>`,
+    );
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['all-allow', { categories: { business: 'allow' } }],
+  ])('does not look up an unregistered AppFW profile when categories are %s', (_label, definition) => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [policy('AppFW Edge', 'trust', 'untrust', 'any', {
+      security_profiles: { 'application-control': 'Edge Apps' },
+    })];
+    if (definition) {
+      config.security_profile_definitions = {
+        'application-control:Edge Apps': definition,
+      };
+    }
+
+    const result = convertToSrxSetCommands(config);
+
+    expect(result.identifierMappings.entries.some(
+      entry => entry.namespace === 'application-firewall-rule-set',
+    )).toBe(false);
+  });
+
+  it('fails closed when a QoS classifier child lookup is missing', () => {
+    const config = baseAdvancedConfig();
+    addQosClassifierMapCollision(config);
+    const plan = planJunosIdentifiers(config);
+    const identifierPlan = {
+      ...plan,
+      nameForDefinition(path) {
+        if (path === 'qos_config[0].classes[0].name#forwarding-class') {
+          throw new JunosIdentifierPlanningError('missing_catalog_coverage', {
+            definitionPaths: [path],
+          });
+        }
+        return plan.nameForDefinition(path);
+      },
+    };
+
+    expect(() => convertToSrxSetCommands(config, {}, null, { identifierPlan }))
+      .toThrow(expect.objectContaining({ code: 'missing_catalog_coverage' }));
+  });
+
   it('uses collision-safe address names for definitions, groups, and policies', () => {
     const result = convertToSrxSetCommands(collisionConfig());
     const addressEntries = result.identifierMappings.entries.filter(
@@ -389,6 +772,41 @@ describe('Set identifier-plan integration', () => {
       ))).toBe(false);
     }
     expect(result.commands.join('\n')).not.toContain('INTERVIEW REQUIRED: Explicit App');
+  });
+
+  it('consumes exact UTM feature definition and every shared profile reference path', () => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [
+      policy('Shared UTM One', 'trust', 'untrust', 'any', {
+        security_profiles: { virus: 'Shared AV' },
+      }),
+      policy('Shared UTM Two', 'trust', 'untrust', 'any', {
+        security_profiles: { virus: 'Shared AV' },
+      }),
+    ];
+    const plan = planJunosIdentifiers(config);
+    let definitionLookup = false;
+    let secondReferenceLookup = false;
+    const identifierPlan = {
+      ...plan,
+      nameForGenerated(path, role) {
+        if (path === 'security_policies[0]' && role === 'security-profile-virus') {
+          definitionLookup = true;
+        }
+        return plan.nameForGenerated(path, role);
+      },
+      nameForReference(path) {
+        if (path === 'security_policies[1].security_profiles.virus') {
+          secondReferenceLookup = true;
+        }
+        return plan.nameForReference(path);
+      },
+    };
+
+    convertToSrxSetCommands(config, {}, null, { identifierPlan });
+
+    expect(definitionLookup).toBe(true);
+    expect(secondReferenceLookup).toBe(true);
   });
 
   it('uses exact generated child lookups in an injected multi-context plan', () => {

@@ -743,13 +743,64 @@ describe('Junos identifier catalog', () => {
     expect(symbols.definitions).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceName: 'PBF-FILTER', role: 'pbf-filter' }),
       expect.objectContaining({ sourceName: 'default', role: 'pbf-default-term' }),
-      expect.objectContaining({ sourceName: 'dscp edge', namespace: 'cos-classifier' }),
+      expect.objectContaining({ sourceName: 'dscp edge', namespace: 'cos-scheduler-map' }),
     ]));
     expect(symbols.references).toContainEqual(expect.objectContaining({
       referencePath: 'pbf_rules[0].next_hop_value#routing-instance',
       sourceName: 'PBF-prefer api',
     }));
     expect(() => planJunosIdentifiers(config)).not.toThrow();
+  });
+
+  it('catalogs classifier-style QoS entries in their emitted scheduler-map namespaces', () => {
+    const config = {
+      qos_config: [
+        { type: 'classifier', name: 'Branch Map', classes: [{ name: 'Voice Class' }] },
+        { type: 'shaping-profile', name: 'Branch@Map', classes: [{ name: 'Voice@Class' }] },
+      ],
+    };
+    const symbols = collectJunosIdentifierSymbols(config);
+    const plan = planJunosIdentifiers(config);
+
+    expect(symbols.definitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        definitionPath: 'qos_config[0].name',
+        namespace: 'cos-scheduler-map',
+      }),
+      expect.objectContaining({
+        definitionPath: 'qos_config[0].classes[0].name',
+        namespace: 'cos-scheduler',
+      }),
+      expect.objectContaining({
+        definitionPath: 'qos_config[0].classes[0].name#forwarding-class',
+        namespace: 'forwarding-class',
+      }),
+    ]));
+    expect(new Set(plan.mapping.entries
+      .filter(entry => entry.namespace === 'cos-scheduler-map')
+      .map(entry => entry.outputName)).size).toBe(2);
+  });
+
+  it('catalogs the generated BGP fallback group in the emitted group namespace', () => {
+    const config = {
+      bgp_config: [
+        { networks: [{ policy: 'EXPORT-FALLBACK' }] },
+        { peer_groups: [{ name: 'BGP@PEERS', neighbors: [] }] },
+      ],
+    };
+    const symbols = collectJunosIdentifierSymbols(config);
+    const plan = planJunosIdentifiers(config);
+
+    expect(symbols.definitions).toContainEqual(expect.objectContaining({
+      definitionPath: 'bgp_config[0]',
+      namespace: 'bgp-group',
+      sourceName: 'BGP-PEERS',
+      generated: true,
+      role: 'default-bgp-group',
+    }));
+    expect(new Set(plan.mapping.entries
+      .filter(entry => entry.namespace === 'bgp-group')
+      .map(entry => entry.outputName)).size).toBe(2);
   });
 
   it('scopes every static NAT rule to the one STATIC-NAT rule set', () => {

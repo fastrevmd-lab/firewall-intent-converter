@@ -266,24 +266,25 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     identifiers,
     identifierPath,
   );
-  convertStaticRoutes(config.static_routes, commands, warnings, summary, interfaceMappings);
-  convertBgpConfig(config.bgp_config, commands, warnings, summary);
-  convertOspfConfig(config.ospf_config, commands, warnings, summary, interfaceMappings);
-  convertOspf3Config(config.ospf3_config, commands, warnings, summary, interfaceMappings);
-  convertEvpnConfig(config.evpn_config, commands, warnings, summary, interfaceMappings);
-  convertVxlanConfig(config.vxlan_config, commands, warnings, summary, interfaceMappings);
+  const routingInstances = new Set();
+  convertStaticRoutes(config.static_routes, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
+  convertBgpConfig(config.bgp_config, commands, warnings, summary, identifiers, identifierPath, routingInstances);
+  convertOspfConfig(config.ospf_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
+  convertOspf3Config(config.ospf3_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
+  convertEvpnConfig(config.evpn_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
+  convertVxlanConfig(config.vxlan_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
   convertHaConfig(config.ha_config, commands, warnings, summary, interfaceMappings);
-  convertScreenConfig(config.screen_config, commands, warnings, summary);
-  convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary, interfaceMappings);
+  convertScreenConfig(config.screen_config, commands, warnings, summary, identifiers, identifierPath);
+  convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
   convertSyslogConfig(config.syslog_config, commands, warnings, summary);
-  convertSnmpConfig(config.snmp_config, commands, warnings, summary);
-  convertAaaConfig(config.aaa_config, commands, warnings, summary);
-  convertDhcpConfig(config.dhcp_config, commands, warnings, summary, interfaceMappings);
-  convertQosConfig(config.qos_config, commands, warnings, summary, interfaceMappings);
-  convertL2Config(config, commands, warnings, summary, interfaceMappings);
-  convertPbfConfig(config.pbf_rules, commands, warnings, summary, interfaceMappings, config.address_objects);
-  convertSslProxyConfig(config, commands, warnings, summary);
-  convertFlowMonitoringConfig(config.flow_monitoring_config, commands, warnings, summary, interfaceMappings);
+  convertSnmpConfig(config.snmp_config, commands, warnings, summary, identifiers, identifierPath);
+  convertAaaConfig(config.aaa_config, commands, warnings, summary, identifiers, identifierPath);
+  convertDhcpConfig(config.dhcp_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
+  convertQosConfig(config.qos_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
+  convertL2Config(config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
+  convertPbfConfig(config.pbf_rules, commands, warnings, summary, interfaceMappings, config.address_objects, identifiers, identifierPath);
+  convertSslProxyConfig(config, commands, warnings, summary, identifiers, identifierPath);
+  convertFlowMonitoringConfig(config.flow_monitoring_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
   convertUserIdentification(config.security_policies, commands, warnings);
 
   // Unsupported feature notices (only if AAA was not auto-converted)
@@ -1097,15 +1098,38 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
 
   const utmTypes = ['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'email-filter',
     'application-control', 'dlp', 'dns-security', 'decryption', 'waf', 'casb', 'voip'];
+  const featureNamespaceFor = (mapped, profileDef) => {
+    if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-virus') return 'utm-anti-virus-profile';
+    if (mapped.srxFeature === 'utm' && mapped.srxType === 'web-filtering') return 'utm-web-filtering-profile';
+    if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-spam') return 'utm-anti-spam-profile';
+    if (mapped.srxFeature === 'utm' && mapped.srxType === 'dns-security'
+        && (profileDef?.blockedDomains || []).length > 0) return 'dns-filtering-rule';
+    if (mapped.srxFeature === 'appfw'
+        && Object.values(profileDef?.categories || {})
+          .some(action => ['block', 'block-all', 'reset'].includes(action))) {
+      return 'application-firewall-rule-set';
+    }
+    return null;
+  };
 
   // Collect unique UTM profile combinations per rule
   const comboMap = new Map(); // serialized combo → { profiles, policyName, rules[] }
+  const featureOwners = new Map();
   for (let policyIndex = 0; policyIndex < policies.length; policyIndex += 1) {
     const policy = policies[policyIndex];
     const sp = policy.security_profiles || {};
     const utmProfiles = {};
     for (const t of utmTypes) {
       if (sp[t]) utmProfiles[t] = sp[t];
+    }
+    for (const [profileType, profileValue] of Object.entries(utmProfiles)) {
+      const mapped = mapProfileToSrx(profileType, profileValue);
+      const profileDef = profileDefs[`${profileType}:${profileValue}`];
+      const namespace = featureNamespaceFor(mapped, profileDef);
+      const featureKey = namespace ? `${namespace}\0${profileValue}` : null;
+      if (featureKey && !featureOwners.has(featureKey)) {
+        featureOwners.set(featureKey, { policyIndex, profileType });
+      }
     }
     if (Object.keys(utmProfiles).length === 0) continue;
 
@@ -1139,16 +1163,20 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
       const mapped = mapProfileToSrx(pType, pValue);
       const defKey = `${pType}:${pValue}`;
       const profileDef = profileDefs[defKey];
-      const emitsDnsRule = mapped.srxType === 'dns-security'
-        && (profileDef?.blockedDomains || []).length > 0;
-      const hasCatalogedProfile = mapped.srxFeature === 'appfw'
-        || (mapped.srxFeature === 'utm'
-          && (mapped.srxType !== 'dns-security' || emitsDnsRule));
-      const profileName = hasCatalogedProfile
-        ? identifiers.nameForReference(
-          identifierPath(`security_policies[${ownerIndex}].security_profiles.${pType}`),
-        )
-        : mapped.srxProfile;
+      const featureNamespace = featureNamespaceFor(mapped, profileDef);
+      let profileName = mapped.srxProfile;
+      if (featureNamespace) {
+        const featureOwner = featureOwners.get(`${featureNamespace}\0${pValue}`);
+        profileName = identifiers.nameForGenerated(
+          identifierPath(`security_policies[${featureOwner.policyIndex}]`),
+          `security-profile-${featureOwner.profileType}`,
+        );
+        for (const policyIndex of combo.policyIndexes) {
+          identifiers.nameForReference(
+            identifierPath(`security_policies[${policyIndex}].security_profiles.${pType}`),
+          );
+        }
+      }
 
       // AppFW: generate actual rule-set if we have category data
       if (mapped.srxFeature === 'appfw') {
@@ -1716,9 +1744,11 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         // Fix 8: SSL Proxy profiles require PKI certificates that can't be auto-generated.
         // Skip the active ssl-proxy-profile reference; emit as comment only.
         if (policy._srx_decrypt && policy.action === 'allow') {
-          const sslProfile = policy._srx_decrypt_profile
-            ? sanitizeJunosName(policy._srx_decrypt_profile)
-            : 'ssl-fwd-proxy';
+          const sslProfile = identifiers.nameForReference(identifierPath(
+            policy._srx_decrypt_profile
+              ? `security_policies[${pIdx}]._srx_decrypt_profile`
+              : `security_policies[${pIdx}]#ssl-proxy-profile`,
+          ));
           commands.push(`# NOTE: SSL proxy skipped — profile "${sslProfile}" requires manual PKI setup before enabling`);
           commands.push(`# set ${policyPath} then permit application-services ssl-proxy profile-name ${sslProfile}`);
         }
@@ -2426,7 +2456,15 @@ function convertNatRules(
   commands.push('');
 }
 
-function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappings = {}) {
+function plannedRoutingInstanceName(sourceName, path, identifiers, routingInstances) {
+  if (sourceName === 'default' || sourceName === 'master' || routingInstances.has(sourceName)) {
+    return identifiers.nameForReference(path);
+  }
+  routingInstances.add(sourceName);
+  return identifiers.nameForDefinition(path);
+}
+
+function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath, routingInstances) {
   if (!routes || routes.length === 0) return;
 
   commands.push('# =============================================');
@@ -2437,9 +2475,28 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
   // (Junos allows only one default route action per destination in the same routing table)
   const routesWithNextHop = new Set();     // key: "vrf|dest" or "|dest"
   const routesWithAction = new Set();      // any action emitted for this dest
+  const routeIdentifierNames = routes.map((route, routeIndex) => ({
+    instanceName: route.vrf
+      ? plannedRoutingInstanceName(
+        route.vrf,
+        identifierPath(`static_routes[${routeIndex}].vrf`),
+        identifiers,
+        routingInstances,
+      )
+      : null,
+    nextTableName: route.next_hop_type === 'next-vr' && route.next_hop
+      ? plannedRoutingInstanceName(
+        route.next_hop,
+        identifierPath(`static_routes[${routeIndex}].next_hop`),
+        identifiers,
+        routingInstances,
+      )
+      : null,
+  }));
 
   // First pass: identify all destinations that have a concrete next-hop
-  for (const route of routes) {
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex];
     if (!route.destination) continue;
     const dest = route.destination.trim();
     const rawNextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
@@ -2451,7 +2508,8 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
     }
   }
 
-  for (const route of routes) {
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex];
     if (!route.destination) continue;
 
     const dest = route.destination.trim();
@@ -2460,27 +2518,28 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
       ? rawNextHop : mapInterfaceName(rawNextHop, interfaceMappings);
     const key = `${route.vrf || ''}|${dest}`;
 
+    const { instanceName, nextTableName } = routeIdentifierNames[routeIndex];
+
     if (route.vrf) {
       // Routing instance
-      const instName = sanitizeJunosName(route.vrf);
       if (route.next_hop_type === 'discard') {
         if (!routesWithAction.has(key)) {
-          commands.push(`set routing-instances ${instName} routing-options static route ${dest} discard`);
+          commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} discard`);
           routesWithAction.add(key);
         }
       } else if (route.next_hop_type === 'next-vr' && nextHop) {
         // Skip next-table if this destination already has a concrete next-hop
         if (!routesWithNextHop.has(key)) {
-          commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+          commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} next-table ${nextTableName}.inet.0`);
           routesWithAction.add(key);
         }
       } else if (nextHop) {
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} next-hop ${nextHop}`);
+        commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} next-hop ${nextHop}`);
         routesWithAction.add(key);
       }
       if (route.metric && route.metric !== 10) {
         const pref = Math.max(1, Math.min(4294967295, route.metric));
-        commands.push(`set routing-instances ${instName} routing-options static route ${dest} preference ${pref}`);
+        commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} preference ${pref}`);
       }
     } else {
       // Global routing-options
@@ -2492,7 +2551,7 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
       } else if (route.next_hop_type === 'next-vr' && nextHop) {
         // Skip next-table if this destination already has a concrete next-hop
         if (!routesWithNextHop.has(key)) {
-          commands.push(`set routing-options static route ${dest} next-table ${nextHop}.inet.0`);
+          commands.push(`set routing-options static route ${dest} next-table ${nextTableName}.inet.0`);
           routesWithAction.add(key);
         }
       } else if (nextHop) {
@@ -2515,17 +2574,42 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
 // BGP Configuration
 // ---------------------------------------------------------------------------
 
-function convertBgpConfig(bgpConfig, commands, warnings, summary) {
+function convertBgpConfig(bgpConfig, commands, warnings, summary, identifiers, identifierPath, routingInstances) {
   if (!bgpConfig || bgpConfig.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# BGP Configuration');
   commands.push('# =============================================');
 
-  for (const bgp of bgpConfig) {
+  const defaultBgpGroups = new Map();
+  for (let bgpIndex = 0; bgpIndex < bgpConfig.length; bgpIndex += 1) {
+    const bgp = bgpConfig[bgpIndex];
+    const instanceName = bgp.instance
+      ? plannedRoutingInstanceName(
+        bgp.instance,
+        identifierPath(`bgp_config[${bgpIndex}].instance`),
+        identifiers,
+        routingInstances,
+      )
+      : null;
     const prefix = bgp.instance
-      ? `set routing-instances ${sanitizeJunosName(bgp.instance)} `
+      ? `set routing-instances ${instanceName} `
       : 'set ';
+    const defaultGroupKey = bgp.instance || 'default';
+    const needsDefaultGroup = (bgp.networks || []).some(network => network.policy)
+      && !bgp.peer_groups?.[0]?.name;
+    let defaultGroupName = null;
+    if (needsDefaultGroup) {
+      if (!defaultBgpGroups.has(defaultGroupKey)) {
+        defaultBgpGroups.set(defaultGroupKey, identifiers.nameForGenerated(
+          identifierPath(`bgp_config[${bgpIndex}]`),
+          'default-bgp-group',
+        ));
+      }
+      defaultGroupName = identifiers.nameForReference(
+        identifierPath(`bgp_config[${bgpIndex}]#default-bgp-group`),
+      );
+    }
 
     // Autonomous system and router-id
     if (bgp.local_as) {
@@ -2536,11 +2620,15 @@ function convertBgpConfig(bgpConfig, commands, warnings, summary) {
     }
 
     // Peer groups and neighbors
-    for (const group of bgp.peer_groups || []) {
-      const gName = sanitizeJunosName(group.name);
+    for (let groupIndex = 0; groupIndex < (bgp.peer_groups || []).length; groupIndex += 1) {
+      const group = bgp.peer_groups[groupIndex];
+      const gName = identifiers.nameForDefinition(
+        identifierPath(`bgp_config[${bgpIndex}].peer_groups[${groupIndex}].name`),
+      );
       commands.push(`${prefix}protocols bgp group ${gName} type ${group.type || 'external'}`);
 
-      for (const neighbor of group.neighbors || []) {
+      for (let neighborIndex = 0; neighborIndex < (group.neighbors || []).length; neighborIndex += 1) {
+        const neighbor = group.neighbors[neighborIndex];
         const nBase = `${prefix}protocols bgp group ${gName} neighbor ${neighbor.address}`;
         if (neighbor.peer_as) {
           commands.push(`${nBase} peer-as ${neighbor.peer_as}`);
@@ -2552,10 +2640,16 @@ function convertBgpConfig(bgpConfig, commands, warnings, summary) {
           commands.push(`${nBase} local-address ${neighbor.local_address}`);
         }
         if (neighbor.import_policy) {
-          commands.push(`${nBase} import ${neighbor.import_policy}`);
+          const importPolicy = identifiers.nameForReference(identifierPath(
+            `bgp_config[${bgpIndex}].peer_groups[${groupIndex}].neighbors[${neighborIndex}].import_policy`,
+          ));
+          commands.push(`${nBase} import ${importPolicy}`);
         }
         if (neighbor.export_policy) {
-          commands.push(`${nBase} export ${neighbor.export_policy}`);
+          const exportPolicy = identifiers.nameForReference(identifierPath(
+            `bgp_config[${bgpIndex}].peer_groups[${groupIndex}].neighbors[${neighborIndex}].export_policy`,
+          ));
+          commands.push(`${nBase} export ${exportPolicy}`);
         }
         if (neighbor.authentication_key) {
           commands.push(`${nBase} authentication-key ${setQuoted(neighbor.authentication_key, 'bgp_config.neighbors.authentication_key')}`);
@@ -2575,17 +2669,28 @@ function convertBgpConfig(bgpConfig, commands, warnings, summary) {
 
     // Network advertisements via policy-options
     if (bgp.networks && bgp.networks.length > 0) {
-      for (const net of bgp.networks) {
+      for (let networkIndex = 0; networkIndex < bgp.networks.length; networkIndex += 1) {
+        const net = bgp.networks[networkIndex];
         if (net.policy) {
           // Reference existing policy
-          commands.push(`${prefix}protocols bgp group ${bgp.peer_groups?.[0]?.name ? sanitizeJunosName(bgp.peer_groups[0].name) : 'BGP-PEERS'} export ${net.policy}`);
+          const groupName = bgp.peer_groups?.[0]?.name
+            ? identifiers.nameForDefinition(identifierPath(`bgp_config[${bgpIndex}].peer_groups[0].name`))
+            : defaultGroupName;
+          const exportPolicy = identifiers.nameForReference(
+            identifierPath(`bgp_config[${bgpIndex}].networks[${networkIndex}].policy`),
+          );
+          commands.push(`${prefix}protocols bgp group ${groupName} export ${exportPolicy}`);
         }
       }
     }
 
     // Redistribution via policy-options
-    for (const redist of bgp.redistribute || []) {
-      const stmtName = `BGP-REDIST-${redist.protocol.toUpperCase()}`;
+    for (let redistIndex = 0; redistIndex < (bgp.redistribute || []).length; redistIndex += 1) {
+      const redist = bgp.redistribute[redistIndex];
+      const stmtName = identifiers.nameForGenerated(
+        identifierPath(`bgp_config[${bgpIndex}].redistribute[${redistIndex}]`),
+        'bgp-redistribution-policy',
+      );
       commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 from protocol ${redist.protocol}`);
       commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 then accept`);
       if (redist.policy) {
@@ -2601,16 +2706,25 @@ function convertBgpConfig(bgpConfig, commands, warnings, summary) {
 // OSPF Configuration
 // ---------------------------------------------------------------------------
 
-function convertOspfConfig(ospfConfig, commands, warnings, summary, interfaceMappings = {}) {
+function convertOspfConfig(ospfConfig, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath, routingInstances) {
   if (!ospfConfig || ospfConfig.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# OSPF Configuration');
   commands.push('# =============================================');
 
-  for (const ospf of ospfConfig) {
+  for (let ospfIndex = 0; ospfIndex < ospfConfig.length; ospfIndex += 1) {
+    const ospf = ospfConfig[ospfIndex];
+    const instanceName = ospf.instance
+      ? plannedRoutingInstanceName(
+        ospf.instance,
+        identifierPath(`ospf_config[${ospfIndex}].instance`),
+        identifiers,
+        routingInstances,
+      )
+      : null;
     const prefix = ospf.instance
-      ? `set routing-instances ${sanitizeJunosName(ospf.instance)} `
+      ? `set routing-instances ${instanceName} `
       : 'set ';
 
     // Router-id (may overlap with BGP — SRX uses routing-options router-id for both)
@@ -2701,8 +2815,12 @@ function convertOspfConfig(ospfConfig, commands, warnings, summary, interfaceMap
     }
 
     // Redistribution via export policy
-    for (const redist of ospf.redistribute || []) {
-      const stmtName = `OSPF-REDIST-${redist.protocol.toUpperCase()}`;
+    for (let redistIndex = 0; redistIndex < (ospf.redistribute || []).length; redistIndex += 1) {
+      const redist = ospf.redistribute[redistIndex];
+      const stmtName = identifiers.nameForGenerated(
+        identifierPath(`ospf_config[${ospfIndex}].redistribute[${redistIndex}]`),
+        'ospf-redistribution-policy',
+      );
       commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 from protocol ${redist.protocol}`);
       if (redist.metric_type) {
         commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 then external type ${redist.metric_type}`);
@@ -2719,16 +2837,25 @@ function convertOspfConfig(ospfConfig, commands, warnings, summary, interfaceMap
 // OSPFv3 Configuration
 // ---------------------------------------------------------------------------
 
-function convertOspf3Config(ospf3Config, commands, warnings, summary, interfaceMappings = {}) {
+function convertOspf3Config(ospf3Config, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath, routingInstances) {
   if (!ospf3Config || ospf3Config.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# OSPFv3 (IPv6 OSPF) Configuration');
   commands.push('# =============================================');
 
-  for (const ospf of ospf3Config) {
+  for (let ospfIndex = 0; ospfIndex < ospf3Config.length; ospfIndex += 1) {
+    const ospf = ospf3Config[ospfIndex];
+    const instanceName = ospf.instance
+      ? plannedRoutingInstanceName(
+        ospf.instance,
+        identifierPath(`ospf3_config[${ospfIndex}].instance`),
+        identifiers,
+        routingInstances,
+      )
+      : null;
     const prefix = ospf.instance
-      ? `set routing-instances ${sanitizeJunosName(ospf.instance)} `
+      ? `set routing-instances ${instanceName} `
       : 'set ';
 
     if (ospf.router_id) {
@@ -2805,8 +2932,12 @@ function convertOspf3Config(ospf3Config, commands, warnings, summary, interfaceM
       summary.ospf3_areas_converted = (summary.ospf3_areas_converted || 0) + 1;
     }
 
-    for (const redist of ospf.redistribute || []) {
-      const stmtName = `OSPF3-REDIST-${redist.protocol.toUpperCase()}`;
+    for (let redistIndex = 0; redistIndex < (ospf.redistribute || []).length; redistIndex += 1) {
+      const redist = ospf.redistribute[redistIndex];
+      const stmtName = identifiers.nameForGenerated(
+        identifierPath(`ospf3_config[${ospfIndex}].redistribute[${redistIndex}]`),
+        'ospf3-redistribution-policy',
+      );
       commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 from protocol ${redist.protocol}`);
       if (redist.metric_type) {
         commands.push(`${prefix}policy-options policy-statement ${stmtName} term 1 then external type ${redist.metric_type}`);
@@ -2823,16 +2954,25 @@ function convertOspf3Config(ospf3Config, commands, warnings, summary, interfaceM
 // EVPN Configuration
 // ---------------------------------------------------------------------------
 
-function convertEvpnConfig(evpnConfig, commands, warnings, summary, interfaceMappings = {}) {
+function convertEvpnConfig(evpnConfig, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath, routingInstances) {
   if (!evpnConfig || evpnConfig.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# EVPN / VxLAN Fabric Configuration');
   commands.push('# =============================================');
 
-  for (const evpn of evpnConfig) {
+  for (let evpnIndex = 0; evpnIndex < evpnConfig.length; evpnIndex += 1) {
+    const evpn = evpnConfig[evpnIndex];
+    const instanceName = evpn.instance
+      ? plannedRoutingInstanceName(
+        evpn.instance,
+        identifierPath(`evpn_config[${evpnIndex}].instance`),
+        identifiers,
+        routingInstances,
+      )
+      : null;
     const prefix = evpn.instance
-      ? `set routing-instances ${sanitizeJunosName(evpn.instance)} `
+      ? `set routing-instances ${instanceName} `
       : 'set ';
 
     // Instance type for routing-instances (mac-vrf, virtual-switch)
@@ -2880,8 +3020,11 @@ function convertEvpnConfig(evpnConfig, commands, warnings, summary, interfaceMap
     }
 
     // VLANs with VxLAN VNI mappings
-    for (const vlan of evpn.vlans || []) {
-      const vlanName = sanitizeJunosName(vlan.name);
+    for (let vlanIndex = 0; vlanIndex < (evpn.vlans || []).length; vlanIndex += 1) {
+      const vlan = evpn.vlans[vlanIndex];
+      const vlanName = identifiers.nameForDefinition(
+        identifierPath(`evpn_config[${evpnIndex}].vlans[${vlanIndex}].name`),
+      );
       commands.push(`set vlans ${vlanName} vlan-id ${vlan.vlan_id}`);
       commands.push(`set vlans ${vlanName} vxlan vni ${vlan.vni}`);
       if (vlan.ingress_node_replication) {
@@ -2900,7 +3043,7 @@ function convertEvpnConfig(evpnConfig, commands, warnings, summary, interfaceMap
 // VxLAN Configuration (standalone, non-EVPN)
 // ---------------------------------------------------------------------------
 
-function convertVxlanConfig(vxlanConfig, commands, warnings, summary, interfaceMappings = {}) {
+function convertVxlanConfig(vxlanConfig, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath, routingInstances) {
   if (!vxlanConfig || vxlanConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -2908,9 +3051,18 @@ function convertVxlanConfig(vxlanConfig, commands, warnings, summary, interfaceM
   commands.push('# =============================================');
   commands.push('# Note: SRX typically uses EVPN for VxLAN. These are standalone VxLAN tunnels.');
 
-  for (const tunnel of vxlanConfig) {
+  for (let tunnelIndex = 0; tunnelIndex < vxlanConfig.length; tunnelIndex += 1) {
+    const tunnel = vxlanConfig[tunnelIndex];
+    const instanceName = tunnel.instance
+      ? plannedRoutingInstanceName(
+        tunnel.instance,
+        identifierPath(`vxlan_config[${tunnelIndex}].instance`),
+        identifiers,
+        routingInstances,
+      )
+      : null;
     const prefix = tunnel.instance
-      ? `set routing-instances ${sanitizeJunosName(tunnel.instance)} `
+      ? `set routing-instances ${instanceName} `
       : 'set ';
 
     // VTEP source interface
@@ -2923,17 +3075,24 @@ function convertVxlanConfig(vxlanConfig, commands, warnings, summary, interfaceM
     }
 
     // VNI entries
-    for (const vni of tunnel.vnis || []) {
+    for (let vniIndex = 0; vniIndex < (tunnel.vnis || []).length; vniIndex += 1) {
+      const vni = tunnel.vnis[vniIndex];
       const vniId = vni.vni;
+      const vlanName = vni.vlan_id
+        ? identifiers.nameForGenerated(
+          identifierPath(`vxlan_config[${tunnelIndex}].vnis[${vniIndex}]`),
+          'vxlan-vlan',
+        )
+        : null;
       commands.push(`# VxLAN VNI ${vniId}${tunnel.name ? ` (source: ${tunnel.name})` : ''}`);
 
       if (vni.vlan_id) {
-        commands.push(`set vlans VXLAN-${vniId} vlan-id ${vni.vlan_id}`);
-        commands.push(`set vlans VXLAN-${vniId} vxlan vni ${vniId}`);
+        commands.push(`set vlans ${vlanName} vlan-id ${vni.vlan_id}`);
+        commands.push(`set vlans ${vlanName} vxlan vni ${vniId}`);
       }
 
       if (vni.ingress_replication) {
-        commands.push(`set vlans VXLAN-${vniId} vxlan ingress-node-replication`);
+        if (vlanName) commands.push(`set vlans ${vlanName} vxlan ingress-node-replication`);
       }
 
       // Static remote VTEPs (flood list)
@@ -3168,7 +3327,7 @@ function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappi
 /**
  * Converts screen/DDoS protection configuration to SRX screen ids-option set commands.
  */
-function convertScreenConfig(screens, commands, warnings, summary) {
+function convertScreenConfig(screens, commands, warnings, summary, identifiers, identifierPath) {
   if (!screens || screens.length === 0) return;
 
   // Junos screen value limits (parameter → max allowed value)
@@ -3192,8 +3351,12 @@ function convertScreenConfig(screens, commands, warnings, summary) {
   commands.push('# Security Screen (IDS Options)');
   commands.push('# =============================================');
 
-  for (const screen of screens) {
-    const name = sanitizeJunosName(screen.name || 'default-screen');
+  for (let screenIndex = 0; screenIndex < screens.length; screenIndex += 1) {
+    const screen = screens[screenIndex];
+    const ownerPath = identifierPath(`screen_config[${screenIndex}]`);
+    const name = screen.name
+      ? identifiers.nameForDefinition(`${ownerPath}.name`)
+      : identifiers.nameForGenerated(ownerPath, 'default-screen-profile');
     const prefix = `set security screen ids-option ${name}`;
 
     // ICMP protections
@@ -3240,7 +3403,8 @@ function convertScreenConfig(screens, commands, warnings, summary) {
 
     // Apply screen to zone if known
     if (screen.zone) {
-      commands.push(`set security zones security-zone ${sanitizeJunosName(screen.zone)} screen ${name}`);
+      const zoneName = identifiers.nameForReference(`${ownerPath}.zone`);
+      commands.push(`set security zones security-zone ${zoneName} screen ${name}`);
     }
 
     summary.screens_converted = (summary.screens_converted || 0) + 1;
@@ -3289,7 +3453,7 @@ function mapAuthAlgorithm(algo, context = 'ipsec') {
   return map[algo.toLowerCase()] || algo;
 }
 
-function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappings = {}) {
+function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath) {
   if (!tunnels || tunnels.length === 0) return;
 
   commands.push('# =============================================');
@@ -3316,8 +3480,12 @@ function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappin
     }
   }
 
-  for (const vpn of tunnels) {
-    const vpnName = sanitizeJunosName(vpn.name || 'vpn-1');
+  for (let vpnIndex = 0; vpnIndex < tunnels.length; vpnIndex += 1) {
+    const vpn = tunnels[vpnIndex];
+    const ownerPath = identifierPath(`vpn_tunnels[${vpnIndex}]`);
+    const vpnName = vpn.name
+      ? identifiers.nameForDefinition(`${ownerPath}.name`)
+      : identifiers.nameForGenerated(ownerPath, 'ipsec-vpn');
 
     // Bug 7 fix: Determine the external interface for IKE gateway.
     // If the source vendor interface can't be mapped to a valid SRX interface,
@@ -3358,35 +3526,41 @@ function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappin
     }
 
     // IKE Proposal
-    if (vpn.ike_proposal && !emittedProposals.has(vpn.ike_proposal.name)) {
-      const propName = sanitizeJunosName(vpn.ike_proposal.name || `ike-prop-${vpnName}`);
-      emittedProposals.add(vpn.ike_proposal.name);
-      commands.push(`set security ike proposal ${propName} authentication-method ${vpn.ike_proposal.auth_method || 'pre-shared-keys'}`);
-      commands.push(`set security ike proposal ${propName} dh-group ${vpn.ike_proposal.dh_group || 'group14'}`);
-      commands.push(`set security ike proposal ${propName} encryption-algorithm ${vpn.ike_proposal.encryption || 'aes-256-cbc'}`);
-      commands.push(`set security ike proposal ${propName} authentication-algorithm ${mapAuthAlgorithm(vpn.ike_proposal.authentication || 'sha-256', 'ike')}`);
-      if (vpn.ike_proposal.lifetime) {
-        commands.push(`set security ike proposal ${propName} lifetime-seconds ${vpn.ike_proposal.lifetime}`);
+    const ikeProposal = vpn.ike_proposal || {};
+    const propName = ikeProposal.name
+      ? identifiers.nameForDefinition(`${ownerPath}.ike_proposal.name`)
+      : identifiers.nameForGenerated(ownerPath, 'ike-proposal');
+    if (!emittedProposals.has(`ike:${propName}`)) {
+      emittedProposals.add(`ike:${propName}`);
+      commands.push(`set security ike proposal ${propName} authentication-method ${ikeProposal.auth_method || 'pre-shared-keys'}`);
+      commands.push(`set security ike proposal ${propName} dh-group ${ikeProposal.dh_group || 'group14'}`);
+      commands.push(`set security ike proposal ${propName} encryption-algorithm ${ikeProposal.encryption || 'aes-256-cbc'}`);
+      commands.push(`set security ike proposal ${propName} authentication-algorithm ${mapAuthAlgorithm(ikeProposal.authentication || 'sha-256', 'ike')}`);
+      if (ikeProposal.lifetime) {
+        commands.push(`set security ike proposal ${propName} lifetime-seconds ${ikeProposal.lifetime}`);
       }
     }
 
     // IKE Policy
-    const polName = sanitizeJunosName(`ike-pol-${vpnName}`);
+    const polName = identifiers.nameForGenerated(ownerPath, 'ike-policy');
     if (!emittedPolicies.has(polName)) {
       emittedPolicies.add(polName);
-      const propRef = sanitizeJunosName(vpn.ike_proposal?.name || `ike-prop-${vpnName}`);
+      const propRef = identifiers.nameForReference(`${ownerPath}.ike_proposal.name`);
       commands.push(`set security ike policy ${polName} proposals ${propRef}`);
       commands.push(`set security ike policy ${polName} pre-shared-key ascii-text "CHANGE-ME"`);
     }
 
     // IKE Gateway
-    const gwName = sanitizeJunosName(vpn.ike_gateway?.name || `gw-${vpnName}`);
+    const gwName = vpn.ike_gateway?.name
+      ? identifiers.nameForDefinition(`${ownerPath}.ike_gateway.name`)
+      : identifiers.nameForGenerated(ownerPath, 'ike-gateway');
     if (!emittedGateways.has(gwName)) {
       emittedGateways.add(gwName);
       if (vpn.ike_gateway?.address) {
         commands.push(`set security ike gateway ${gwName} address ${vpn.ike_gateway.address}`);
       }
-      commands.push(`set security ike gateway ${gwName} ike-policy ${polName}`);
+      const policyRef = identifiers.nameForReference(`${ownerPath}.name#ike-policy`);
+      commands.push(`set security ike gateway ${gwName} ike-policy ${policyRef}`);
       // Bug 7 fix: Use resolved external interface instead of raw vendor interface name
       commands.push(`set security ike gateway ${gwName} external-interface ${resolvedExtIf}`);
       if (vpn.ike_gateway?.ike_version === 'v2') {
@@ -3395,28 +3569,33 @@ function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappin
     }
 
     // IPsec Proposal
-    if (vpn.ipsec_proposal && !emittedProposals.has('ipsec-' + vpn.ipsec_proposal.name)) {
-      const ipropName = sanitizeJunosName(vpn.ipsec_proposal.name || `ipsec-prop-${vpnName}`);
-      emittedProposals.add('ipsec-' + vpn.ipsec_proposal.name);
-      commands.push(`set security ipsec proposal ${ipropName} protocol ${vpn.ipsec_proposal.protocol || 'esp'}`);
-      commands.push(`set security ipsec proposal ${ipropName} encryption-algorithm ${vpn.ipsec_proposal.encryption || 'aes-256-cbc'}`);
-      commands.push(`set security ipsec proposal ${ipropName} authentication-algorithm ${mapAuthAlgorithm(vpn.ipsec_proposal.authentication || 'hmac-sha-256-128')}`);
-      if (vpn.ipsec_proposal.lifetime) {
-        commands.push(`set security ipsec proposal ${ipropName} lifetime-seconds ${vpn.ipsec_proposal.lifetime}`);
+    const ipsecProposal = vpn.ipsec_proposal || {};
+    const ipropName = ipsecProposal.name
+      ? identifiers.nameForDefinition(`${ownerPath}.ipsec_proposal.name`)
+      : identifiers.nameForGenerated(ownerPath, 'ipsec-proposal');
+    if (!emittedProposals.has(`ipsec:${ipropName}`)) {
+      emittedProposals.add(`ipsec:${ipropName}`);
+      commands.push(`set security ipsec proposal ${ipropName} protocol ${ipsecProposal.protocol || 'esp'}`);
+      commands.push(`set security ipsec proposal ${ipropName} encryption-algorithm ${ipsecProposal.encryption || 'aes-256-cbc'}`);
+      commands.push(`set security ipsec proposal ${ipropName} authentication-algorithm ${mapAuthAlgorithm(ipsecProposal.authentication || 'hmac-sha-256-128')}`);
+      if (ipsecProposal.lifetime) {
+        commands.push(`set security ipsec proposal ${ipropName} lifetime-seconds ${ipsecProposal.lifetime}`);
       }
     }
 
     // IPsec Policy
-    const ipsecPolName = sanitizeJunosName(`ipsec-pol-${vpnName}`);
-    const ipropRef = sanitizeJunosName(vpn.ipsec_proposal?.name || `ipsec-prop-${vpnName}`);
+    const ipsecPolName = identifiers.nameForGenerated(ownerPath, 'ipsec-policy');
+    const ipropRef = identifiers.nameForReference(`${ownerPath}.ipsec_proposal.name`);
     commands.push(`set security ipsec policy ${ipsecPolName} proposals ${ipropRef}`);
     if (vpn.ipsec_proposal?.pfs_group) {
       commands.push(`set security ipsec policy ${ipsecPolName} perfect-forward-secrecy keys ${vpn.ipsec_proposal.pfs_group}`);
     }
 
     // IPsec VPN
-    commands.push(`set security ipsec vpn ${vpnName} ike gateway ${gwName}`);
-    commands.push(`set security ipsec vpn ${vpnName} ike ipsec-policy ${ipsecPolName}`);
+    const gatewayRef = identifiers.nameForReference(`${ownerPath}.ike_gateway.name`);
+    const ipsecPolicyRef = identifiers.nameForReference(`${ownerPath}.name#ipsec-policy`);
+    commands.push(`set security ipsec vpn ${vpnName} ike gateway ${gatewayRef}`);
+    commands.push(`set security ipsec vpn ${vpnName} ike ipsec-policy ${ipsecPolicyRef}`);
     if (vpn.tunnel_interface) {
       const mappedTunnel = mapInterfaceName(vpn.tunnel_interface, interfaceMappings);
       const bindIf = mappedTunnel.startsWith('st0') ? mappedTunnel : 'st0.0';
@@ -3490,7 +3669,7 @@ function convertSyslogConfig(syslogConfig, commands, warnings, summary) {
 // AAA Configuration Converter
 // ---------------------------------------------------------------------------
 
-function convertAaaConfig(aaaConfig, commands, warnings, summary) {
+function convertAaaConfig(aaaConfig, commands, warnings, summary, identifiers, identifierPath) {
   if (!aaaConfig || aaaConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -3501,7 +3680,8 @@ function convertAaaConfig(aaaConfig, commands, warnings, summary) {
   let tacplusCount = 0;
   let profileCount = 0;
 
-  for (const entry of aaaConfig) {
+  for (let entryIndex = 0; entryIndex < aaaConfig.length; entryIndex += 1) {
+    const entry = aaaConfig[entryIndex];
     if (entry.type === 'radius') {
       if (!entry.server) continue;
       commands.push(`set system radius-server ${entry.server} port ${entry.port || 1812}`);
@@ -3549,7 +3729,9 @@ function convertAaaConfig(aaaConfig, commands, warnings, summary) {
     }
 
     if (entry.type === 'profile') {
-      const profileName = sanitizeJunosName(entry.name);
+      const profileName = identifiers.nameForDefinition(
+        identifierPath(`aaa_config[${entryIndex}].name`),
+      );
       if (entry.authentication_order && entry.authentication_order.length > 0) {
         for (const method of entry.authentication_order) {
           const normalized = method.toLowerCase().includes('tacacs') ? 'tacplus' :
@@ -3588,7 +3770,7 @@ function convertAaaConfig(aaaConfig, commands, warnings, summary) {
 // SNMP Configuration Converter
 // ---------------------------------------------------------------------------
 
-function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
+function convertSnmpConfig(snmpConfig, commands, warnings, summary, identifiers, identifierPath) {
   if (!snmpConfig || snmpConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -3608,22 +3790,26 @@ function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
     commands.push(`set snmp location ${setQuoted(locationEntry.location, 'snmp_config.location')}`);
   }
 
-  for (const entry of snmpConfig) {
+  for (let entryIndex = 0; entryIndex < snmpConfig.length; entryIndex += 1) {
+    const entry = snmpConfig[entryIndex];
+    const plannedName = ['community', 'trap-group', 'v3-user'].includes(entry.type)
+      ? identifiers.nameForDefinition(identifierPath(`snmp_config[${entryIndex}].name`))
+      : null;
     if (entry.type === 'community') {
       const auth = entry.authorization === 'read-write' ? 'read-write' : 'read-only';
-      commands.push(`set snmp community ${sanitizeJunosName(entry.name)} authorization ${auth}`);
+      commands.push(`set snmp community ${plannedName} authorization ${auth}`);
 
       // Restrict to specific clients if configured
       if (entry.clients && entry.clients.length > 0) {
         for (const client of entry.clients) {
-          commands.push(`set snmp community ${sanitizeJunosName(entry.name)} clients ${client}`);
+          commands.push(`set snmp community ${plannedName} clients ${client}`);
         }
       }
       communityCount++;
     }
 
     if (entry.type === 'trap-group') {
-      const groupName = sanitizeJunosName(entry.name);
+      const groupName = plannedName;
       if (entry.version) {
         commands.push(`set snmp trap-group ${groupName} version ${entry.version}`);
       }
@@ -3639,7 +3825,7 @@ function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
     if (entry.type === 'v3-user') {
       const VALID_AUTH = ['md5', 'sha'];
       const VALID_PRIV = ['des', 'aes128'];
-      const userName = sanitizeJunosName(entry.name);
+      const userName = plannedName;
       commands.push(`set snmp v3 usm local-engine user ${userName}`);
       if (entry.auth_protocol && entry.auth_protocol !== 'none' && VALID_AUTH.includes(entry.auth_protocol)) {
         commands.push(`set snmp v3 usm local-engine user ${userName} authentication-${entry.auth_protocol}`);
@@ -3661,14 +3847,15 @@ function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
 // DHCP Configuration Converter
 // ---------------------------------------------------------------------------
 
-function convertDhcpConfig(dhcpConfig, commands, warnings, summary, interfaceMappings = {}) {
+function convertDhcpConfig(dhcpConfig, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath) {
   if (!dhcpConfig || dhcpConfig.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# DHCP Configuration');
   commands.push('# =============================================');
 
-  for (const cfg of dhcpConfig) {
+  for (let configIndex = 0; configIndex < dhcpConfig.length; configIndex += 1) {
+    const cfg = dhcpConfig[configIndex];
     if (cfg.type === 'relay') {
       // DHCP Relay: set forwarding-options helpers bootp interface <if> server <ip>
       const iface = mapInterfaceName(cfg.interface || 'ge-0/0/0.0', interfaceMappings);
@@ -3679,7 +3866,10 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary, interfaceMap
       summary.dhcp_configs_converted = (summary.dhcp_configs_converted || 0) + 1;
     } else if (cfg.type === 'server' || cfg.type === 'pool') {
       // DHCP Server pool
-      const poolName = sanitizeJunosName(cfg.name || cfg.interface || 'dhcp-pool');
+      const ownerPath = identifierPath(`dhcp_config[${configIndex}]`);
+      const poolName = cfg.name
+        ? identifiers.nameForDefinition(`${ownerPath}.name`)
+        : identifiers.nameForGenerated(ownerPath, 'dhcp-pool');
 
       // Fix 1: DHCP pool requires a network statement — skip pool entirely if missing
       const dhcpNetwork = cfg.network || cfg.subnet;
@@ -3695,19 +3885,34 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary, interfaceMap
       commands.push(`set access address-assignment pool ${poolName} family inet network ${dhcpNetwork}`);
 
       if (cfg.pools) {
-        for (let i = 0; i < cfg.pools.length; i++) {
-          const pool = cfg.pools[i];
+        const emittedRanges = cfg.pools
+          .map((pool, rangeIndex) => ({ pool, rangeIndex }))
+          .filter(({ pool }) => (
+            typeof pool === 'string'
+            && pool.split('-').length === 2
+            && pool.split('-').every(part => part.trim().length > 0)
+          ))
+          .sort((left, right) => String(left.pool).localeCompare(String(right.pool)));
+        for (const { pool, rangeIndex } of emittedRanges) {
           if (pool.includes('-')) {
             const [low, high] = pool.split('-');
-            commands.push(`set access address-assignment pool ${poolName} family inet range range${i + 1} low ${low}`);
-            commands.push(`set access address-assignment pool ${poolName} family inet range range${i + 1} high ${high}`);
+            const rangeName = identifiers.nameForGenerated(
+              identifierPath(`dhcp_config[${configIndex}].pools[${rangeIndex}]`),
+              'dhcp-pool-range',
+            );
+            commands.push(`set access address-assignment pool ${poolName} family inet range ${rangeName} low ${low}`);
+            commands.push(`set access address-assignment pool ${poolName} family inet range ${rangeName} high ${high}`);
           }
         }
       }
 
       if (cfg.ranges) {
-        for (const range of cfg.ranges) {
-          const rName = sanitizeJunosName(range.name || 'range1');
+        for (let rangeIndex = 0; rangeIndex < cfg.ranges.length; rangeIndex += 1) {
+          const range = cfg.ranges[rangeIndex];
+          const rangePath = identifierPath(`dhcp_config[${configIndex}].ranges[${rangeIndex}]`);
+          const rName = range.name
+            ? identifiers.nameForDefinition(`${rangePath}.name`)
+            : identifiers.nameForGenerated(rangePath, 'dhcp-named-range');
           if (range.low) commands.push(`set access address-assignment pool ${poolName} family inet range ${rName} low ${range.low}`);
           if (range.high) commands.push(`set access address-assignment pool ${poolName} family inet range ${rName} high ${range.high}`);
         }
@@ -3746,17 +3951,19 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary, interfaceMap
 // QoS / CoS Configuration Converter
 // ---------------------------------------------------------------------------
 
-function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappings = {}) {
+function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath) {
   if (!qosConfig || qosConfig.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# QoS / Class-of-Service Configuration');
   commands.push('# =============================================');
 
-  for (const qos of qosConfig) {
+  for (let qosIndex = 0; qosIndex < qosConfig.length; qosIndex += 1) {
+    const qos = qosConfig[qosIndex];
+    const qosPath = identifierPath(`qos_config[${qosIndex}]`);
     if (qos.type === 'scheduler') {
       // SRX CoS scheduler
-      const name = sanitizeJunosName(qos.name);
+      const name = identifiers.nameForDefinition(`${qosPath}.name`);
       if (qos.transmit_rate) commands.push(`set class-of-service schedulers ${name} transmit-rate ${qos.transmit_rate}`);
       if (qos.buffer_size) commands.push(`set class-of-service schedulers ${name} buffer-size ${qos.buffer_size}`);
       if (qos.priority) commands.push(`set class-of-service schedulers ${name} priority ${qos.priority}`);
@@ -3764,17 +3971,27 @@ function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappi
     } else if (qos.type === 'interface-cos') {
       // Interface CoS binding
       const ifName = mapInterfaceName(qos.interface || 'ge-0/0/0', interfaceMappings);
-      if (qos.scheduler_map) commands.push(`set class-of-service interfaces ${ifName} scheduler-map ${sanitizeJunosName(qos.scheduler_map)}`);
+      if (qos.scheduler_map) {
+        const schedulerMap = identifiers.nameForReference(`${qosPath}.scheduler_map`);
+        commands.push(`set class-of-service interfaces ${ifName} scheduler-map ${schedulerMap}`);
+      }
       if (qos.shaping_rate) commands.push(`set class-of-service interfaces ${ifName} shaping-rate ${qos.shaping_rate}`);
       summary.qos_configs_converted = (summary.qos_configs_converted || 0) + 1;
     } else if (qos.type === 'shaping-profile' || qos.type === 'policy-map') {
       // Generic QoS from FortiGate/Cisco — map to CoS scheduler-map
-      const name = sanitizeJunosName(qos.name);
+      const name = identifiers.nameForDefinition(`${qosPath}.name`);
       const classes = qos.classes || [];
       if (classes.length > 0) {
         commands.push(`set class-of-service scheduler-maps ${name}`);
-        for (const cls of classes) {
-          const clsName = sanitizeJunosName(cls.name || 'default');
+        for (let classIndex = 0; classIndex < classes.length; classIndex += 1) {
+          const cls = classes[classIndex];
+          const classPath = `${qosPath}.classes[${classIndex}]`;
+          const clsName = cls.name
+            ? identifiers.nameForDefinition(`${classPath}.name`)
+            : identifiers.nameForGenerated(classPath, 'qos-default-scheduler');
+          const forwardingClass = cls.name
+            ? identifiers.nameForDefinition(`${classPath}.name#forwarding-class`)
+            : identifiers.nameForGenerated(classPath, 'qos-default-forwarding-class');
           if (cls.guaranteed_bandwidth) {
             commands.push(`set class-of-service schedulers ${clsName} transmit-rate percent ${cls.guaranteed_bandwidth}`);
           }
@@ -3787,7 +4004,7 @@ function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappi
           if (cls.police_rate) {
             commands.push(`set class-of-service schedulers ${clsName} transmit-rate ${cls.police_rate}`);
           }
-          commands.push(`set class-of-service scheduler-maps ${name} forwarding-class ${clsName} scheduler ${clsName}`);
+          commands.push(`set class-of-service scheduler-maps ${name} forwarding-class ${forwardingClass} scheduler ${clsName}`);
         }
       }
       if (qos.interface) {
@@ -3797,14 +4014,21 @@ function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappi
       summary.qos_configs_converted = (summary.qos_configs_converted || 0) + 1;
     } else {
       // Max bandwidth style (PAN-OS)
-      const name = sanitizeJunosName(qos.name);
+      const name = identifiers.nameForDefinition(`${qosPath}.name`);
       if (qos.max_bandwidth) {
         commands.push(`# QoS profile "${qos.name}" — max-bandwidth: ${qos.max_bandwidth}`);
         commands.push(`set class-of-service scheduler-maps ${name}`);
       }
       const classes = qos.classes || [];
-      for (const cls of classes) {
-        const clsName = sanitizeJunosName(cls.name || 'default');
+      for (let classIndex = 0; classIndex < classes.length; classIndex += 1) {
+        const cls = classes[classIndex];
+        const classPath = `${qosPath}.classes[${classIndex}]`;
+        const clsName = cls.name
+          ? identifiers.nameForDefinition(`${classPath}.name`)
+          : identifiers.nameForGenerated(classPath, 'qos-default-scheduler');
+        const forwardingClass = cls.name
+          ? identifiers.nameForDefinition(`${classPath}.name#forwarding-class`)
+          : identifiers.nameForGenerated(classPath, 'qos-default-forwarding-class');
         if (cls.guaranteed_bandwidth) {
           commands.push(`set class-of-service schedulers ${clsName} transmit-rate ${cls.guaranteed_bandwidth}`);
         }
@@ -3814,7 +4038,7 @@ function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappi
         if (cls.priority) {
           commands.push(`set class-of-service schedulers ${clsName} priority ${cls.priority}`);
         }
-        commands.push(`set class-of-service scheduler-maps ${name} forwarding-class ${clsName} scheduler ${clsName}`);
+        commands.push(`set class-of-service scheduler-maps ${name} forwarding-class ${forwardingClass} scheduler ${clsName}`);
       }
       summary.qos_configs_converted = (summary.qos_configs_converted || 0) + 1;
     }
@@ -3836,7 +4060,7 @@ function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappi
  *   - l2_interfaces → set interfaces <base> unit <n> family bridge [bridge-domain-name] [vlan-id]
  *   - vwire_pairs → bridge-domain mapping with TODO comments (SRX has no direct vwire equivalent)
  */
-function convertL2Config(config, commands, warnings, summary, interfaceMappings = {}) {
+function convertL2Config(config, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath) {
   const bridgeDomains = config.bridge_domains || [];
   const l2Interfaces = config.l2_interfaces || [];
   const vwirePairs = config.vwire_pairs || [];
@@ -3857,8 +4081,11 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
   }
 
   // Bridge domains
-  for (const bd of bridgeDomains) {
-    const bdName = sanitizeJunosName(bd.name);
+  for (let bridgeIndex = 0; bridgeIndex < bridgeDomains.length; bridgeIndex += 1) {
+    const bd = bridgeDomains[bridgeIndex];
+    const bdName = identifiers.nameForDefinition(
+      identifierPath(`bridge_domains[${bridgeIndex}].name`),
+    );
     commands.push(`set bridge-domains ${bdName} domain-type bridge`);
     if (bd.vlan_id) {
       commands.push(`set bridge-domains ${bdName} vlan-id ${bd.vlan_id}`);
@@ -3873,14 +4100,18 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
   if (bridgeDomains.length > 0) commands.push('');
 
   // L2 interfaces — set family bridge
-  for (const l2if of l2Interfaces) {
+  for (let interfaceIndex = 0; interfaceIndex < l2Interfaces.length; interfaceIndex += 1) {
+    const l2if = l2Interfaces[interfaceIndex];
     const mappedName = mapInterfaceName(l2if.name, interfaceMappings);
     const parts = mappedName.match(/^(.+?)\.(\d+)$/);
     if (parts) {
       const [, base, unit] = parts;
       commands.push(`set interfaces ${base} unit ${unit} family bridge`);
       if (l2if.bridge_domain) {
-        commands.push(`set interfaces ${base} unit ${unit} family bridge bridge-domain-name ${sanitizeJunosName(l2if.bridge_domain)}`);
+        const bridgeDomain = identifiers.nameForReference(
+          identifierPath(`l2_interfaces[${interfaceIndex}].bridge_domain`),
+        );
+        commands.push(`set interfaces ${base} unit ${unit} family bridge bridge-domain-name ${bridgeDomain}`);
       }
       if (l2if.vlan) {
         commands.push(`set interfaces ${base} unit ${unit} vlan-id ${l2if.vlan}`);
@@ -3890,7 +4121,10 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
       const base = mappedName;
       commands.push(`set interfaces ${base} unit 0 family bridge`);
       if (l2if.bridge_domain) {
-        commands.push(`set interfaces ${base} unit 0 family bridge bridge-domain-name ${sanitizeJunosName(l2if.bridge_domain)}`);
+        const bridgeDomain = identifiers.nameForReference(
+          identifierPath(`l2_interfaces[${interfaceIndex}].bridge_domain`),
+        );
+        commands.push(`set interfaces ${base} unit 0 family bridge bridge-domain-name ${bridgeDomain}`);
       }
     }
     summary.l2_interfaces_converted = (summary.l2_interfaces_converted || 0) + 1;
@@ -3899,8 +4133,12 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
   if (l2Interfaces.length > 0) commands.push('');
 
   // Virtual-wire pairs — SRX has no direct equivalent; map to bridge-domain
-  for (const vw of vwirePairs) {
-    const bdName = sanitizeJunosName(`vwire-${vw.name}`);
+  for (let vwireIndex = 0; vwireIndex < vwirePairs.length; vwireIndex += 1) {
+    const vw = vwirePairs[vwireIndex];
+    const bdName = identifiers.nameForGenerated(
+      identifierPath(`vwire_pairs[${vwireIndex}]`),
+      'vwire-bridge-domain',
+    );
     commands.push(`# Virtual-wire pair "${vw.name}": ${vw.interface1} <-> ${vw.interface2}`);
     commands.push(`set bridge-domains ${bdName} domain-type bridge`);
 
@@ -3968,6 +4206,12 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
 // Policy-Based Forwarding → Filter-Based Forwarding
 // ---------------------------------------------------------------------------
 
+function isIpOrPrefixLiteral(value) {
+  if (typeof value !== 'string') return false;
+  return /^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,3})?$/.test(value)
+    || (value.includes(':') && /^[0-9A-Fa-f:.]+(?:\/\d{1,3})?$/.test(value));
+}
+
 /**
  * Converts PBF rules to SRX filter-based forwarding configuration.
  *
@@ -3979,16 +4223,21 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
  * Discard rules → firewall filter term with "then discard"
  * No-PBF rules → firewall filter term with "then accept" (default routing)
  */
-function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappings = {}, addressObjects = []) {
+function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappings = {}, addressObjects = [], identifiers, identifierPath) {
   if (!pbfRules || pbfRules.length === 0) return;
+  if (!pbfRules.some(rule => !rule.disabled)) return;
 
   // Build lookup map from address object names to their IP values
   const addrLookup = new Map();
-  for (const obj of (addressObjects || [])) {
+  for (let objectIndex = 0; objectIndex < (addressObjects || []).length; objectIndex += 1) {
+    const obj = addressObjects[objectIndex];
     const addrVal = obj.value || obj.ip || obj.network || obj.subnet || obj.address;
     if (obj.name && addrVal && (obj.type === 'host' || obj.type === 'subnet')) {
       addrLookup.set(obj.name, addrVal);
-      addrLookup.set(sanitizeJunosName(obj.name), addrVal);
+      addrLookup.set(
+        identifiers.nameForDefinition(identifierPath(`address_objects[${objectIndex}].name`)),
+        addrVal,
+      );
     }
   }
 
@@ -3997,15 +4246,23 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
   commands.push('# =============================================');
 
   // 1. Collect unique forwarding routing-instances per next-hop
-  const instances = new Map(); // next-hop → instance name
-  for (const rule of pbfRules) {
-    if (rule.disabled) continue;
-    if (rule.action === 'forward' && rule.next_hop_value) {
-      const key = rule.next_hop_value;
-      if (!instances.has(key)) {
-        instances.set(key, sanitizeJunosName(`PBF-${rule.name}`));
-      }
-    }
+  const candidatesByNextHop = new Map();
+  for (let ruleIndex = 0; ruleIndex < pbfRules.length; ruleIndex += 1) {
+    const rule = pbfRules[ruleIndex];
+    if (rule.disabled || rule.action !== 'forward' || !rule.next_hop_value) continue;
+    const candidates = candidatesByNextHop.get(rule.next_hop_value) || [];
+    candidates.push({ rule, ruleIndex });
+    candidatesByNextHop.set(rule.next_hop_value, candidates);
+  }
+  const instances = new Map(); // next-hop → planned instance name
+  for (const [nextHop, candidates] of candidatesByNextHop) {
+    const canonical = [...candidates].sort((left, right) => (
+      String(left.rule.name).localeCompare(String(right.rule.name))
+    ))[0];
+    instances.set(nextHop, identifiers.nameForGenerated(
+      identifierPath(`pbf_rules[${canonical.ruleIndex}]`),
+      'pbf-routing-instance',
+    ));
   }
 
   // Emit routing instances
@@ -4018,41 +4275,60 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
   if (instances.size > 0) commands.push('');
 
   // 2. Build firewall filter terms
-  const filterName = 'PBF-FILTER';
+  const filterName = identifiers.nameForGenerated(identifierPath('pbf_rules'), 'pbf-filter');
   const filterInterfaces = new Set();
   let termCount = 0;
 
-  for (const rule of pbfRules) {
+  for (let ruleIndex = 0; ruleIndex < pbfRules.length; ruleIndex += 1) {
+    const rule = pbfRules[ruleIndex];
     if (rule.disabled) continue;
-    const termName = sanitizeJunosName(rule.name);
-    const termBase = `set firewall filter ${filterName} term ${termName}`;
+    const termName = identifiers.nameForDefinition(
+      identifierPath(`pbf_rules[${ruleIndex}].name`),
+    );
+    const termBase = `set firewall family inet filter ${filterName} term ${termName}`;
 
     // Match: source addresses (resolve named objects to IP values for firewall filters)
-    for (const src of (rule.src_addresses || []).filter(a => a !== 'any')) {
-      const isIp = /^[\d.:\/]+$/.test(src);
-      if (isIp) {
+    for (let addressIndex = 0; addressIndex < (rule.src_addresses || []).length; addressIndex += 1) {
+      const src = rule.src_addresses[addressIndex];
+      if (src === 'any') continue;
+      if (isIpOrPrefixLiteral(src)) {
         commands.push(`${termBase} from source-address ${src}`);
-      } else if (addrLookup.has(src)) {
-        commands.push(`${termBase} from source-address ${addrLookup.get(src)}`);
       } else {
-        commands.push(`# WARNING: skipping source-address "${src}" — named object not resolvable to IP for firewall filter`);
-        warnings.push(createWarning('warning', `pbf/${rule.name}`,
-          `PBF filter term "${rule.name}" references named address "${src}" which could not be resolved to an IP`,
-          'Firewall filters require raw IP addresses — add the address manually'));
+        const plannedAddress = identifiers.nameForReference(
+          identifierPath(`pbf_rules[${ruleIndex}].src_addresses[${addressIndex}]`),
+        );
+        if (addrLookup.has(src)) {
+          commands.push(`${termBase} from source-address ${addrLookup.get(src)}`);
+        } else if (addrLookup.has(plannedAddress)) {
+          commands.push(`${termBase} from source-address ${addrLookup.get(plannedAddress)}`);
+        } else {
+          commands.push(`# WARNING: skipping source-address "${src}" — named object not resolvable to IP for firewall filter`);
+          warnings.push(createWarning('warning', `pbf/${rule.name}`,
+            `PBF filter term "${rule.name}" references named address "${src}" which could not be resolved to an IP`,
+            'Firewall filters require raw IP addresses — add the address manually'));
+        }
       }
     }
     // Match: destination addresses (resolve named objects to IP values for firewall filters)
-    for (const dst of (rule.dst_addresses || []).filter(a => a !== 'any')) {
-      const isIp = /^[\d.:\/]+$/.test(dst);
-      if (isIp) {
+    for (let addressIndex = 0; addressIndex < (rule.dst_addresses || []).length; addressIndex += 1) {
+      const dst = rule.dst_addresses[addressIndex];
+      if (dst === 'any') continue;
+      if (isIpOrPrefixLiteral(dst)) {
         commands.push(`${termBase} from destination-address ${dst}`);
-      } else if (addrLookup.has(dst)) {
-        commands.push(`${termBase} from destination-address ${addrLookup.get(dst)}`);
       } else {
-        commands.push(`# WARNING: skipping destination-address "${dst}" — named object not resolvable to IP for firewall filter`);
-        warnings.push(createWarning('warning', `pbf/${rule.name}`,
-          `PBF filter term "${rule.name}" references named address "${dst}" which could not be resolved to an IP`,
-          'Firewall filters require raw IP addresses — add the address manually'));
+        const plannedAddress = identifiers.nameForReference(
+          identifierPath(`pbf_rules[${ruleIndex}].dst_addresses[${addressIndex}]`),
+        );
+        if (addrLookup.has(dst)) {
+          commands.push(`${termBase} from destination-address ${addrLookup.get(dst)}`);
+        } else if (addrLookup.has(plannedAddress)) {
+          commands.push(`${termBase} from destination-address ${addrLookup.get(plannedAddress)}`);
+        } else {
+          commands.push(`# WARNING: skipping destination-address "${dst}" — named object not resolvable to IP for firewall filter`);
+          warnings.push(createWarning('warning', `pbf/${rule.name}`,
+            `PBF filter term "${rule.name}" references named address "${dst}" which could not be resolved to an IP`,
+            'Firewall filters require raw IP addresses — add the address manually'));
+        }
       }
     }
     // Match: applications/services (map to protocol/port if possible)
@@ -4066,7 +4342,9 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
 
     // Action
     if (rule.action === 'forward' && rule.next_hop_value) {
-      const instName = instances.get(rule.next_hop_value);
+      const instName = identifiers.nameForReference(
+        identifierPath(`pbf_rules[${ruleIndex}].next_hop_value#routing-instance`),
+      );
       commands.push(`${termBase} then routing-instance ${instName}`);
     } else if (rule.action === 'discard') {
       commands.push(`${termBase} then discard`);
@@ -4097,7 +4375,11 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
 
   // Default accept term (allow unmatched traffic to use default routing)
   if (termCount > 0) {
-    commands.push(`set firewall filter ${filterName} term default then accept`);
+    const defaultTerm = identifiers.nameForGenerated(
+      identifierPath('pbf_rules'),
+      'pbf-default-term',
+    );
+    commands.push(`set firewall family inet filter ${filterName} term ${defaultTerm} then accept`);
     commands.push('');
   }
 
@@ -4125,13 +4407,15 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
  * For ssl-inbound-inspection → server-certificate based profile
  * Also generates PKI ca-profile placeholders and no-decrypt exclusion notes.
  */
-function convertSslProxyConfig(config, commands, warnings, summary) {
+function convertSslProxyConfig(config, commands, warnings, summary, identifiers, identifierPath) {
   const decryptionRules = config.decryption_rules || [];
   if (decryptionRules.length === 0) return;
 
   // Also check security_policies for _srx_decrypt without explicit decryption rules
   const hasDecryptPolicies = (config.security_policies || []).some(p => p._srx_decrypt);
-  const hasDecryptRules = decryptionRules.some(r => r.action === 'decrypt');
+  const hasDecryptRules = decryptionRules.some(r => (
+    !r.disabled && ['decrypt', 'decrypt-and-forward'].includes(r.action)
+  ));
 
   if (!hasDecryptRules && !hasDecryptPolicies) {
     // Only no-decrypt rules — no SSL proxy needed, just note it
@@ -4150,21 +4434,45 @@ function convertSslProxyConfig(config, commands, warnings, summary) {
   // Collect unique profiles by decryption type
   const fwdProxyProfiles = new Set();
   const inboundProfiles = new Map(); // profile-name → certificate
+  const profileDefinitions = new Map(); // source identity → planned definition name
   const noDecryptNames = [];
 
-  for (const rule of decryptionRules) {
+  for (let ruleIndex = 0; ruleIndex < decryptionRules.length; ruleIndex += 1) {
+    const rule = decryptionRules[ruleIndex];
     if (rule.disabled) continue;
 
     if (rule.action === 'decrypt' || rule.action === 'decrypt-and-forward') {
       if (rule.decryption_type === 'ssl-forward-proxy') {
-        const profileName = rule.decryption_profile
-          ? sanitizeJunosName(`ssl-fwd-${rule.decryption_profile}`)
+        const sourceName = rule.decryption_profile
+          ? `ssl-fwd-${rule.decryption_profile}`
           : 'ssl-fwd-proxy';
+        if (!profileDefinitions.has(sourceName)) {
+          profileDefinitions.set(sourceName, identifiers.nameForGenerated(
+            identifierPath(`decryption_rules[${ruleIndex}]`),
+            'ssl-forward-profile',
+          ));
+        }
+        const profileName = rule.decryption_profile
+          ? identifiers.nameForReference(
+            identifierPath(`decryption_rules[${ruleIndex}].decryption_profile`),
+          )
+          : profileDefinitions.get(sourceName);
         fwdProxyProfiles.add(profileName);
       } else if (rule.decryption_type === 'ssl-inbound-inspection') {
-        const profileName = rule.decryption_profile
-          ? sanitizeJunosName(`ssl-inbound-${rule.decryption_profile}`)
+        const sourceName = rule.decryption_profile
+          ? `ssl-inbound-${rule.decryption_profile}`
           : 'ssl-inbound-proxy';
+        if (!profileDefinitions.has(sourceName)) {
+          profileDefinitions.set(sourceName, identifiers.nameForGenerated(
+            identifierPath(`decryption_rules[${ruleIndex}]`),
+            'ssl-inbound-profile',
+          ));
+        }
+        const profileName = rule.decryption_profile
+          ? identifiers.nameForReference(
+            identifierPath(`decryption_rules[${ruleIndex}].decryption_profile`),
+          )
+          : profileDefinitions.get(sourceName);
         inboundProfiles.set(profileName, rule.ssl_certificate || 'SERVER-CERT');
       } else if (rule.decryption_type === 'ssh-proxy') {
         // SSH proxy → SRX doesn't have direct equivalent
@@ -4175,7 +4483,14 @@ function convertSslProxyConfig(config, commands, warnings, summary) {
         ));
       } else {
         // Generic decrypt — use forward proxy as default
-        fwdProxyProfiles.add('ssl-fwd-proxy');
+        const sourceName = 'ssl-fwd-proxy';
+        if (!profileDefinitions.has(sourceName)) {
+          profileDefinitions.set(sourceName, identifiers.nameForGenerated(
+            identifierPath(`decryption_rules[${ruleIndex}]`),
+            'ssl-forward-profile',
+          ));
+        }
+        fwdProxyProfiles.add(profileDefinitions.get(sourceName));
       }
     } else if (rule.action === 'no-decrypt') {
       noDecryptNames.push(rule.name);
@@ -4184,7 +4499,14 @@ function convertSslProxyConfig(config, commands, warnings, summary) {
 
   // If no explicit forward-proxy profiles but policies have _srx_decrypt, create default
   if (fwdProxyProfiles.size === 0 && hasDecryptPolicies) {
-    fwdProxyProfiles.add('ssl-fwd-proxy');
+    const fallbackPolicyIndex = (config.security_policies || []).findIndex(policy => (
+      policy._srx_decrypt && policy.action === 'allow' && !policy._srx_decrypt_profile
+    ));
+    if (fallbackPolicyIndex >= 0) {
+      fwdProxyProfiles.add(identifiers.nameForReference(
+        identifierPath(`security_policies[${fallbackPolicyIndex}]#ssl-proxy-profile`),
+      ));
+    }
   }
 
   // 1. PKI CA profile placeholder (needed for forward proxy)
@@ -4271,14 +4593,30 @@ function convertSslProxyConfig(config, commands, warnings, summary) {
  *   set services flow-monitoring version-ipfix template <tpl> template-refresh-rate packets <num>
  *   set interfaces <iface> unit 0 family inet sampling input
  */
-function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, interfaceMappings = {}) {
+function flowCollectorKeyForSet(collector) {
+  return JSON.stringify([
+    collector.address || '',
+    collector.port || 2055,
+    collector.protocol || 'ipfix',
+    collector.source_address || '',
+  ]);
+}
+
+function canonicalFlowTemplateNamesForSet(collectors) {
+  const keys = [...new Set((collectors || []).map(flowCollectorKeyForSet))].sort();
+  return new Map(keys.map((key, index) => [key, `flow-tpl-${index + 1}`]));
+}
+
+function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath) {
   if (!flowConfig || !flowConfig.collectors || flowConfig.collectors.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# Flow Monitoring (Inline Jflow)');
   commands.push('# =============================================');
 
-  const instanceName = flowConfig.instance_name || 'FLOW-SAMPLE';
+  const instanceName = flowConfig.instance_name
+    ? identifiers.nameForDefinition(identifierPath('flow_monitoring_config.instance_name'))
+    : identifiers.nameForGenerated(identifierPath('flow_monitoring_config'), 'sampling-instance');
   const sampling = flowConfig.sampling || {};
   const rate = sampling.input_rate || 1000;
   const runLength = sampling.run_length || 0;
@@ -4291,9 +4629,11 @@ function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, in
 
   // Flow servers and templates
   const templates = flowConfig.templates || [];
-  let tplIndex = 0;
+  const fallbackTemplateNames = canonicalFlowTemplateNamesForSet(flowConfig.collectors);
+  const fallbackDefinitions = new Map();
 
-  for (const collector of flowConfig.collectors) {
+  for (let collectorIndex = 0; collectorIndex < flowConfig.collectors.length; collectorIndex += 1) {
+    const collector = flowConfig.collectors[collectorIndex];
     const addr = collector.address;
     const port = collector.port || 2055;
     const protocol = (collector.protocol || 'ipfix').toLowerCase();
@@ -4301,8 +4641,26 @@ function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, in
     const versionKey = isIpfix ? 'version-ipfix' : 'version9';
 
     // Get matching template or create default
-    const tpl = templates[tplIndex] || { name: `flow-tpl-${tplIndex + 1}`, flow_type: 'ipv4', active_timeout: 60, refresh_rate: 1000 };
-    const tplName = sanitizeJunosName(tpl.name);
+    const collectorKey = flowCollectorKeyForSet(collector);
+    const explicitTemplate = templates[collectorIndex];
+    const tpl = explicitTemplate || {
+      name: fallbackTemplateNames.get(collectorKey),
+      flow_type: 'ipv4',
+      active_timeout: 60,
+      refresh_rate: 1000,
+    };
+    if (!explicitTemplate && !fallbackDefinitions.has(collectorKey)) {
+      fallbackDefinitions.set(collectorKey, {
+        template: tpl,
+        outputName: identifiers.nameForGenerated(
+          identifierPath(`flow_monitoring_config.collectors[${collectorIndex}]`),
+          'collector-flow-template',
+        ),
+      });
+    }
+    const tplName = identifiers.nameForReference(
+      identifierPath(`flow_monitoring_config.collectors[${collectorIndex}]#template`),
+    );
 
     commands.push(`set forwarding-options sampling instance ${instanceName} family inet output flow-server ${addr} port ${port}`);
     commands.push(`set forwarding-options sampling instance ${instanceName} family inet output flow-server ${addr} ${versionKey} template ${tplName}`);
@@ -4318,14 +4676,19 @@ function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, in
       commands.push(`set forwarding-options sampling instance ${instanceName} family inet output inline-jflow source-address ${collector.source_address}`);
     }
 
-    tplIndex++;
   }
 
   commands.push('');
 
   // Template definitions
-  for (const tpl of templates) {
-    const tplName = sanitizeJunosName(tpl.name);
+  const templateDefinitions = templates.map((template, templateIndex) => ({
+    template,
+    outputName: identifiers.nameForDefinition(
+      identifierPath(`flow_monitoring_config.templates[${templateIndex}].name`),
+    ),
+  }));
+  templateDefinitions.push(...fallbackDefinitions.values());
+  for (const { template: tpl, outputName: tplName } of templateDefinitions) {
     const isIpfix = true; // Default to IPFIX for SRX
     const versionKey = isIpfix ? 'version-ipfix' : 'version9';
 
@@ -4350,10 +4713,10 @@ function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, in
   if (samplingInterfaces.length > 0) commands.push('');
 
   summary.flow_collectors = flowConfig.collectors.length;
-  summary.flow_templates = templates.length;
+  summary.flow_templates = templateDefinitions.length;
 
   warnings.push(createWarning('info', 'flow-monitoring/config',
-    `Generated inline-jflow config with ${flowConfig.collectors.length} collector(s) and ${templates.length} template(s)`,
+    `Generated inline-jflow config with ${flowConfig.collectors.length} collector(s) and ${templateDefinitions.length} template(s)`,
     'Verify flow-server addresses and template parameters after deployment'));
 }
 
