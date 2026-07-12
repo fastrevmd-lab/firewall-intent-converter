@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { convertConfig, mergeConvert } from '../public/utils/engine.js';
+import { JunosIdentifierPlanningError } from '../src/security/junos-identifiers.js';
 import { JunosSerializationError } from '../src/security/junos-serialization.js';
 
 const storage = new Map();
@@ -13,6 +14,57 @@ globalThis.localStorage = {
 };
 
 const { formatJunosSerializationError } = await import('../public/hooks/useConversion.js');
+
+function collisionConfig() {
+  return {
+    metadata: { source_vendor: 'panos' },
+    zones: [
+      { name: 'trust', interfaces: [] },
+      { name: 'untrust', interfaces: [] },
+    ],
+    address_objects: [
+      { name: 'Web Server', type: 'host', value: '192.0.2.10/32' },
+      { name: 'Web@Server', type: 'host', value: '192.0.2.11/32' },
+    ],
+    address_groups: [{
+      name: 'Web Farm',
+      members: ['Web Server', 'Web@Server'],
+    }],
+    service_objects: [],
+    service_groups: [],
+    applications: [],
+    application_groups: [],
+    schedules: [],
+    security_policies: [
+      {
+        name: 'Allow Web One',
+        src_zones: ['trust'],
+        dst_zones: ['untrust'],
+        src_addresses: ['any'],
+        dst_addresses: ['Web Server'],
+        applications: ['junos-https'],
+        services: [],
+        action: 'allow',
+      },
+      {
+        name: 'Allow Web Two',
+        src_zones: ['trust'],
+        dst_zones: ['untrust'],
+        src_addresses: ['any'],
+        dst_addresses: ['Web@Server'],
+        applications: ['junos-https'],
+        services: [],
+        action: 'allow',
+      },
+    ],
+    nat_rules: [],
+    interfaces: [],
+  };
+}
+
+function mergeSlot(lsName, intermediateConfig) {
+  return { lsName, intermediateConfig, interfaceMappings: {} };
+}
 
 describe('conversion fail-closed behavior', () => {
   it('formats a typed error with its safe path and reason', () => {
@@ -37,6 +89,23 @@ describe('conversion fail-closed behavior', () => {
 
     expect(formatJunosSerializationError(error, 'Conversion'))
       .not.toContain(rejectedValue);
+  });
+
+  it('formats identifier planning errors without configuration content', () => {
+    const error = new JunosIdentifierPlanningError('ambiguous_reference', {
+      namespace: 'address-book-entry',
+      context: 'root/address-book:global',
+      sourceName: 'Web Server',
+      referencePaths: ['security_policies[0].dst_addresses[0]'],
+      reason: 'reference matches more than one definition',
+    });
+    const message = formatJunosSerializationError(error, 'Conversion');
+
+    expect(message).toContain('Conversion blocked');
+    expect(message).toContain('ambiguous_reference');
+    expect(message).not.toContain('Web Server');
+    expect(message).not.toContain('address-book-entry');
+    expect(message).not.toContain('set security');
   });
 
   it('blocks unsafe data through both public engine paths', async () => {
@@ -103,5 +172,18 @@ describe('conversion fail-closed behavior', () => {
     )).toBe(true);
     expect(xmlResult.output.format).toBe('xml');
     expect(xmlResult.output.xml).toContain('<configuration>');
+  });
+
+  it('returns mappings and collision metadata through public engines', async () => {
+    const single = await convertConfig(collisionConfig(), 'set');
+    const merged = await mergeConvert([mergeSlot('Branch', collisionConfig())], [], 'xml');
+
+    for (const result of [single, merged]) {
+      expect(result.output.identifierMappings.version).toBe(1);
+      expect(result.output.summary.identifier_collisions_resolved).toBeGreaterThan(0);
+      expect(result.output.warnings.some(
+        warning => warning.subType === 'identifier_collision',
+      )).toBe(true);
+    }
   });
 });

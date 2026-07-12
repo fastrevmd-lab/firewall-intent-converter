@@ -12,6 +12,7 @@ import { useUIContext } from '../contexts/UIContext.jsx';
 import { useMergeContext } from '../contexts/MergeContext.jsx';
 import { convertConfig, mergeConvert } from '../utils/engine.js';
 import { validateHardwareCapacity } from '../data/hardware-db.js';
+import { JunosIdentifierPlanningError } from '../../src/security/junos-identifiers.js';
 import { JunosSerializationError } from '../../src/security/junos-serialization.js';
 import {
   ConversionOutputError,
@@ -20,6 +21,10 @@ import {
 } from '../../src/conversion/conversion-output.js';
 
 export function formatJunosSerializationError(error, prefix) {
+  if (error instanceof JunosIdentifierPlanningError) {
+    const location = error.referencePaths?.[0] || error.definitionPaths?.[0] || error.context;
+    return `${prefix} blocked: ${error.code}${location ? ` at ${location}` : ''} — ${error.reason}`;
+  }
   if (error instanceof JunosSerializationError) {
     return `${prefix} blocked: ${error.fieldPath} — ${error.reason}`;
   }
