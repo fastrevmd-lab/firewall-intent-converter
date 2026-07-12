@@ -384,6 +384,37 @@ describe('project security boundary', () => {
     );
   });
 
+  it.each([
+    ['radius', { radius: { key: 'RAW-RADIUS' } }],
+    ['tacacs', { tacacs: { key: 'RAW-TACACS' } }],
+    ['tacplus', { tacplus: { key: 'RAW-TACPLUS' } }],
+    ['vpn', { vpn: { key: 'RAW-VPN' } }],
+    ['cert', { cert: { key: 'RAW-CERT' } }],
+    ['certificates', { certificates: { key: 'RAW-CERTIFICATES' } }],
+  ])('rejects a bare key in direct %s context', (_label, state) => {
+    expectSecurityError(
+      () => assertSanitizedProjectSafe(projectFrom(state), []),
+      'secret_leak',
+      'Sanitized export was blocked because secret-bearing content remains.',
+    );
+  });
+
+  it.each(['radius', 'tacacs'])
+    ('rejects a bare key when sibling type is %s', type => {
+      expectSecurityError(
+        () => assertSanitizedProjectSafe(projectFrom({
+          servers: [{ type, key: 'RAW-SIBLING-KEY' }],
+        }), []),
+        'secret_leak',
+        'Sanitized export was blocked because secret-bearing content remains.',
+      );
+    });
+
+  it('allows a bare key in unrelated metadata', () => {
+    const project = projectFrom({ metadata: { key: 'display-order' } });
+    expect(assertSanitizedProjectSafe(project, [])).toBe(JSON.stringify(project, null, 2));
+  });
+
   it.each([123456, 0, true, false])
     ('rejects non-string scalar %s under a secret-bearing path', value => {
       expectSecurityError(
@@ -414,6 +445,8 @@ describe('project security boundary', () => {
         certificates: [{
           private_key: { value: 'SANITIZED_CERT_0' }, key: 'SANITIZED_CERT_1',
         }],
+        radius: { key: 'SANITIZED_KEY_4' },
+        servers: [{ type: 'tacacs', key: 'SANITIZED_KEY_5' }],
       },
     });
     expect(assertSanitizedProjectSafe(project, [])).toBe(JSON.stringify(project, null, 2));

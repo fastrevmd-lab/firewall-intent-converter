@@ -24,14 +24,15 @@ const NON_RESTORABLE_TYPES = new Set([
   'password', 'hash', 'key', 'community', 'certificate', 'cert',
 ]);
 const BARE_KEY_SECRET_CONTEXTS = new Set([
-  'aaaconfig', 'aaaserver', 'aaaservers',
-  'radiusserver', 'radiusservers',
-  'tacacsserver', 'tacacsservers',
-  'tacplusserver', 'tacplusservers',
-  'vpntunnel', 'vpntunnels',
+  'aaa', 'aaaconfig', 'aaaserver', 'aaaservers',
+  'radius', 'radiusserver', 'radiusservers',
+  'tacacs', 'tacacsserver', 'tacacsservers',
+  'tacplus', 'tacplusserver', 'tacplusservers',
+  'vpn', 'vpntunnel', 'vpntunnels',
   'ike', 'ikegateway', 'ikegateways', 'ikepolicy', 'ikepolicies',
   'ikeproposal', 'ikeproposals',
-  'certificate', 'certificates', 'certificatecontainer', 'certificatecontainers',
+  'cert', 'certificate', 'certificates',
+  'certificatecontainer', 'certificatecontainers',
 ]);
 const TEXT_ENCODER = new TextEncoder();
 
@@ -388,9 +389,15 @@ function isSnmpCommunityName(path, parent) {
 function isStructuredSecretPath(path, parent) {
   const key = path.at(-1) || '';
   if (isSecretBearingKey(key) || path.slice(0, -1).some(isSecretBearingKey)) return true;
-  if (normalizedType(key) === 'key'
-      && path.slice(0, -1).some(segment => BARE_KEY_SECRET_CONTEXTS.has(normalizedType(segment)))) {
-    return true;
+  if (normalizedType(key) === 'key') {
+    const pathHasContext = path.slice(0, -1)
+      .some(segment => BARE_KEY_SECRET_CONTEXTS.has(normalizedType(segment)));
+    const siblingType = assertPlainObject(parent) ? optionalDataValue(parent, 'type') : undefined;
+    const typeHasContext = typeof siblingType === 'string'
+      && BARE_KEY_SECRET_CONTEXTS.has(normalizedType(siblingType));
+    if (pathHasContext || typeHasContext) {
+      return true;
+    }
   }
   return isSnmpCommunityName(path, parent);
 }
