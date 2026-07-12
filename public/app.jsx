@@ -28,7 +28,12 @@ const LLMSettings = React.lazy(() => import('./components/LLMSettings.jsx'));
 const AppMappingsEditor = React.lazy(() => import('./components/AppMappingsEditor.jsx'));
 const FeedbackModal = React.lazy(() => import('./components/FeedbackModal.jsx'));
 const SaveProjectModal = React.lazy(() => import('./components/SaveProjectModal.jsx'));
-const ProjectSecurityImportModal = React.lazy(() => import('./components/ProjectSecurityImportModal.jsx'));
+const loadProjectSecurityImport = () => import('./components/ProjectSecurityImportModal.jsx');
+const ProjectSecurityImportModal = React.lazy(loadProjectSecurityImport);
+const ProjectSecurityNotice = React.lazy(async () => {
+  const module = await loadProjectSecurityImport();
+  return { default: module.ProjectSecurityNotice };
+});
 const ReportModal = React.lazy(() => import('./components/ReportModal.jsx'));
 const GuidedTour = React.lazy(() => import('./components/GuidedTour.jsx'));
 const PushModal = React.lazy(() => import('./components/PushModal.jsx'));
@@ -53,6 +58,13 @@ import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { GREENFIELD_TEMPLATES } from './data/greenfield-templates.js';
 import { parseConfig, sanitizeConfig } from './utils/engine.js';
 import { isProjectCryptoAvailable } from './utils/project-crypto.js';
+
+export function deriveSanitizeFirstActions() {
+  return [
+    { type: 'HIDE_MODAL', name: 'saveModal' },
+    { type: 'SET_FIELD', field: 'editTab', value: 'import' },
+  ];
+}
 
 export default function App() {
   // --- Context access ---
@@ -548,8 +560,7 @@ export default function App() {
           cryptoAvailable={isProjectCryptoAvailable()}
           onExport={project.handleExportProject}
           onSanitizeFirst={() => {
-            uiDispatch({ type: 'HIDE_MODAL', name: 'saveModal' });
-            uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'import' });
+            deriveSanitizeFirstActions().forEach(action => uiDispatch(action));
           }}
           onClose={() => uiDispatch({ type: 'HIDE_MODAL', name: 'saveModal' })}
         />
@@ -664,6 +675,7 @@ export default function App() {
             </div>
             <div className="modal-body" style={{ padding: '16px 20px' }}>
               <p style={{ fontWeight: 600, marginBottom: 8 }}>{ui.showLoadConfirm.project.name || 'Unnamed Project'}</p>
+              <ProjectSecurityNotice descriptor={ui.showLoadConfirm.security} />
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
                 <div>Saved: {new Date(ui.showLoadConfirm.project.savedAt).toLocaleString()}</div>
                 <div>Vendor: {ui.showLoadConfirm.project.state?.sourceVendor || 'Unknown'}</div>

@@ -29,7 +29,7 @@ export function deriveProjectImportFormState(input = {}) {
 const IMPORT_COPY = {
   [SANITIZED]: {
     title: 'Irreversible sanitized project',
-    warning: 'No restoration data or original values are included. Loading cannot restore them.',
+    warning: 'No restoration data or original values are included. This project is safe to share, but loading cannot restore removed originals.',
     acknowledgement: '',
   },
   [REVERSIBLE]: {
@@ -48,6 +48,18 @@ const IMPORT_COPY = {
     acknowledgement: 'I acknowledge the legacy plaintext restoration-data risk and want to continue.',
   },
 };
+
+export function ProjectSecurityNotice({ descriptor }) {
+  const mode = descriptorMode(descriptor);
+  const copy = IMPORT_COPY[mode];
+
+  return (
+    <section className={`project-security-import project-security-import--${mode}`}>
+      <h3>{copy.title}</h3>
+      <p>{copy.warning}</p>
+    </section>
+  );
+}
 
 export default function ProjectSecurityImportModal({ descriptor, onConfirm, onClose }) {
   const [passphrase, setPassphrase] = useState('');
@@ -92,10 +104,7 @@ export default function ProjectSecurityImportModal({ descriptor, onConfirm, onCl
           <button className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
         </div>
         <div className="modal-body project-security-body">
-          <section className={`project-security-import project-security-import--${form.mode}`}>
-            <h3>{copy.title}</h3>
-            <p>{copy.warning}</p>
-          </section>
+          <ProjectSecurityNotice descriptor={descriptor} />
 
           {form.requiresPassphrase && (
             <label className="project-security-field">

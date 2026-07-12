@@ -6,6 +6,7 @@ import SaveProjectModal, {
 } from '../public/components/SaveProjectModal.jsx';
 import ProjectSecurityImportModal, {
   deriveProjectImportFormState,
+  ProjectSecurityNotice,
 } from '../public/components/ProjectSecurityImportModal.jsx';
 
 const exportInput = {
@@ -143,7 +144,7 @@ describe('project security UI', () => {
     })).toMatchObject({ mode: 'sanitized', canSubmit: true });
   });
 
-  it('renders unambiguous export warnings and sanitize-first wiring', () => {
+  it('renders unambiguous unsanitized export warnings', () => {
     const exportHtml = renderToStaticMarkup(
       <SaveProjectModal
         defaultName="branch"
@@ -162,7 +163,30 @@ describe('project security UI', () => {
     expect(exportHtml).not.toContain('safe to share');
   });
 
-  it('renders irreversible and encrypted export modes with no-recovery copy', () => {
+  it('derives sanitize-first routing without changing sanitization state', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: { getItem: () => null },
+    });
+    let deriveSanitizeFirstActions;
+    try {
+      ({ deriveSanitizeFirstActions } = await import('../public/app.jsx'));
+    } finally {
+      if (localStorageDescriptor) {
+        Object.defineProperty(globalThis, 'localStorage', localStorageDescriptor);
+      } else {
+        delete globalThis.localStorage;
+      }
+    }
+
+    expect(deriveSanitizeFirstActions()).toEqual([
+      { type: 'HIDE_MODAL', name: 'saveModal' },
+      { type: 'SET_FIELD', field: 'editTab', value: 'import' },
+    ]);
+  });
+
+  it('renders safe-to-share sanitized export and precise reversible requirements', () => {
     const html = renderToStaticMarkup(
       <SaveProjectModal
         defaultName="branch"
@@ -175,9 +199,34 @@ describe('project security UI', () => {
     );
 
     expect(html).toContain('Irreversible sanitized');
+    expect(html).toContain('safe to share');
+    expect(html).toContain('restoration data are removed');
     expect(html).toContain('Encrypted reversible');
     expect(html).toContain('No passphrase recovery');
+    expect(html).toContain('16 Unicode code points');
     expect(html).toContain('.sanitized.fpic.json');
+  });
+
+  it('renders the sanitized security notice used by live load confirmation', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSecurityNotice descriptor={{ mode: 'sanitized' }} />,
+    );
+
+    expect(html).toContain('Irreversible sanitized project');
+    expect(html).toContain('safe to share');
+    expect(html).toContain('No restoration data');
+  });
+
+  it.each([
+    'reversible-encrypted',
+    'unsanitized',
+    'legacy-secret-bearing',
+  ])('never labels the dangerous %s notice safe to share', mode => {
+    const html = renderToStaticMarkup(
+      <ProjectSecurityNotice descriptor={{ mode }} />,
+    );
+
+    expect(html).not.toContain('safe to share');
   });
 
   it.each([
@@ -197,6 +246,10 @@ describe('project security UI', () => {
     expect(html).toContain(heading);
     expect(html).toContain(warning);
     if (mode !== 'sanitized') expect(html).toContain('acknowledge');
-    expect(html).not.toContain('safe to share');
+    if (mode === 'sanitized') {
+      expect(html).toContain('safe to share');
+    } else {
+      expect(html).not.toContain('safe to share');
+    }
   });
 });

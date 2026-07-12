@@ -50,11 +50,11 @@ export function deriveProjectExportFormState(input = {}) {
 const MODE_COPY = {
   [SANITIZED]: {
     title: 'Irreversible sanitized',
-    description: 'Original values and restoration data are removed. This export cannot restore them.',
+    description: 'Original values and restoration data are removed. This irreversible export is safe to share.',
   },
   [REVERSIBLE]: {
     title: 'Encrypted reversible',
-    description: 'Restoration data is encrypted. No passphrase recovery is available if it is lost.',
+    description: 'Restoration data is encrypted. Use matching passphrases of at least 16 Unicode code points. No passphrase recovery is available.',
   },
   [UNSANITIZED]: {
     title: 'Unsanitized — contains sensitive data',
@@ -189,7 +189,7 @@ export default function SaveProjectModal({
           {form.mode === REVERSIBLE && (
             <div className="project-security-details project-security-details--encrypted">
               <p><strong>Encrypted reversible — No passphrase recovery</strong></p>
-              <p>Use at least 16 characters. The UTF-8 encoded passphrase must not exceed 1024 bytes.</p>
+              <p>Use at least 16 Unicode code points. The UTF-8 encoded passphrase must not exceed 1024 bytes.</p>
               <label className="project-security-field">
                 <span>Passphrase</span>
                 <input
