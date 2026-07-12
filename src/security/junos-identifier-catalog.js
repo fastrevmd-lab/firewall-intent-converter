@@ -5,6 +5,7 @@ import {
   mapProfileToSrx,
   sanitizeJunosName,
 } from '../parsers/parser-utils.js';
+import { JunosSerializationError } from './junos-serialization.js';
 import { getJunosEmission } from '../utils/app-mappings.js';
 
 export const JUNOS_IDENTIFIER_CATALOG = Object.freeze({
@@ -53,6 +54,16 @@ function deviceContext(targetContext) {
 
 function targetNamespaceContext() {
   return 'root/target-context';
+}
+
+function assertConcreteZoneSourceName(sourceName, fieldPath) {
+  if (ANY_LITERAL.includes(sourceName)) {
+    throw new JunosSerializationError(
+      fieldPath,
+      'zone',
+      'reserved zone literals cannot be configured as concrete cross-link endpoints',
+    );
+  }
 }
 
 function addressBookContext(device) {
@@ -347,9 +358,18 @@ function createSymbolCollector() {
     reservations.push({ context, namespace, outputName });
   }
 
+  function hasDefinitionIdentity({ context, namespace, sourceName }) {
+    return definitions.some(definition => (
+      definition.context === context
+      && definition.namespace === namespace
+      && definition.sourceName === sourceName
+    ));
+  }
+
   return {
     definitions, references, reservations,
     addDefinition, addReference, addGenerated, addReservation,
+    hasDefinitionIdentity,
   };
 }
 
@@ -2104,6 +2124,10 @@ export function collectMergedJunosIdentifierSymbols(
   const crossLinkZoneUses = [];
   for (let index = 0; index < (crossLsLinks || []).length; index += 1) {
     const link = crossLsLinks[index];
+    assertConcreteZoneSourceName(
+      link.sharedZone,
+      `crossLsLinks[${index}].sharedZone`,
+    );
     for (const side of ['ls1', 'ls2']) {
       const matchingSlots = slotsByLogicalSystem.get(link[side]) || [];
       if (matchingSlots.length !== 1) {
@@ -2136,9 +2160,12 @@ export function collectMergedJunosIdentifierSymbols(
 
   const missingZoneUses = new Map();
   for (const use of crossLinkZoneUses) {
-    const existingZone = (use.slot.intermediateConfig?.zones || [])
-      .some(zone => zone.name === use.sourceName);
-    if (!existingZone) {
+    const existingDefinition = collector.hasDefinitionIdentity({
+      context: use.device,
+      namespace: 'zone',
+      sourceName: use.sourceName,
+    });
+    if (!existingDefinition) {
       const key = JSON.stringify([use.device, use.sourceName]);
       const groupedUses = missingZoneUses.get(key) || [];
       groupedUses.push(use);

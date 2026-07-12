@@ -188,6 +188,16 @@ describe('set converter injection defense', () => {
     }];
     expect(() => convertMergedToSrxSetCommands(safeSlots, unsafeLinks))
       .toThrow(expect.objectContaining({ fieldPath: 'crossLsLinks[0].lt1Unit' }));
+
+    const unsafeZoneLinks = [{
+      ls1: 'tenant-a',
+      ls2: 'tenant-a',
+      sharedZone: 'any\nset system services telnet',
+      lt1Unit: 'not-an-integer',
+      lt2Unit: 2,
+    }];
+    expect(() => convertMergedToSrxSetCommands(safeSlots, unsafeZoneLinks))
+      .toThrow(expect.objectContaining({ fieldPath: 'merge.crossLsLinks[0].sharedZone' }));
   });
 
   it('keeps valid advanced converter domains compatible with final validation', () => {
@@ -338,6 +348,16 @@ describe('XML converter injection defense', () => {
     expect(() => buildMergedSrxXml([
       { lsName: 'tenant-a', intermediateConfig: baseConfig(), interfaceMappings: {} },
     ], links)).toThrow(expect.objectContaining({ fieldPath: 'crossLsLinks[0].lt1Unit' }));
+
+    expect(() => buildMergedSrxXml([
+      { lsName: 'tenant-a', intermediateConfig: baseConfig(), interfaceMappings: {} },
+    ], [{
+      ls1: 'tenant-a',
+      ls2: 'tenant-a',
+      sharedZone: 'any\nset system services telnet',
+      lt1Unit: 'not-an-integer',
+      lt2Unit: 2,
+    }])).toThrow(expect.objectContaining({ fieldPath: 'merge.crossLsLinks[0].sharedZone' }));
   });
 
   it('keeps a feature-rich XML document well formed and inside supported roots', () => {

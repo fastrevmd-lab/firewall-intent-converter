@@ -21,6 +21,7 @@ import {
   collectJunosIdentifierSymbols,
   collectMergedJunosIdentifierSymbols,
 } from '../src/security/junos-identifier-catalog.js';
+import { JunosSerializationError } from '../src/security/junos-serialization.js';
 
 function fullConfig() {
   return {
@@ -1675,6 +1676,53 @@ describe('Junos identifier catalog', () => {
 
     expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls1'))
       .not.toBe(plan.nameForReference('crossLsLinks[0].sharedZone#ls2'));
+  });
+
+  it('rejects non-concrete cross-link zone literals at the exact source path', () => {
+    const slots = [
+      { lsName: 'branch a', intermediateConfig: { zones: [] } },
+      { lsName: 'branch b', intermediateConfig: { zones: [] } },
+    ];
+    const links = [{ ls1: 'branch a', ls2: 'branch b', sharedZone: 'any' }];
+
+    expect(() => planMergedJunosIdentifiers(slots, links)).toThrow(expect.objectContaining({
+      name: 'JunosSerializationError',
+      fieldPath: 'crossLsLinks[0].sharedZone',
+      valueKind: 'zone',
+    }));
+    expect(() => planMergedJunosIdentifiers(slots, links)).toThrow(JunosSerializationError);
+  });
+
+  it('reuses NAT-generated missing zones for cross-link side references', () => {
+    const intermediateConfig = {
+      zones: [{ name: 'outside' }],
+      nat_rules: [{
+        name: 'Transit NAT',
+        type: 'source',
+        src_zones: ['Transit Zone'],
+        dst_zones: ['outside'],
+      }],
+    };
+    const slots = [
+      { lsName: 'branch a', intermediateConfig },
+      { lsName: 'branch b', intermediateConfig },
+    ];
+    const links = [{ ls1: 'branch a', ls2: 'branch b', sharedZone: 'Transit Zone' }];
+    const plan = planMergedJunosIdentifiers(slots, links);
+    const zones = plan.mapping.entries.filter(entry => (
+      entry.namespace === 'zone' && entry.sourceName === 'Transit Zone'
+    ));
+
+    expect(zones).toHaveLength(2);
+    for (const [slotIndex, side] of ['ls1', 'ls2'].entries()) {
+      const zone = zones.find(entry => entry.context === `logical-system:${slots[slotIndex].lsName}`);
+      expect(zone.definitionPath).toContain('#generated:nat-missing-zone:Transit Zone');
+      expect(zone.referencePaths).toEqual([
+        `configSlots[${slotIndex}].intermediateConfig.nat_rules[0].src_zones[0]`,
+        `crossLsLinks[0].sharedZone#${side}`,
+      ]);
+      expect(plan.nameForReference(`crossLsLinks[0].sharedZone#${side}`)).toBe(zone.outputName);
+    }
   });
 
   it.each([

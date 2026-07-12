@@ -89,6 +89,21 @@ function configWithAddress(name, extra = {}) {
   });
 }
 
+function configWithMissingNatZone(zoneName) {
+  return baseConfig({
+    zones: [{ name: 'outside', interfaces: [] }],
+    nat_rules: [{
+      name: 'Transit NAT',
+      type: 'source',
+      src_zones: [zoneName],
+      dst_zones: ['outside'],
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+      translated_src: { type: 'interface' },
+    }],
+  });
+}
+
 function stableMappingAssociations(mapping) {
   return mapping.entries.map(entry => ({
     context: entry.context,
@@ -1883,6 +1898,24 @@ describe('XML identifier-plan integration', () => {
 });
 
 describe('merged Set and XML identifier-plan integration', () => {
+  it('rejects non-concrete cross-link zones before Set or XML emission', () => {
+    const slots = [
+      mergeSlot('Branch A', baseConfig()),
+      mergeSlot('Branch B', baseConfig()),
+    ];
+    const links = [{
+      ls1: 'Branch A', ls2: 'Branch B', sharedZone: 'any', lt1Unit: 1, lt2Unit: 2,
+    }];
+
+    for (const convert of [convertMergedToSrxSetCommands, buildMergedSrxXml]) {
+      expect(() => convert(slots, links)).toThrow(expect.objectContaining({
+        name: 'JunosSerializationError',
+        fieldPath: 'crossLsLinks[0].sharedZone',
+        valueKind: 'zone',
+      }));
+    }
+  });
+
   it('isolates local namespaces and keeps cross-link references correct', () => {
     const slots = [
       mergeSlot('Branch Office', configWithAddress('Web Server')),
@@ -1990,6 +2023,50 @@ describe('merged Set and XML identifier-plan integration', () => {
     );
     expect(xmlResult.xml).toContain(`<name>${first.zone}</name>`);
     expect(xmlResult.xml).toContain(`<name>${second.zone}</name>`);
+  });
+
+  it('reuses NAT-generated missing zones across cross-links and input reordering', () => {
+    const slots = [
+      mergeSlot('Branch A', configWithMissingNatZone('Transit Zone')),
+      mergeSlot('Branch B', configWithMissingNatZone('Transit Zone')),
+    ];
+    const links = [{
+      ls1: 'Branch A', ls2: 'Branch B', sharedZone: 'Transit Zone', lt1Unit: 1, lt2Unit: 2,
+    }];
+    const setResult = convertMergedToSrxSetCommands(slots, links);
+    const xmlResult = buildMergedSrxXml(slots, links);
+    const reorderedSet = convertMergedToSrxSetCommands([...slots].reverse(), links);
+    const reorderedXml = buildMergedSrxXml([...slots].reverse(), links);
+    const zones = setResult.identifierMappings.entries.filter(entry => (
+      entry.namespace === 'zone' && entry.sourceName === 'Transit Zone'
+    ));
+
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
+    expect(zones).toHaveLength(2);
+    for (const [slotIndex, side] of ['ls1', 'ls2'].entries()) {
+      const logicalSystem = setResult.identifierMappings.entries.find(entry => (
+        entry.definitionPath === `configSlots[${slotIndex}].lsName`
+      )).outputName;
+      const zone = zones.find(entry => (
+        entry.context === `logical-system:${slots[slotIndex].lsName}`
+      ));
+      expect(zone.definitionPath).toContain('#generated:nat-missing-zone:Transit Zone');
+      expect(zone.referencePaths).toEqual([
+        `configSlots[${slotIndex}].intermediateConfig.nat_rules[0].src_zones[0]`,
+        `crossLsLinks[0].sharedZone#${side}`,
+      ]);
+      expect(setResult.commands).toContain(
+        `set logical-systems ${logicalSystem} security zones security-zone ${zone.outputName}`,
+      );
+      expect(setResult.commands.some(command => command.startsWith(
+        `set logical-systems ${logicalSystem} security zones security-zone ${zone.outputName} interfaces lt-0/0/0.`,
+      ))).toBe(true);
+      expect(xmlResult.xml).toContain(`<name>${zone.outputName}</name>`);
+    }
+    expect(stableMappingAssociations(reorderedSet.identifierMappings))
+      .toEqual(stableMappingAssociations(setResult.identifierMappings));
+    expect(stableMappingAssociations(reorderedXml.identifierMappings))
+      .toEqual(stableMappingAssociations(xmlResult.identifierMappings));
   });
 
   it('plans root global named configuration once in both formats', () => {
