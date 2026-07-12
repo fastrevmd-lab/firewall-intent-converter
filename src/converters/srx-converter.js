@@ -2045,6 +2045,12 @@ function resolveNatAddress(addr, addrLookup, warnings) {
   return resolved;
 }
 
+function effectiveNatTypes(rule) {
+  return rule.type === 'source-and-destination'
+    ? ['source', 'destination']
+    : [rule.type || 'source'];
+}
+
 function convertNatRules(
   natRules,
   commands,
@@ -2074,8 +2080,7 @@ function convertNatRules(
   const natRuleIndex = new Map(natRules.map((rule, index) => [rule, index]));
   const sourceZonesFor = natSourceZones;
   const destinationZonesFor = natDestinationZones;
-  const typesFor = rule => (rule.type === 'source-and-destination'
-    ? ['source', 'destination'] : [rule.type || 'source']);
+  const typesFor = effectiveNatTypes;
   const zoneReference = (ruleIndex, rule, direction, zone) => {
     const field = direction === 'source'
       ? natSourceZoneField(rule) : natDestinationZoneField(rule);
@@ -2179,9 +2184,9 @@ function convertNatRules(
   }
 
   // Group NAT rules by type for SRX rule-set organization
-  const sourceNatRules = natRules.filter(r => r.type === 'source' || r.type === 'source-and-destination');
-  const destNatRules = natRules.filter(r => r.type === 'destination' || r.type === 'source-and-destination');
-  const staticNatRules = natRules.filter(r => r.type === 'static');
+  const sourceNatRules = natRules.filter(rule => effectiveNatTypes(rule).includes('source'));
+  const destNatRules = natRules.filter(rule => effectiveNatTypes(rule).includes('destination'));
+  const staticNatRules = natRules.filter(rule => effectiveNatTypes(rule).includes('static'));
 
   // --- Source NAT ---
   if (sourceNatRules.length > 0) {

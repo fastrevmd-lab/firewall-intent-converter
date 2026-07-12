@@ -82,7 +82,7 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   const sourceVendor = config.metadata?.source_vendor || '';
 
   // Compute UTM/IDP/SecIntel assignment maps (mirrors srx-converter logic)
-  const { utmPolicyMap, utmProfiles } = computeUtmMap(config, identifierNames);
+  const { utmPolicyMap, utmProfiles } = computeUtmMap(config, identifierNames, warnings);
   const { idpPolicyMap } = computeIdpMap(config.security_policies, identifierNames);
   const blockLists = (config.external_lists || [])
     .map((list, index) => ({ list, index }))
@@ -611,10 +611,14 @@ function groupNatByZonePair(rules) {
   return groups;
 }
 
-function natRuleNamePath(rule, ruleIndex, targetType, targetFrom, targetTo) {
-  const types = rule.type === 'source-and-destination'
+function effectiveNatTypes(rule) {
+  return rule.type === 'source-and-destination'
     ? ['source', 'destination']
     : [rule.type || 'source'];
+}
+
+function natRuleNamePath(rule, ruleIndex, targetType, targetFrom, targetTo) {
+  const types = effectiveNatTypes(rule);
   let occurrence = 0;
   for (const type of types) {
     const pairs = type === 'static'
@@ -676,9 +680,9 @@ function buildNatXml(natRules, configuredZones, lines, warnings, identifierNames
 
   lines.push('    <nat>');
 
-  const sourceRules = natRules.filter(r => r.type === 'source' || r.type === 'source-and-destination');
-  const destRules = natRules.filter(r => r.type === 'destination' || r.type === 'source-and-destination');
-  const staticRules = natRules.filter(r => r.type === 'static');
+  const sourceRules = natRules.filter(rule => effectiveNatTypes(rule).includes('source'));
+  const destRules = natRules.filter(rule => effectiveNatTypes(rule).includes('destination'));
+  const staticRules = natRules.filter(rule => effectiveNatTypes(rule).includes('static'));
 
   // --- Source NAT ---
   if (sourceRules.length > 0) {
@@ -1071,7 +1075,7 @@ function buildSchedulersXml(schedules, lines, identifierNames) {
 // UTM XML Builder
 // ---------------------------------------------------------------------------
 
-function computeUtmMap(config, identifierNames) {
+function computeUtmMap(config, identifierNames, warnings) {
   const policies = config.security_policies || [];
   const utmPolicyMap = {};
   const utmProfiles = [];
@@ -1093,7 +1097,6 @@ function computeUtmMap(config, identifierNames) {
     const sp = policy.security_profiles || {};
     const utmP = {};
     for (const t of utmTypes) {
-      if (t === 'file-blocking') continue; // Not supported in SRX conversion
       if (sp[t]) utmP[t] = sp[t];
     }
     if (Object.keys(utmP).length === 0) continue;
@@ -1113,6 +1116,14 @@ function computeUtmMap(config, identifierNames) {
     for (const [type, value] of Object.entries(combo.profiles)) {
       const feature = featureUseLookup.get(`${ownerIndex}\0${type}`);
       const mapped = mapProfileToSrx(type, value);
+      if (mapped.srxFeature === 'unsupported' && type === 'file-blocking') {
+        warnings.push(createWarning(
+          'unsupported',
+          `profile/${type}/${value}`,
+          `File-blocking profile "${value}" is not supported in Junos SRX conversion`,
+          'SRX does not have an equivalent file-blocking feature — review UTM content-filtering or ICAP for similar functionality',
+        ));
+      }
       profiles[type] = {
         mapped,
         feature,
@@ -1592,6 +1603,63 @@ function buildAdditionalBgpBodyXml(bgp, bgpIndex, lines, indent, identifierNames
   }
 }
 
+function buildOspfRecordXml(ospf, ospfIndex, field, lines, indent, identifierNames) {
+  const protocol = field === 'ospf3_config' ? 'ospf3' : 'ospf';
+  const role = protocol === 'ospf3'
+    ? 'ospf3-redistribution-policy'
+    : 'ospf-redistribution-policy';
+  lines.push(`${indent}<${protocol}>`);
+  if (ospf.reference_bandwidth) {
+    lines.push(`${indent}  <reference-bandwidth>${xmlText(String(ospf.reference_bandwidth))}</reference-bandwidth>`);
+  }
+  for (const area of ospf.areas || []) {
+    lines.push(`${indent}  <area>`);
+    lines.push(`${indent}    <name>${xmlText(area.area_id)}</name>`);
+    if (area.area_type === 'stub' || area.area_type === 'totally-stub') {
+      lines.push(`${indent}    <stub>`);
+      if (area.area_type === 'totally-stub') lines.push(`${indent}      <no-summaries/>`);
+      lines.push(`${indent}    </stub>`);
+    } else if (area.area_type === 'nssa' || area.area_type === 'totally-nssa') {
+      lines.push(`${indent}    <nssa>`);
+      if (area.area_type === 'totally-nssa') lines.push(`${indent}      <no-summaries/>`);
+      lines.push(`${indent}    </nssa>`);
+    }
+    for (const iface of area.interfaces || []) {
+      lines.push(`${indent}    <interface>`);
+      lines.push(`${indent}      <name>${xmlText(iface.name)}</name>`);
+      if (iface.cost != null) lines.push(`${indent}      <metric>${iface.cost}</metric>`);
+      if (iface.hello_interval != null) lines.push(`${indent}      <hello-interval>${iface.hello_interval}</hello-interval>`);
+      if (iface.dead_interval != null) lines.push(`${indent}      <dead-interval>${iface.dead_interval}</dead-interval>`);
+      if (iface.passive) lines.push(`${indent}      <passive/>`);
+      if (iface.network_type) lines.push(`${indent}      <interface-type>${xmlText(iface.network_type)}</interface-type>`);
+      if (protocol === 'ospf3' && iface.instance_id != null) {
+        lines.push(`${indent}      <instance-id>${iface.instance_id}</instance-id>`);
+      }
+      if (protocol === 'ospf' && iface.authentication) {
+        lines.push(`${indent}      <authentication>`);
+        if (iface.authentication.type === 'md5') {
+          lines.push(`${indent}        <md5>`);
+          lines.push(`${indent}          <name>${iface.authentication.key_id || 1}</name>`);
+          lines.push(`${indent}          <key>${xmlText(iface.authentication.key || '')}</key>`);
+          lines.push(`${indent}        </md5>`);
+        } else if (iface.authentication.type === 'simple') {
+          lines.push(`${indent}        <simple-password>${xmlText(iface.authentication.key || '')}</simple-password>`);
+        }
+        lines.push(`${indent}      </authentication>`);
+      }
+      lines.push(`${indent}    </interface>`);
+    }
+    lines.push(`${indent}  </area>`);
+  }
+  for (let redistIndex = 0; redistIndex < (ospf.redistribute || []).length; redistIndex += 1) {
+    const policyName = identifierNames.generated(
+      `${field}[${ospfIndex}].redistribute[${redistIndex}]`, role,
+    );
+    lines.push(`${indent}  <export>${xmlText(policyName)}</export>`);
+  }
+  lines.push(`${indent}</${protocol}>`);
+}
+
 function buildRoutingXml(config, lines, identifierNames) {
   const routes = config.static_routes || [];
   const bgpConfigs = config.bgp_config || [];
@@ -1628,12 +1696,13 @@ function buildRoutingXml(config, lines, identifierNames) {
   // Find global BGP/OSPF/OSPFv3/EVPN (instance === '')
   const globalBgp = bgpConfigs.find(b => !b.instance);
   const globalBgpIndex = bgpConfigs.indexOf(globalBgp);
-  const globalOspf = ospfConfigs.find(o => !o.instance);
-  const globalOspf3 = ospf3Configs.find(o => !o.instance);
+  const globalOspfs = ospfConfigs.filter(o => !o.instance);
+  const globalOspf3s = ospf3Configs.filter(o => !o.instance);
+  const globalOspf = globalOspfs[0];
   const globalEvpn = evpnConfigs.find(e => !e.instance);
 
   const hasGlobalRoutingOpts = globalRoutes.length > 0 || globalBgp;
-  const hasGlobalProtocols = globalBgp || globalOspf || globalOspf3 || globalEvpn;
+  const hasGlobalProtocols = globalBgp || globalOspfs.length > 0 || globalOspf3s.length > 0 || globalEvpn;
 
   // Global routing-options (static routes + BGP AS/router-id)
   if (hasGlobalRoutingOpts) {
@@ -1744,93 +1813,15 @@ function buildRoutingXml(config, lines, identifierNames) {
       lines.push('    </bgp>');
     }
 
-    // OSPF
-    if (globalOspf) {
-      lines.push('    <ospf>');
-      if (globalOspf.reference_bandwidth) {
-        lines.push(`      <reference-bandwidth>${xmlText(String(globalOspf.reference_bandwidth))}</reference-bandwidth>`);
-      }
-      for (const area of globalOspf.areas || []) {
-        lines.push('      <area>');
-        lines.push(`        <name>${xmlText(area.area_id)}</name>`);
-        if (area.area_type === 'stub' || area.area_type === 'totally-stub') {
-          lines.push('        <stub>');
-          if (area.area_type === 'totally-stub') lines.push('          <no-summaries/>');
-          lines.push('        </stub>');
-        } else if (area.area_type === 'nssa' || area.area_type === 'totally-nssa') {
-          lines.push('        <nssa>');
-          if (area.area_type === 'totally-nssa') lines.push('          <no-summaries/>');
-          lines.push('        </nssa>');
-        }
-        for (const iface of area.interfaces || []) {
-          lines.push('        <interface>');
-          lines.push(`          <name>${xmlText(iface.name)}</name>`);
-          if (iface.cost != null) lines.push(`          <metric>${iface.cost}</metric>`);
-          if (iface.hello_interval != null) lines.push(`          <hello-interval>${iface.hello_interval}</hello-interval>`);
-          if (iface.dead_interval != null) lines.push(`          <dead-interval>${iface.dead_interval}</dead-interval>`);
-          if (iface.passive) lines.push('          <passive/>');
-          if (iface.network_type) lines.push(`          <interface-type>${xmlText(iface.network_type)}</interface-type>`);
-          if (iface.authentication) {
-            lines.push('          <authentication>');
-            if (iface.authentication.type === 'md5') {
-              lines.push('            <md5>');
-              lines.push(`              <name>${iface.authentication.key_id || 1}</name>`);
-              lines.push(`              <key>${xmlText(iface.authentication.key || '')}</key>`);
-              lines.push('            </md5>');
-            } else if (iface.authentication.type === 'simple') {
-              lines.push(`            <simple-password>${xmlText(iface.authentication.key || '')}</simple-password>`);
-            }
-            lines.push('          </authentication>');
-          }
-          lines.push('        </interface>');
-        }
-        lines.push('      </area>');
-      }
-      const ospfIndex = ospfConfigs.indexOf(globalOspf);
-      for (let redistIndex = 0; redistIndex < (globalOspf.redistribute || []).length; redistIndex += 1) {
-        const stmtName = identifierNames.generated(`ospf_config[${ospfIndex}].redistribute[${redistIndex}]`, 'ospf-redistribution-policy');
-        lines.push(`      <export>${xmlText(stmtName)}</export>`);
-      }
-      lines.push('    </ospf>');
+    for (const ospf of globalOspfs) {
+      buildOspfRecordXml(
+        ospf, ospfConfigs.indexOf(ospf), 'ospf_config', lines, '    ', identifierNames,
+      );
     }
-
-    // OSPFv3
-    if (globalOspf3) {
-      lines.push('    <ospf3>');
-      if (globalOspf3.reference_bandwidth) {
-        lines.push(`      <reference-bandwidth>${xmlText(String(globalOspf3.reference_bandwidth))}</reference-bandwidth>`);
-      }
-      for (const area of globalOspf3.areas || []) {
-        lines.push('      <area>');
-        lines.push(`        <name>${xmlText(area.area_id)}</name>`);
-        if (area.area_type === 'stub' || area.area_type === 'totally-stub') {
-          lines.push('        <stub>');
-          if (area.area_type === 'totally-stub') lines.push('          <no-summaries/>');
-          lines.push('        </stub>');
-        } else if (area.area_type === 'nssa' || area.area_type === 'totally-nssa') {
-          lines.push('        <nssa>');
-          if (area.area_type === 'totally-nssa') lines.push('          <no-summaries/>');
-          lines.push('        </nssa>');
-        }
-        for (const iface of area.interfaces || []) {
-          lines.push('        <interface>');
-          lines.push(`          <name>${xmlText(iface.name)}</name>`);
-          if (iface.cost != null) lines.push(`          <metric>${iface.cost}</metric>`);
-          if (iface.hello_interval != null) lines.push(`          <hello-interval>${iface.hello_interval}</hello-interval>`);
-          if (iface.dead_interval != null) lines.push(`          <dead-interval>${iface.dead_interval}</dead-interval>`);
-          if (iface.passive) lines.push('          <passive/>');
-          if (iface.network_type) lines.push(`          <interface-type>${xmlText(iface.network_type)}</interface-type>`);
-          if (iface.instance_id != null) lines.push(`          <instance-id>${iface.instance_id}</instance-id>`);
-          lines.push('        </interface>');
-        }
-        lines.push('      </area>');
-      }
-      const ospf3Index = ospf3Configs.indexOf(globalOspf3);
-      for (let redistIndex = 0; redistIndex < (globalOspf3.redistribute || []).length; redistIndex += 1) {
-        const stmtName = identifierNames.generated(`ospf3_config[${ospf3Index}].redistribute[${redistIndex}]`, 'ospf3-redistribution-policy');
-        lines.push(`      <export>${xmlText(stmtName)}</export>`);
-      }
-      lines.push('    </ospf3>');
+    for (const ospf3 of globalOspf3s) {
+      buildOspfRecordXml(
+        ospf3, ospf3Configs.indexOf(ospf3), 'ospf3_config', lines, '    ', identifierNames,
+      );
     }
 
     // EVPN
@@ -1902,8 +1893,14 @@ function buildRoutingXml(config, lines, identifierNames) {
   const instOspf3Map = {};
   const instEvpnMap = {};
   for (const b of bgpConfigs.filter(b => b.instance)) instBgpMap[b.instance] = b;
-  for (const o of ospfConfigs.filter(o => o.instance)) instOspfMap[o.instance] = o;
-  for (const o of ospf3Configs.filter(o => o.instance)) instOspf3Map[o.instance] = o;
+  for (const o of ospfConfigs.filter(o => o.instance)) {
+    if (!instOspfMap[o.instance]) instOspfMap[o.instance] = [];
+    instOspfMap[o.instance].push(o);
+  }
+  for (const o of ospf3Configs.filter(o => o.instance)) {
+    if (!instOspf3Map[o.instance]) instOspf3Map[o.instance] = [];
+    instOspf3Map[o.instance].push(o);
+  }
   for (const e of evpnConfigs.filter(e => e.instance)) instEvpnMap[e.instance] = e;
 
   const allInstNames = new Set([
@@ -1923,8 +1920,9 @@ function buildRoutingXml(config, lines, identifierNames) {
       const name = identifierNames.definition(definitionPath);
       const instRoutes = vrfGroups[instName] || [];
       const instBgp = instBgpMap[instName];
-      const instOspf = instOspfMap[instName];
-      const instOspf3 = instOspf3Map[instName];
+      const instOspfs = instOspfMap[instName] || [];
+      const instOspf3s = instOspf3Map[instName] || [];
+      const instOspf = instOspfs[0];
       const instEvpn = instEvpnMap[instName];
 
       lines.push('    <instance>');
@@ -1961,7 +1959,7 @@ function buildRoutingXml(config, lines, identifierNames) {
       }
 
       // Protocols (BGP + OSPF + OSPFv3 + EVPN)
-      if (instBgp || instOspf || instOspf3 || instEvpn) {
+      if (instBgp || instOspfs.length > 0 || instOspf3s.length > 0 || instEvpn) {
         lines.push('      <protocols>');
         if (instBgp) {
           lines.push('        <bgp>');
@@ -2024,54 +2022,15 @@ function buildRoutingXml(config, lines, identifierNames) {
           buildAdditionalBgpBodyXml(extraBgp, extraIndex, lines, '          ', identifierNames);
           lines.push('        </bgp>');
         }
-        if (instOspf) {
-          lines.push('        <ospf>');
-          for (const area of instOspf.areas || []) {
-            lines.push('          <area>');
-            lines.push(`            <name>${xmlText(area.area_id)}</name>`);
-            for (const iface of area.interfaces || []) {
-              lines.push('            <interface>');
-              lines.push(`              <name>${xmlText(iface.name)}</name>`);
-              if (iface.cost != null) lines.push(`              <metric>${iface.cost}</metric>`);
-              if (iface.passive) lines.push('              <passive/>');
-              lines.push('            </interface>');
-            }
-            lines.push('          </area>');
-          }
-          const ospfIndex = ospfConfigs.indexOf(instOspf);
-          for (let redistIndex = 0; redistIndex < (instOspf.redistribute || []).length; redistIndex += 1) {
-            const policyName = identifierNames.generated(
-              `ospf_config[${ospfIndex}].redistribute[${redistIndex}]`,
-              'ospf-redistribution-policy',
-            );
-            lines.push(`          <export>${xmlText(policyName)}</export>`);
-          }
-          lines.push('        </ospf>');
+        for (const ospf of instOspfs) {
+          buildOspfRecordXml(
+            ospf, ospfConfigs.indexOf(ospf), 'ospf_config', lines, '        ', identifierNames,
+          );
         }
-        if (instOspf3) {
-          lines.push('        <ospf3>');
-          for (const area of instOspf3.areas || []) {
-            lines.push('          <area>');
-            lines.push(`            <name>${xmlText(area.area_id)}</name>`);
-            for (const iface of area.interfaces || []) {
-              lines.push('            <interface>');
-              lines.push(`              <name>${xmlText(iface.name)}</name>`);
-              if (iface.cost != null) lines.push(`              <metric>${iface.cost}</metric>`);
-              if (iface.passive) lines.push('              <passive/>');
-              if (iface.instance_id != null) lines.push(`              <instance-id>${iface.instance_id}</instance-id>`);
-              lines.push('            </interface>');
-            }
-            lines.push('          </area>');
-          }
-          const ospf3Index = ospf3Configs.indexOf(instOspf3);
-          for (let redistIndex = 0; redistIndex < (instOspf3.redistribute || []).length; redistIndex += 1) {
-            const policyName = identifierNames.generated(
-              `ospf3_config[${ospf3Index}].redistribute[${redistIndex}]`,
-              'ospf3-redistribution-policy',
-            );
-            lines.push(`          <export>${xmlText(policyName)}</export>`);
-          }
-          lines.push('        </ospf3>');
+        for (const ospf3 of instOspf3s) {
+          buildOspfRecordXml(
+            ospf3, ospf3Configs.indexOf(ospf3), 'ospf3_config', lines, '        ', identifierNames,
+          );
         }
         if (instEvpn) {
           lines.push('        <evpn>');

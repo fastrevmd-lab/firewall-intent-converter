@@ -1329,6 +1329,139 @@ describe('Set identifier-plan integration', () => {
 });
 
 describe('XML identifier-plan integration', () => {
+  it.each([
+    ['file-blocking only', { 'file-blocking': 'Strict Files' }],
+    ['mixed file-blocking', { virus: 'Strict AV', 'file-blocking': 'Strict Files' }],
+  ])('retains planned UTM ownership and warnings for %s', (_label, securityProfiles) => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [policy('File Inspection', 'trust', 'untrust', 'any', {
+      security_profiles: securityProfiles,
+    })];
+    const setResult = convertToSrxSetCommands(config);
+    const xmlResult = buildSrxXml(config);
+    const utmPolicy = setResult.identifierMappings.entries.find(
+      entry => entry.namespace === 'utm-policy',
+    );
+    const setUnsupported = setResult.warnings.filter(warning => (
+      warning.severity === 'unsupported' && warning.message.toLowerCase().includes('file-blocking')
+    ));
+    const xmlUnsupported = xmlResult.warnings.filter(warning => (
+      warning.severity === 'unsupported' && warning.message.toLowerCase().includes('file-blocking')
+    ));
+    const warningSemantics = warning => ({
+      severity: warning.severity,
+      element: warning.element,
+      message: warning.message,
+      suggestion: warning.suggestion,
+    });
+
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
+    expect(utmPolicy).toBeDefined();
+    expect(xmlResult.xml).toContain(`<utm-policy name="${utmPolicy.outputName}">`);
+    expect(xmlResult.xml).toContain(`<utm-policy>${utmPolicy.outputName}</utm-policy>`);
+    expect(setUnsupported).toHaveLength(1);
+    expect(xmlUnsupported).toHaveLength(1);
+    expect(xmlUnsupported.map(warningSemantics)).toEqual(setUnsupported.map(warningSemantics));
+  });
+
+  it('treats a missing NAT type as implicit source NAT in Set and XML', () => {
+    const config = baseAdvancedConfig();
+    config.nat_rules = [{
+      name: 'Implicit Source',
+      src_zones: ['trust'],
+      dst_zones: ['untrust'],
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+      translated_src: { type: 'interface' },
+    }];
+    const setResult = convertToSrxSetCommands(config);
+    const xmlResult = buildSrxXml(config);
+    const natRule = setResult.identifierMappings.entries.find(entry => entry.namespace === 'nat-rule');
+    const ruleSet = setResult.identifierMappings.entries.find(entry => entry.namespace === 'nat-rule-set');
+
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
+    expect(setResult.commands.some(command => command.includes(
+      `security nat source rule-set ${ruleSet.outputName}`,
+    ))).toBe(true);
+    expect(xmlResult.xml).toContain('<source>');
+    expect(xmlResult.xml).toContain(`<name>${ruleSet.outputName}</name>`);
+    expect(xmlResult.xml).toContain(`<name>${natRule.outputName}</name>`);
+  });
+
+  it.each([
+    ['OSPF', 'ospf_config'],
+    ['OSPFv3', 'ospf3_config'],
+  ])('retains every same-instance %s record and export policy', (_label, field) => {
+    const config = baseAdvancedConfig();
+    config[field] = [
+      { instance: 'Blue', reference_bandwidth: 10000, redistribute: [{ protocol: 'static' }] },
+      { instance: 'Blue', reference_bandwidth: 20000, redistribute: [{ protocol: 'direct' }] },
+    ];
+    const setResult = convertToSrxSetCommands(config);
+    const result = buildSrxXml(config);
+    const policies = result.identifierMappings.entries.filter(entry => entry.namespace === 'routing-policy');
+    const role = field === 'ospf3_config'
+      ? 'ospf3-redistribution-policy'
+      : 'ospf-redistribution-policy';
+    const expectedPolicies = [0, 1].map(index => result.identifierMappings.entries.find(entry => (
+      entry.definitionPath === `${field}[${index}].redistribute[0]#generated:${role}`
+    )));
+
+    expect(result.identifierMappings).toEqual(setResult.identifierMappings);
+    expect(policies).toHaveLength(2);
+    expect(result.xml).toContain('<reference-bandwidth>10000</reference-bandwidth>');
+    expect(result.xml).toContain('<reference-bandwidth>20000</reference-bandwidth>');
+    for (const entry of policies) {
+      expect(setResult.commands.some(command => command.endsWith(` export ${entry.outputName}`)))
+        .toBe(true);
+      expect(result.xml).toContain(`<export>${entry.outputName}</export>`);
+      expect(result.xml).toContain(`<name>${entry.outputName}</name>`);
+    }
+    expect(result.xml.indexOf('<reference-bandwidth>10000</reference-bandwidth>'))
+      .toBeLessThan(result.xml.indexOf('<reference-bandwidth>20000</reference-bandwidth>'));
+    expect(result.xml.indexOf(`<export>${expectedPolicies[0].outputName}</export>`))
+      .toBeLessThan(result.xml.indexOf(`<export>${expectedPolicies[1].outputName}</export>`));
+    expect(result.xml.indexOf(`<name>${expectedPolicies[0].outputName}</name>`))
+      .toBeLessThan(result.xml.indexOf(`<name>${expectedPolicies[1].outputName}</name>`));
+  });
+
+  it.each([
+    ['OSPF', 'ospf_config'],
+    ['OSPFv3', 'ospf3_config'],
+  ])('retains every global %s record and export policy', (_label, field) => {
+    const config = baseAdvancedConfig();
+    config[field] = [
+      { reference_bandwidth: 10000, redistribute: [{ protocol: 'static' }] },
+      { reference_bandwidth: 20000, redistribute: [{ protocol: 'direct' }] },
+    ];
+    const setResult = convertToSrxSetCommands(config);
+    const result = buildSrxXml(config);
+    const policies = result.identifierMappings.entries.filter(entry => entry.namespace === 'routing-policy');
+    const role = field === 'ospf3_config'
+      ? 'ospf3-redistribution-policy'
+      : 'ospf-redistribution-policy';
+    const expectedPolicies = [0, 1].map(index => result.identifierMappings.entries.find(entry => (
+      entry.definitionPath === `${field}[${index}].redistribute[0]#generated:${role}`
+    )));
+
+    expect(result.identifierMappings).toEqual(setResult.identifierMappings);
+    expect(policies).toHaveLength(2);
+    expect(result.xml).toContain('<reference-bandwidth>10000</reference-bandwidth>');
+    expect(result.xml).toContain('<reference-bandwidth>20000</reference-bandwidth>');
+    for (const entry of policies) {
+      expect(setResult.commands.some(command => command.endsWith(` export ${entry.outputName}`)))
+        .toBe(true);
+      expect(result.xml).toContain(`<export>${entry.outputName}</export>`);
+      expect(result.xml).toContain(`<name>${entry.outputName}</name>`);
+    }
+    expect(result.xml.indexOf('<reference-bandwidth>10000</reference-bandwidth>'))
+      .toBeLessThan(result.xml.indexOf('<reference-bandwidth>20000</reference-bandwidth>'));
+    expect(result.xml.indexOf(`<export>${expectedPolicies[0].outputName}</export>`))
+      .toBeLessThan(result.xml.indexOf(`<export>${expectedPolicies[1].outputName}</export>`));
+    expect(result.xml.indexOf(`<name>${expectedPolicies[0].outputName}</name>`))
+      .toBeLessThan(result.xml.indexOf(`<name>${expectedPolicies[1].outputName}</name>`));
+  });
+
   it('reuses one planned XML policy name across global any-zone combinations', () => {
     const config = baseConfig({
       zones: [{ name: 'trust', interfaces: [] }, { name: 'untrust', interfaces: [] }],
