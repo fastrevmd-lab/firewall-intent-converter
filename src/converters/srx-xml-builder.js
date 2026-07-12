@@ -13,7 +13,6 @@
 import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning, isPredefEquivalent } from '../parsers/parser-utils.js';
 import {
   setEnum,
-  setIdentifier,
   setInteger,
   setToken,
   xmlAttribute,
@@ -101,7 +100,6 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
   const useContext = ctx && ctx.type && ctx.type !== 'none' && ctx.name;
   if (ctx?.type !== undefined) {
     setEnum(ctx.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
-    if (ctx.type !== 'none') setIdentifier(ctx.name, 'targetContext.name');
   }
   const indent = useContext ? '    ' : '  ';
 
@@ -521,6 +519,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
       }
       if (policy.source_users && policy.source_users.length > 0) {
         for (const identity of policy.source_users) {
+          // identifier-catalog: non-symbol security-policy source-identity element value
           lines.push(`            <source-identity>${xmlText(sanitizeJunosName(identity))}</source-identity>`);
         }
       }

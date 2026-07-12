@@ -23,7 +23,6 @@ import { getJunosEmission } from '../utils/app-mappings.js';
 import {
   setComment,
   setEnum,
-  setIdentifier,
   setInteger,
   setQuoted,
   setToken,
@@ -82,7 +81,6 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     validateJunosInput(targetContext, 'targetContext');
     if (targetContext.type !== undefined) {
       setEnum(targetContext.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
-      if (targetContext.type !== 'none') setIdentifier(targetContext.name, 'targetContext.name');
     }
   }
 
@@ -1205,6 +1203,7 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
               identifierPath(`security_policies[${feature.ownerIndex}]`),
               `application-firewall-rule-${ruleNum}`,
             );
+            // identifier-catalog: non-symbol application-firewall dynamic-application-group match value
             utmCommands.push(`set security application-firewall rule-sets ${rsName} rule ${ruleName} match dynamic-application-group junos:${sanitizeJunosName(category)}`);
             utmCommands.push(`set security application-firewall rule-sets ${rsName} rule ${ruleName} then deny`);
           }
@@ -1269,6 +1268,7 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
         } else if (mapped.srxType === 'content-filtering') {
           if (profileDef && profileDef.blockedExtensions && profileDef.blockedExtensions.length > 0) {
             for (const ext of profileDef.blockedExtensions) {
+              // identifier-catalog: non-symbol content-filtering block-extension match value
               utmCommands.push(`set security utm feature-profile content-filtering profile ${profileName} block-extension ${sanitizeJunosName(ext)}`);
             }
           } else {
@@ -1709,6 +1709,7 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         // Match criteria: source identity (user/group via JIMS)
         if (policy.source_users && policy.source_users.length > 0) {
           for (const identity of policy.source_users) {
+            // identifier-catalog: non-symbol security-policy source-identity match value
             commands.push(`set ${policyPath} match source-identity ${setQuoted(sanitizeJunosName(identity), `security_policies[${pIdx}].source_users`)}`);
           }
         }

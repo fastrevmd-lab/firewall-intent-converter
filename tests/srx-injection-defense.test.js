@@ -48,7 +48,101 @@ function baseConfig() {
   };
 }
 
+function sourceLineIndex(source, offset) {
+  return source.slice(0, offset).split('\n').length - 1;
+}
+
+function identifierCatalogFindings(source, relativePath) {
+  const lines = source.split('\n');
+  const findings = [];
+  const aliasPatterns = [
+    /\b(?:sanitizeJunosName|setIdentifier)\s+as\s+[A-Za-z_$][\w$]*/g,
+    /\b[A-Za-z_$][\w$]*\s*=\s*(?:sanitizeJunosName|setIdentifier)\b/g,
+    /[,{}]\s*(?:sanitizeJunosName|setIdentifier)\s*:\s*[A-Za-z_$][\w$]*/g,
+  ];
+  for (const pattern of aliasPatterns) {
+    for (const match of source.matchAll(pattern)) {
+      findings.push(`${relativePath}:${sourceLineIndex(source, match.index) + 1} alias/rebinding`);
+    }
+  }
+
+  const markersByLine = new Map();
+  lines.forEach((line, index) => {
+    const markers = [...line.matchAll(/\/\/ identifier-catalog: non-symbol ([^\n]+)/g)]
+      .filter(match => match[1].trim().length > 0)
+      .map(match => `${index}:${match.index}`);
+    if (markers.length > 0) markersByLine.set(index, markers);
+  });
+
+  const callsByLine = new Map();
+  for (const match of source.matchAll(/\b(?:sanitizeJunosName|setIdentifier)\s*\(/g)) {
+    const index = sourceLineIndex(source, match.index);
+    const calls = callsByLine.get(index) || [];
+    calls.push(match[0]);
+    callsByLine.set(index, calls);
+  }
+
+  const usedMarkers = new Set();
+  for (const [index, calls] of callsByLine) {
+    if (calls.length !== 1) {
+      findings.push(`${relativePath}:${index + 1} multiple direct calls`);
+      continue;
+    }
+    const candidates = [
+      ...(markersByLine.get(index - 1) || []),
+      ...(markersByLine.get(index) || []),
+    ];
+    if (candidates.length !== 1) {
+      findings.push(`${relativePath}:${index + 1} missing or ambiguous marker`);
+      continue;
+    }
+    if (usedMarkers.has(candidates[0])) {
+      findings.push(`${relativePath}:${index + 1} shared marker`);
+      continue;
+    }
+    usedMarkers.add(candidates[0]);
+  }
+  return findings;
+}
+
 describe('set converter injection defense', () => {
+  it('requires identifier catalog coverage for every direct sanitizer call', () => {
+    const findings = [];
+    for (const relativePath of [
+      '../src/converters/srx-converter.js',
+      '../src/converters/srx-xml-builder.js',
+    ]) {
+      const source = fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
+      findings.push(...identifierCatalogFindings(source, relativePath));
+    }
+    expect(findings).toEqual([]);
+  });
+
+  it.each([
+    [
+      'whitespace/newline call',
+      'sanitizeJunosName \n(value);',
+      ['fixture.js:1 missing or ambiguous marker'],
+    ],
+    [
+      'aliased import',
+      "import { sanitizeJunosName as normalize } from './parser-utils.js';",
+      ['fixture.js:1 alias/rebinding'],
+    ],
+    [
+      'assigned alias',
+      'const normalize = setIdentifier;',
+      ['fixture.js:1 alias/rebinding'],
+    ],
+    [
+      'two calls sharing one marker',
+      '// identifier-catalog: non-symbol fixture field\nsanitizeJunosName(a); setIdentifier(b);',
+      ['fixture.js:2 multiple direct calls'],
+    ],
+  ])('rejects identifier catalog scanner bypass via %s', (_label, source, expected) => {
+    expect(identifierCatalogFindings(source, 'fixture.js')).toEqual(expected);
+  });
+
   it('escapes printable quoted text and returns structurally valid output', () => {
     const { commands } = convertToSrxSetCommands(baseConfig());
     const joined = commands.join('\n');

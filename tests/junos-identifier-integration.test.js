@@ -11,6 +11,7 @@ import {
 import { setMapVendorApp } from '../src/parsers/parser-utils.js';
 import {
   JunosIdentifierPlanningError,
+  createJunosIdentifierPlan,
   planJunosIdentifiers,
   planMergedJunosIdentifiers,
 } from '../src/security/junos-identifiers.js';
@@ -113,6 +114,152 @@ function stableMappingAssociations(mapping) {
     outputName: entry.outputName,
     resolution: entry.resolution,
   })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomToken(random, length = 8) {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  return Array.from(
+    { length },
+    () => alphabet[Math.floor(random() * alphabet.length)],
+  ).join('');
+}
+
+function hostileNamePair(seed, pairIndex, random) {
+  const token = randomToken(random);
+  const numericPrefix = String(1 + Math.floor(random() * 9));
+  const commonPrefix = `shared-${seed}-${'x'.repeat(70)}`;
+  switch ((pairIndex + Math.floor(random() * 7)) % 7) {
+    case 0:
+      return { category: 'whitespace', names: [`${token} ${pairIndex}`, `${token}@${pairIndex}`] };
+    case 1:
+      return { category: 'repeated-dashes', names: [`${token}--${pairIndex}`, `${token}  ${pairIndex}`] };
+    case 2:
+      return { category: 'numeric-prefix', names: [`${numericPrefix} ${token}`, `${numericPrefix}@${token}`] };
+    case 3:
+      return { category: 'case-variant', names: [`Case${token} ${pairIndex}`, `case${token}@${pairIndex}`] };
+    case 4:
+      return { category: 'long-common-prefix-truncation', names: [`${commonPrefix} ${token}`, `${commonPrefix}@${token}`] };
+    case 5:
+      return { category: 'punctuation', names: [`!!!${token}...${pairIndex}`, `???${token}...${pairIndex}`] };
+    default:
+      return {
+        category: 'empty-normalizing',
+        names: ['!'.repeat(pairIndex + 1), '?'.repeat(pairIndex + 1)],
+      };
+  }
+}
+
+function makeRandomSymbols(seed) {
+  const random = seededRandom(seed);
+  const definitions = [];
+  const references = [];
+  const boundReferences = [];
+  const generatedReferences = [];
+  const unresolvedReferencePaths = [];
+  const categoryCounts = new Map();
+  const namespaces = ['address-entry', 'application-entry', 'policy', 'routing-policy'];
+
+  for (let pairIndex = 0; pairIndex < 100; pairIndex++) {
+    const { category, names } = hostileNamePair(seed, pairIndex, random);
+    categoryCounts.set(category, (categoryCounts.get(category) || 0) + names.length);
+    for (const [side, sourceName] of names.entries()) {
+      const index = pairIndex * 2 + side;
+      const namespace = namespaces[pairIndex % namespaces.length];
+      const context = `root/random-context-${pairIndex % 2}`;
+      const kind = `random-kind-${pairIndex % 3}`;
+      const definitionPath = `seed[${seed}].definitions[${index}]`;
+      const referencePath = `seed[${seed}].references[${index}]`;
+      const generated = seed <= 25 && index >= 180;
+      const role = generated ? `generated-child-${index}` : null;
+      definitions.push({
+        catalogKey: `random-${namespace}`,
+        context,
+        namespace,
+        kind,
+        sourceName,
+        definitionPath,
+        generated,
+        role,
+        stableParentKey: generated ? `seed:${seed}:owner:${index}` : null,
+      });
+      references.push({
+        catalogKey: `random-${namespace}`,
+        context,
+        namespace,
+        compatibleKinds: [kind],
+        sourceName,
+        referencePath,
+        literals: [],
+      });
+      const binding = { definitionPath, referencePath, role };
+      (generated ? generatedReferences : boundReferences).push(binding);
+    }
+  }
+
+  if (seed <= 25) {
+    for (let index = 0; index < 10; index++) {
+      const referencePath = `seed[${seed}].unresolved[${index}]`;
+      references.push({
+        catalogKey: 'random-address-entry',
+        context: 'root/random-context-0',
+        namespace: 'address-entry',
+        compatibleKinds: ['external-address'],
+        sourceName: index % 2 === 0
+          ? `Missing ${seed} ${Math.floor(index / 2)}`
+          : `Missing@${seed}@${Math.floor(index / 2)}`,
+        referencePath,
+        literals: [],
+      });
+      unresolvedReferencePaths.push(referencePath);
+    }
+  }
+
+  return {
+    definitions,
+    references,
+    reservations: [],
+    boundReferences,
+    generatedReferences,
+    unresolvedReferencePaths,
+    categoryCounts: Object.fromEntries([...categoryCounts].sort(([left], [right]) => (
+      left.localeCompare(right)
+    ))),
+  };
+}
+
+function reverseSymbols(symbols) {
+  return {
+    ...symbols,
+    definitions: [...symbols.definitions].reverse(),
+    references: [...symbols.references].reverse(),
+    reservations: [...symbols.reservations].reverse(),
+  };
+}
+
+function mappingBySource(mapping) {
+  return mapping.entries.map(entry => ({
+    sourceKey: [
+      entry.context,
+      entry.namespace,
+      entry.kind,
+      entry.sourceName,
+      entry.definitionPath ?? '',
+    ].join('\0'),
+    outputName: entry.outputName,
+    referencePaths: entry.referencePaths,
+    resolution: entry.resolution,
+  })).sort((left, right) => left.sourceKey.localeCompare(right.sourceKey));
 }
 
 function baseAdvancedConfig() {
@@ -325,6 +472,26 @@ function addGeneratedRoutingPolicyCollision(config) {
 }
 
 function expectNamespaceOutputsUnique(mapping, namespace, commands, commandPattern, predicate = () => true) {
+  if (namespace === undefined) {
+    const entriesByNamespace = new Map();
+    for (const entry of mapping.entries) {
+      const key = `${entry.context}\0${entry.namespace}`;
+      const entries = entriesByNamespace.get(key) || [];
+      entries.push(entry);
+      entriesByNamespace.set(key, entries);
+    }
+    for (const [key, entries] of entriesByNamespace) {
+      expect(
+        new Set(entries.map(entry => entry.outputName)).size,
+        `duplicate output in ${key}`,
+      ).toBe(entries.length);
+      for (const entry of entries) {
+        expect(entry.outputName, `${key}:${entry.sourceName}`)
+          .toMatch(/^[A-Za-z][A-Za-z0-9._-]{0,62}$/);
+      }
+    }
+    return;
+  }
   const entries = mapping.entries.filter(entry => (
     entry.namespace === namespace && predicate(entry)
   ));
@@ -336,6 +503,61 @@ function expectNamespaceOutputsUnique(mapping, namespace, commands, commandPatte
     ))).toBe(true);
   }
 }
+
+describe('Randomized Junos identifier allocation integrity', () => {
+  it('preserves order, namespace uniqueness, and reference bindings across hostile names', () => {
+    let seedsWithGeneratedAndUnresolved = 0;
+    for (let seed = 1; seed <= 32; seed++) {
+      const symbols = makeRandomSymbols(seed);
+      const reversedSymbols = reverseSymbols(makeRandomSymbols(seed));
+      expect(symbols.definitions, `seed ${seed} randomized name count`).toHaveLength(200);
+      expect(Object.keys(symbols.categoryCounts), `seed ${seed} hostile-name categories`).toEqual([
+        'case-variant',
+        'empty-normalizing',
+        'long-common-prefix-truncation',
+        'numeric-prefix',
+        'punctuation',
+        'repeated-dashes',
+        'whitespace',
+      ]);
+      expect(
+        Object.values(symbols.categoryCounts).every(count => count > 0),
+        `seed ${seed} hostile-name category counts`,
+      ).toBe(true);
+      if (symbols.generatedReferences.length > 0 && symbols.unresolvedReferencePaths.length > 0) {
+        seedsWithGeneratedAndUnresolved++;
+      }
+
+      const first = createJunosIdentifierPlan(symbols);
+      const second = createJunosIdentifierPlan(reversedSymbols);
+
+      expect(mappingBySource(first.mapping), `seed ${seed} order independence`)
+        .toEqual(mappingBySource(second.mapping));
+      expectNamespaceOutputsUnique(first.mapping);
+
+      for (const reference of symbols.boundReferences) {
+        expect(first.nameForReference(reference.referencePath))
+          .toBe(first.nameForDefinition(reference.definitionPath));
+      }
+      for (const reference of symbols.generatedReferences) {
+        expect(first.nameForReference(reference.referencePath))
+          .toBe(first.nameForGenerated(reference.definitionPath, reference.role));
+      }
+      for (const referencePath of symbols.unresolvedReferencePaths) {
+        const entry = first.mapping.entries.find(candidate => (
+          candidate.definitionPath === null
+          && candidate.referencePaths.includes(referencePath)
+        ));
+        expect(entry, `seed ${seed} unresolved ${referencePath}`).toMatchObject({
+          definitionPath: null,
+        });
+        expect(entry.resolution).toMatch(/^unresolved-/);
+        expect(first.nameForReference(referencePath)).toBe(entry.outputName);
+      }
+    }
+    expect(seedsWithGeneratedAndUnresolved).toBeGreaterThanOrEqual(25);
+  });
+});
 
 describe('Set identifier-plan integration', () => {
   it.each([
