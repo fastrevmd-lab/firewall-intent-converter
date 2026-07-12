@@ -1,12 +1,18 @@
 <p align="center">
-  <img src="static/logo.png" alt="Intent Converter" height="80">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mechub-mark.svg">
+    <img src="docs/assets/mechub-mark-light.svg" width="72" alt="mechub mark">
+  </picture>
 </p>
 
-<h1 align="center"><span style="color: #005b5a;">Firewall to Intent Converter</span></h1>
+<h1 align="center">firewall-intent-converter</h1>
 
-Unofficial / community project. Not affiliated with, endorsed by, or supported by Cisco, Fortinet, Palo Alto Networks, Juniper Networks, or HPE. See [License and Provenance](#license) for the full notice and the trademark disclaimer.
+<p align="center"><strong>Browser-based firewall config to Juniper SRX conversion</strong><br>
+<em>a mechub project — sovereign network-security automation</em></p>
 
-<p align="center">A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports <b>PAN-OS XML</b>, <b>Junos SRX</b>, <b>FortiGate / FortiOS</b>, <b>Cisco ASA / FTD</b>, <b>Check Point R80+</b>, <b>SonicWall SonicOS</b>, <b>Huawei USG</b>, <b>AWS Security Groups</b>, <b>Azure NSG</b>, and <b>GCP Firewall Rules</b> as source formats, plus a <b>Greenfield</b> mode that builds an SRX configuration from scratch via LLM-guided interview. Paste or upload a config (or start a greenfield interview), review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.</p>
+> **Unofficial / community project.** Not affiliated with, endorsed by, or supported by Cisco, Fortinet, Palo Alto Networks, Juniper Networks, or HPE. See [License and Provenance](#license) for the full notice and the trademark disclaimer.
+
+A browser-based tool that converts firewall configurations into an intermediate format for review, editing, and conversion to Juniper SRX. Supports **PAN-OS XML**, **Junos SRX**, **FortiGate / FortiOS**, **Cisco ASA / FTD**, **Check Point R80+**, **SonicWall SonicOS**, **Huawei USG**, **AWS Security Groups**, **Azure NSG**, and **GCP Firewall Rules** as source formats, plus a **Greenfield** mode that builds an SRX configuration from scratch via LLM-guided interview. Paste or upload a config (or start a greenfield interview), review and edit the parsed rules through an interactive UI, optionally get AI-powered best-practice suggestions, then export as SRX set commands or XML.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -538,3 +544,14 @@ This repository is an independent, community-driven initiative and carries no fo
 Original material in this repository is distributed under the MIT License; consult [LICENSE](LICENSE) for full terms.
 
 Configuration output produced by this tool is a **migration draft requiring review**, never production-ready. Always validate generated configurations against vendor documentation and your own change-management process before deployment. No warranty is provided, express or implied.
+
+---
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mechub-mark.svg">
+    <img src="docs/assets/mechub-mark-light.svg" width="28" alt="">
+  </picture><br>
+  <sub><code>a mechub project</code> · deterministic decides · the model explains · a human approves<br>
+  <a href="https://github.com/fastrevmd-lab">github.com/fastrevmd-lab</a></sub>
+</p>
