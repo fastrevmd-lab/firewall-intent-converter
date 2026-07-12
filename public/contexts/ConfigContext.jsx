@@ -25,6 +25,7 @@ const initialState = {
   interfaceMappings: {},
   isSanitized: false,
   sanitizationTable: null,
+  projectSecurityMode: 'unsanitized',
   greenfieldMode: false,
   greenfieldTemplate: null,
   srxTranslatedPolicies: null,

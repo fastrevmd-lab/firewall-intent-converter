@@ -28,6 +28,7 @@ const LLMSettings = React.lazy(() => import('./components/LLMSettings.jsx'));
 const AppMappingsEditor = React.lazy(() => import('./components/AppMappingsEditor.jsx'));
 const FeedbackModal = React.lazy(() => import('./components/FeedbackModal.jsx'));
 const SaveProjectModal = React.lazy(() => import('./components/SaveProjectModal.jsx'));
+const ProjectSecurityImportModal = React.lazy(() => import('./components/ProjectSecurityImportModal.jsx'));
 const ReportModal = React.lazy(() => import('./components/ReportModal.jsx'));
 const GuidedTour = React.lazy(() => import('./components/GuidedTour.jsx'));
 const PushModal = React.lazy(() => import('./components/PushModal.jsx'));
@@ -51,6 +52,7 @@ import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 // Utils
 import { GREENFIELD_TEMPLATES } from './data/greenfield-templates.js';
 import { parseConfig, sanitizeConfig } from './utils/engine.js';
+import { isProjectCryptoAvailable } from './utils/project-crypto.js';
 
 export default function App() {
   // --- Context access ---
@@ -542,8 +544,22 @@ export default function App() {
       {ui.showSaveModal && (
         <SaveProjectModal
           defaultName={project.generateName()}
-          onSave={project.handleSaveProject}
+          descriptor={project.getExportDescriptor()}
+          cryptoAvailable={isProjectCryptoAvailable()}
+          onExport={project.handleExportProject}
+          onSanitizeFirst={() => {
+            uiDispatch({ type: 'HIDE_MODAL', name: 'saveModal' });
+            uiDispatch({ type: 'SET_FIELD', field: 'editTab', value: 'import' });
+          }}
           onClose={() => uiDispatch({ type: 'HIDE_MODAL', name: 'saveModal' })}
+        />
+      )}
+
+      {ui.showProjectSecurityImport && (
+        <ProjectSecurityImportModal
+          descriptor={ui.showProjectSecurityImport}
+          onConfirm={project.confirmPendingImport}
+          onClose={project.cancelPendingImport}
         />
       )}
 
@@ -666,7 +682,15 @@ export default function App() {
             </div>
             <div className="modal-footer" style={{ gap: 8 }}>
               <button className="btn btn-secondary" onClick={() => uiDispatch({ type: 'HIDE_MODAL', name: 'loadConfirm' })}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => project.applyLoadedProject(ui.showLoadConfirm.project)}>Load Project</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => project.applyLoadedProject(
+                  ui.showLoadConfirm.project,
+                  ui.showLoadConfirm.security,
+                )}
+              >
+                Load Project
+              </button>
             </div>
           </div>
         </div>

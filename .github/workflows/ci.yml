@@ -34,6 +34,7 @@ jobs:
         run: >-
           npx vitest run
           tests/context-reducers.test.js
+          tests/project-security-ui.test.jsx
           tests/triage.test.js
           tests/workflow-steps.test.js
           tests/junos-serialization.test.js
