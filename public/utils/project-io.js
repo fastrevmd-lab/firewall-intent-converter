@@ -86,11 +86,14 @@ export function buildProjectCore(stateBag, projectName, security) {
 }
 
 /**
- * Legacy core-only entry retained until the project hook is moved to the
- * security boundary. It intentionally makes no export-security decision.
+ * Fail-closed compatibility entry retained until the project hook is moved to
+ * the asynchronous security boundary.
  */
-export function buildProjectPayload(stateBag, projectName) {
-  return buildProjectCore(stateBag, projectName, undefined);
+export function buildProjectPayload() {
+  const error = new Error('Project export must use the secure export boundary.');
+  error.name = 'ProjectExportBoundaryError';
+  error.code = 'secure_export_required';
+  throw error;
 }
 
 /**

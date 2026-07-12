@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CURRENT_VERSION,
   buildProjectCore,
+  buildProjectPayload,
   validateProjectFile,
   validateProjectStateCore,
 } from '../public/utils/project-io.js';
@@ -68,6 +69,27 @@ function v5Project(mode, state, overrides = {}) {
 }
 
 describe('version 5 project security formats', () => {
+  it('fails closed at the legacy builder before live state can be serialized', () => {
+    const sensitiveState = {
+      ...baseState,
+      configText: 'UNIQUE-LIVE-STATE-SENTINEL',
+    };
+    let payload;
+    let error;
+    try {
+      payload = JSON.stringify(buildProjectPayload(sensitiveState, 'UNIQUE-PROJECT-NAME'));
+    } catch (caught) {
+      error = caught;
+    }
+    expect(payload).toBeUndefined();
+    expect(error).toMatchObject({
+      code: 'secure_export_required',
+      message: 'Project export must use the secure export boundary.',
+    });
+    expect(error.message).not.toContain('UNIQUE-LIVE-STATE-SENTINEL');
+    expect(error.message).not.toContain('UNIQUE-PROJECT-NAME');
+  });
+
   it('writes an irreversible sanitized v5 file by default', async () => {
     const state = {
       ...baseState,
@@ -126,6 +148,22 @@ describe('version 5 project security formats', () => {
       requiresConfirmation: true,
     });
     expect(opened.project.state.sanitizationTable).toEqual(restorationTable());
+  });
+
+  it('computes unsanitized restoration metadata from final canonical state', async () => {
+    const result = await serializeProjectExport({
+      ...baseState,
+      isSanitized: false,
+      futureState: {
+        sanitizationTable: restorationTable('DROPPED-FUTURE-ORIGINAL'),
+      },
+    }, 'future-state', {
+      mode: 'unsanitized', confirmation: 'EXPORT UNSANITIZED',
+    });
+    const parsed = JSON.parse(result.serialized);
+    expect(parsed.state).not.toHaveProperty('futureState');
+    expect(parsed.state.sanitizationTable).toBeNull();
+    expect(parsed.security.restorationAvailable).toBe(false);
   });
 
   it.each([

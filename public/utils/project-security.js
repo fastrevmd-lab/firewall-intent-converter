@@ -587,8 +587,11 @@ async function serializeProjectExportInternal(stateBag, name, options) {
     const project = buildProjectCore(
       { ...prepared.state, projectSecurityMode: PROJECT_SECURITY_MODES.UNSANITIZED },
       name,
-      unsanitizedMetadata(classification.restorationAvailable),
+      unsanitizedMetadata(false),
     );
+    const finalState = prepareUnsanitizedProjectState(project.state);
+    project.state = finalState.state;
+    project.security = unsanitizedMetadata(finalState.restorationAvailable);
     return {
       serialized: boundedProjectStringify(project),
       filename: projectFilename(name, PROJECT_SECURITY_MODES.UNSANITIZED),
@@ -844,7 +847,28 @@ export function inspectProjectImport(serialized) {
   }
 }
 
-export async function openProjectImport(serialized, { passphrase } = {}) {
+function extractImportPassphrase(options) {
+  try {
+    if (!assertPlainObject(options) || ownPropertySymbols(options).length > 0) {
+      throw new ProjectSecurityError('invalid_project');
+    }
+    const names = ownPropertyNames(options);
+    if (names.length > 1 || names.some(key => key !== 'passphrase')) {
+      throw new ProjectSecurityError('invalid_project');
+    }
+    if (names.length === 0) return undefined;
+    const descriptor = ownDescriptor(options, 'passphrase');
+    if (!descriptor || descriptor.get || descriptor.set || !descriptor.enumerable) {
+      throw new ProjectSecurityError('invalid_project');
+    }
+    return descriptor.value;
+  } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
+}
+
+async function openProjectImportInternal(serialized, options) {
+  const passphrase = extractImportPassphrase(options);
   const inspected = inspectProjectImport(serialized);
   if (inspected.kind !== PROJECT_SECURITY_MODES.REVERSIBLE) {
     return {
@@ -873,6 +897,20 @@ export async function openProjectImport(serialized, { passphrase } = {}) {
       requiresConfirmation: true,
     };
   } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
+}
+
+export async function openProjectImport(serialized, options = {}) {
+  try {
+    return await openProjectImportInternal(serialized, options);
+  } catch (error) {
+    if (error instanceof ProjectSecurityError) {
+      throw new ProjectSecurityError(error.code);
+    }
+    if (error instanceof ProjectCryptoError) {
+      throw new ProjectCryptoError(error.code);
+    }
     throw new ProjectSecurityError('invalid_project');
   }
 }

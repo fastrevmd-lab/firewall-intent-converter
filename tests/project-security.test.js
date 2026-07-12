@@ -522,4 +522,53 @@ describe('project security boundary', () => {
       code: 'invalid_project',
     });
   });
+
+  it('safely rejects null import options and a throwing passphrase getter', async () => {
+    const passphrase = 'correct horse battery staple';
+    const exported = await serializeProjectExport(sanitizedState, 'backup', {
+      mode: PROJECT_SECURITY_MODES.REVERSIBLE,
+      passphrase,
+      confirmationPassphrase: passphrase,
+      acknowledgement: true,
+    });
+    let getterCalls = 0;
+    const throwingOptions = Object.defineProperty({}, 'passphrase', {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error('SENSITIVE-PASSPHRASE-GETTER');
+      },
+    });
+    for (const options of [null, throwingOptions]) {
+      let error;
+      try {
+        await openProjectImport(exported.serialized, options);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(ProjectSecurityError);
+      expect(error).toMatchObject({
+        code: 'invalid_project',
+        message: 'Project file is invalid.',
+      });
+      expect(error.message).not.toContain('SENSITIVE-PASSPHRASE-GETTER');
+    }
+    expect(getterCalls).toBe(0);
+  });
+
+  it('preserves the fixed decryption failure for a wrong import passphrase', async () => {
+    const passphrase = 'correct horse battery staple';
+    const exported = await serializeProjectExport(sanitizedState, 'backup', {
+      mode: PROJECT_SECURITY_MODES.REVERSIBLE,
+      passphrase,
+      confirmationPassphrase: passphrase,
+      acknowledgement: true,
+    });
+    await expect(openProjectImport(exported.serialized, {
+      passphrase: 'wrong passphrase value',
+    })).rejects.toMatchObject({
+      code: 'decryption_failed',
+      message: 'Encrypted project could not be opened.',
+    });
+  });
 });
