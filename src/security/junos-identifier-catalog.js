@@ -6,6 +6,10 @@ import {
   sanitizeJunosName,
 } from '../parsers/parser-utils.js';
 import { JunosSerializationError } from './junos-serialization.js';
+import {
+  encodeJunosIdentifierTuple,
+  encodeJunosZonePair,
+} from './junos-identifier-identity.js';
 import { getJunosEmission } from '../utils/app-mappings.js';
 
 export const JUNOS_IDENTIFIER_CATALOG = Object.freeze({
@@ -76,11 +80,11 @@ function applicationsContext(device) {
 
 function zonePairContext(device, fromZone, toZone) {
   if (fromZone === 'any' || toZone === 'any') return `${device}/global-policy`;
-  return `${device}/zone-pair:${fromZone}->${toZone}`;
+  return `${device}/zone-pair:${encodeJunosZonePair(fromZone, toZone)}`;
 }
 
 function natRuleSetContext(device, type, fromZone, toZone) {
-  return `${device}/nat:${type}/rule-set:${fromZone}->${toZone}`;
+  return `${device}/nat:${type}/rule-set:${encodeJunosZonePair(fromZone, toZone)}`;
 }
 
 function routingInstanceContext(device, instance) {
@@ -225,7 +229,7 @@ function generatedPolicySourceIdentity(policy) {
 }
 
 function generatedPolicyRole(fromZone, toZone) {
-  return `security-policy:${fromZone}->${toZone}`;
+  return `security-policy:${encodeJunosZonePair(fromZone, toZone)}`;
 }
 
 function orderedZoneEntries(zones) {
@@ -1306,7 +1310,7 @@ function collectPoliciesAndSchedules(config, state) {
             sourceName: policy.name,
             definitionPath: definitionIndex === 1
               ? joinedPath(prefix, `security_policies[${index}].name`)
-              : joinedPath(prefix, `security_policies[${index}].name#zone-pair:${fromZone}->${toZone}`),
+              : joinedPath(prefix, `security_policies[${index}].name#zone-pair:${encodeJunosZonePair(fromZone, toZone)}`),
           });
         }
       }
@@ -1392,12 +1396,12 @@ function collectNat(config, state) {
       for (const { fromZone, toZone } of zonePairs) {
         const ruleSetName = preferredNatRuleSetName(type, fromZone, toZone);
         const ruleSetPath = joinedPath(prefix, `nat_rules[${index}]`);
-        const ruleSetKey = `${device}\0${type}\0${fromZone}\0${toZone}`;
+        const ruleSetKey = encodeJunosIdentifierTuple(device, type, fromZone, toZone);
         if (!natRuleSets.has(ruleSetKey)) {
           natRuleSets.add(ruleSetKey);
           const role = type === 'static'
             ? 'static-nat-rule-set'
-            : `${type}-nat-rule-set:${fromZone}->${toZone}`;
+            : `${type}-nat-rule-set:${encodeJunosZonePair(fromZone, toZone)}`;
           collector.addGenerated({
             catalogKey: JUNOS_IDENTIFIER_CATALOG.NAT_RULE_SET,
             context: `${device}/nat:${type}`,
@@ -1406,7 +1410,7 @@ function collectNat(config, state) {
             sourceName: ruleSetName,
             definitionPath: ruleSetPath,
             role,
-            stableParentKey: `${type}-zone-pair:${fromZone}->${toZone}`,
+            stableParentKey: `${type}-zone-pair:${encodeJunosZonePair(fromZone, toZone)}`,
           });
         }
         occurrence += 1;
@@ -1418,7 +1422,7 @@ function collectNat(config, state) {
           sourceName: rule.name,
           definitionPath: occurrence === 1
             ? joinedPath(prefix, `nat_rules[${index}].name`)
-            : joinedPath(prefix, `nat_rules[${index}].name#${type}:${fromZone}->${toZone}`),
+            : joinedPath(prefix, `nat_rules[${index}].name#${type}:${encodeJunosZonePair(fromZone, toZone)}`),
         });
       }
     }

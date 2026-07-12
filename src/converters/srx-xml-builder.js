@@ -21,6 +21,7 @@ import {
   xmlText,
 } from '../security/junos-serialization.js';
 import { validateJunosInput } from '../security/junos-input-validation.js';
+import { encodeJunosZonePair } from '../security/junos-identifier-identity.js';
 import {
   planJunosIdentifiers,
   planMergedJunosIdentifiers,
@@ -395,7 +396,7 @@ function buildUserIdentificationXml(policies, lines) {
 // ---------------------------------------------------------------------------
 
 function generatedPolicyRole(fromZone, toZone) {
-  return `security-policy:${fromZone}->${toZone}`;
+  return `security-policy:${encodeJunosZonePair(fromZone, toZone)}`;
 }
 
 function orderedZoneEntries(zones) {
@@ -424,7 +425,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
   }
 
   // Group policies by zone pair
-  const zonePairs = {};
+  const zonePairs = new Map();
   for (let policyIndex = 0; policyIndex < policies.length; policyIndex += 1) {
     const policy = policies[policyIndex];
     for (let addressIndex = 0; addressIndex < policy.src_addresses.length; addressIndex += 1) {
@@ -451,9 +452,9 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
             : `security_policies[${policyIndex}]#effective-destination-zone`);
         }
         const isGlobal = src === 'any' || dst === 'any';
-        const contextKey = isGlobal ? 'global' : `${src}|${dst}`;
-        if (!zonePairs[contextKey]) {
-          zonePairs[contextKey] = { from: src, to: dst, isGlobal, policies: [] };
+        const contextKey = isGlobal ? 'global' : encodeJunosZonePair(src, dst);
+        if (!zonePairs.has(contextKey)) {
+          zonePairs.set(contextKey, { from: src, to: dst, isGlobal, policies: [] });
         }
         if (definedPairs.has(contextKey)) continue;
         definedPairs.add(contextKey);
@@ -469,8 +470,8 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
           )
           : identifierNames.definition(occurrence === 1
             ? `security_policies[${policyIndex}].name`
-            : `security_policies[${policyIndex}].name#zone-pair:${src}->${dst}`);
-        zonePairs[contextKey].policies.push({
+            : `security_policies[${policyIndex}].name#zone-pair:${encodeJunosZonePair(src, dst)}`);
+        zonePairs.get(contextKey).policies.push({
           policy, policyIndex, sourceIndex, destinationIndex, outputName,
         });
       }
@@ -479,7 +480,7 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
 
   lines.push('    <policies>');
 
-  for (const pair of Object.values(zonePairs)) {
+  for (const pair of zonePairs.values()) {
     const first = pair.policies[0];
     const sourcePath = first.policy.src_zones.length > 0
       ? `security_policies[${first.policyIndex}].src_zones[${first.sourceIndex}]`
@@ -615,19 +616,19 @@ function buildPoliciesXml(policies, lines, warnings, profileMaps = {}, appGroups
 // ---------------------------------------------------------------------------
 
 function groupNatByZonePair(rules) {
-  const groups = {};
+  const groups = new Map();
   for (const rule of rules) {
     const fromZones = rule.src_zones.length > 0 ? rule.src_zones : ['any'];
     const toZones = rule.dst_zones.length > 0 ? rule.dst_zones : ['any'];
     for (const from of fromZones) {
       for (const to of toZones) {
-        const key = `${from}->${to}`;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(rule);
+        const key = encodeJunosZonePair(from, to);
+        if (!groups.has(key)) groups.set(key, { fromZone: from, toZone: to, rules: [] });
+        groups.get(key).rules.push(rule);
       }
     }
   }
-  return groups;
+  return [...groups.values()];
 }
 
 function effectiveNatTypes(rule) {
@@ -650,7 +651,7 @@ function natRuleNamePath(rule, ruleIndex, targetType, targetFrom, targetTo) {
       if (type === targetType && from === targetFrom && to === targetTo) {
         return occurrence === 1
           ? `nat_rules[${ruleIndex}].name`
-          : `nat_rules[${ruleIndex}].name#${type}:${from}->${to}`;
+          : `nat_rules[${ruleIndex}].name#${type}:${encodeJunosZonePair(from, to)}`;
       }
     }
   }
@@ -707,12 +708,11 @@ function buildNatXml(natRules, configuredZones, lines, warnings, identifierNames
   if (sourceRules.length > 0) {
     lines.push('      <source>');
     const groups = groupNatByZonePair(sourceRules);
-    for (const [zonePair, rules] of Object.entries(groups)) {
-      const [fromZone, toZone] = zonePair.split('->');
+    for (const { fromZone, toZone, rules } of groups) {
       const firstRuleIndex = natRules.indexOf(rules[0]);
       const ruleSetName = identifierNames.generated(
         `nat_rules[${firstRuleIndex}]`,
-        `source-nat-rule-set:${fromZone}->${toZone}`,
+        `source-nat-rule-set:${encodeJunosZonePair(fromZone, toZone)}`,
       );
       lines.push('        <rule-set>');
       lines.push(`          <name>${xmlText(ruleSetName)}</name>`);
@@ -796,13 +796,11 @@ function buildNatXml(natRules, configuredZones, lines, warnings, identifierNames
   if (destRules.length > 0) {
     lines.push('      <destination>');
     const groups = groupNatByZonePair(destRules);
-    for (const [zonePair, rules] of Object.entries(groups)) {
-      const [fromZone] = zonePair.split('->');
+    for (const { fromZone, toZone, rules } of groups) {
       const firstRuleIndex = natRules.indexOf(rules[0]);
-      const toZone = zonePair.split('->')[1];
       const ruleSetName = identifierNames.generated(
         `nat_rules[${firstRuleIndex}]`,
-        `destination-nat-rule-set:${fromZone}->${toZone}`,
+        `destination-nat-rule-set:${encodeJunosZonePair(fromZone, toZone)}`,
       );
       lines.push('        <rule-set>');
       lines.push(`          <name>${xmlText(ruleSetName)}</name>`);

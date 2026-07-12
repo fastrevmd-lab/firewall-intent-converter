@@ -709,7 +709,7 @@ describe('Junos identifier catalog', () => {
     const policy = symbols.definitions.find(item => item.definitionPath === 'security_policies[0].name');
     expect(policy).toMatchObject({
       namespace: 'security-policy',
-      context: expect.stringContaining('zone-pair:trust zone->untrust zone'),
+      context: expect.stringContaining('zone-pair:["trust zone","untrust zone"]'),
     });
 
     const bgpGroup = symbols.definitions.find(item => item.definitionPath === 'bgp_config[0].peer_groups[0].name');
@@ -1231,7 +1231,7 @@ describe('Junos identifier catalog', () => {
         sourceName: 'name:Rule-1',
         preferredOutputName: 'permit-trust-zone-to-dmz-https',
         definitionPath: 'security_policies[0]',
-        role: 'security-policy:Trust Zone->DMZ',
+        role: 'security-policy:["Trust Zone","DMZ"]',
         stableParentKey: 'security-policy:name:Rule-1',
       }),
       expect.objectContaining({
@@ -1545,7 +1545,7 @@ describe('Junos identifier catalog', () => {
       }),
       expect.objectContaining({
         kind: 'source-nat-rule', sourceName: 'empty nat',
-        context: 'root/nat:source/rule-set:any->any',
+        context: 'root/nat:source/rule-set:["any","any"]',
       }),
     ]));
     expect(symbols.references).toEqual(expect.arrayContaining([

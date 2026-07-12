@@ -146,6 +146,34 @@ function reversedGenericPolicyOrderConfig() {
   };
 }
 
+function delimiterZonePolicyConfig(name) {
+  return baseConfig({
+    zones: ['a', 'a->b', 'b->c', 'c'].map(zoneName => ({ name: zoneName, interfaces: [] })),
+    security_policies: [policy(name, 'a', 'b->c', 'any', {
+      src_zones: ['a', 'a->b'],
+      dst_zones: ['b->c', 'c'],
+      description: `${name || 'anonymous'} delimiter policy`,
+      applications: ['junos-https'],
+    })],
+  });
+}
+
+function delimiterZoneNatConfig() {
+  return baseConfig({
+    zones: ['a', 'a->b', 'b->c', 'c'].map(zoneName => ({ name: zoneName, interfaces: [] })),
+    nat_rules: [{
+      name: 'Delimiter NAT',
+      type: 'source-and-destination',
+      src_zones: ['a', 'a->b'],
+      dst_zones: ['b->c', 'c'],
+      src_addresses: ['any'],
+      dst_addresses: ['any'],
+      translated_src: { type: 'interface' },
+      translated_dst: { address: '203.0.113.10' },
+    }],
+  });
+}
+
 function sortedPolicyAssociations(associations) {
   return [...associations].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
 }
@@ -171,6 +199,24 @@ function xmlPolicyAssociations(result) {
     }
   }
   return sortedPolicyAssociations(associations);
+}
+
+function setNatRuleSets(result) {
+  return new Set(result.commands.flatMap(command => {
+    const match = command.match(/^set security nat (source|destination) rule-set (\S+) /);
+    return match ? [`${match[1]}:${match[2]}`] : [];
+  }));
+}
+
+function xmlNatRuleSets(result) {
+  const ruleSets = new Set();
+  for (const type of ['source', 'destination']) {
+    const section = result.xml.match(new RegExp(`<${type}>([\\s\\S]*?)</${type}>`))?.[1] || '';
+    for (const match of section.matchAll(/<rule-set>\s*<name>([^<]+)<\/name>/g)) {
+      ruleSets.add(`${type}:${match[1]}`);
+    }
+  }
+  return ruleSets;
 }
 
 function seededRandom(seed) {
@@ -613,6 +659,63 @@ describe('Randomized Junos identifier allocation integrity', () => {
       }
     }
     expect(seedsWithGeneratedAndUnresolved).toBeGreaterThanOrEqual(25);
+  });
+});
+
+describe('delimiter-bearing zone-pair identity', () => {
+  it('keeps all generic policy pairs distinct in Set, XML, and the mapping', () => {
+    const config = delimiterZonePolicyConfig('Rule-1');
+    const setResult = convertToSrxSetCommands(config);
+    const xmlResult = buildSrxXml(config);
+    const setAssociations = setPolicyAssociations(setResult);
+    const xmlAssociations = xmlPolicyAssociations(xmlResult);
+    const policyMappings = setResult.identifierMappings.entries.filter(
+      entry => entry.namespace === 'security-policy',
+    );
+
+    expect(setAssociations).toHaveLength(4);
+    expect(xmlAssociations).toEqual(setAssociations);
+    expect(new Set(setAssociations.map(item => item.outputName)).size).toBe(4);
+    expect(policyMappings).toHaveLength(4);
+    expect(new Set(policyMappings.map(entry => entry.outputName)))
+      .toEqual(new Set(setAssociations.map(item => item.outputName)));
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
+  });
+
+  it('keeps non-generic policy definition lookups distinct for every zone pair', () => {
+    const config = delimiterZonePolicyConfig('Named Policy');
+    const setResult = convertToSrxSetCommands(config);
+    const xmlResult = buildSrxXml(config);
+    const policyMappings = setResult.identifierMappings.entries.filter(
+      entry => entry.namespace === 'security-policy',
+    );
+
+    expect(setPolicyAssociations(setResult)).toHaveLength(4);
+    expect(xmlPolicyAssociations(xmlResult)).toEqual(setPolicyAssociations(setResult));
+    expect(policyMappings).toHaveLength(4);
+    expect(new Set(policyMappings.map(entry => entry.definitionPath)).size).toBe(4);
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
+  });
+
+  it('keeps source and destination NAT groups, roles, contexts, and rule paths distinct', () => {
+    const config = delimiterZoneNatConfig();
+    const setResult = convertToSrxSetCommands(config);
+    const xmlResult = buildSrxXml(config);
+    const ruleSetMappings = setResult.identifierMappings.entries.filter(
+      entry => entry.namespace === 'nat-rule-set',
+    );
+    const ruleMappings = setResult.identifierMappings.entries.filter(
+      entry => entry.namespace === 'nat-rule',
+    );
+
+    expect(setNatRuleSets(setResult).size).toBe(8);
+    expect(xmlNatRuleSets(xmlResult)).toEqual(setNatRuleSets(setResult));
+    expect(ruleSetMappings).toHaveLength(8);
+    expect(new Set(ruleSetMappings.map(entry => entry.definitionPath)).size).toBe(8);
+    expect(ruleMappings).toHaveLength(8);
+    expect(new Set(ruleMappings.map(entry => entry.context)).size).toBe(8);
+    expect(new Set(ruleMappings.map(entry => entry.definitionPath)).size).toBe(8);
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
   });
 });
 

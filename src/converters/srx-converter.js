@@ -28,6 +28,7 @@ import {
   setToken,
 } from '../security/junos-serialization.js';
 import { validateJunosInput } from '../security/junos-input-validation.js';
+import { encodeJunosZonePair } from '../security/junos-identifier-identity.js';
 import {
   planJunosIdentifiers,
   planMergedJunosIdentifiers,
@@ -1570,7 +1571,7 @@ function convertUserIdentification(policies, commands, warnings) {
 // ---------------------------------------------------------------------------
 
 function generatedPolicyRole(fromZone, toZone) {
-  return `security-policy:${fromZone}->${toZone}`;
+  return `security-policy:${encodeJunosZonePair(fromZone, toZone)}`;
 }
 
 function orderedZoneEntries(zones) {
@@ -1656,7 +1657,7 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         const toZone = identifiers.nameForReference(identifierPath(destinationPath));
         // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
         const isGlobal = fromZone === 'any' || toZone === 'any';
-        const policyContext = isGlobal ? 'global' : `${srcZone}\0${dstZone}`;
+        const policyContext = isGlobal ? 'global' : encodeJunosZonePair(srcZone, dstZone);
         let policyName;
         if (policyNamesByContext.has(policyContext)) {
           policyName = policyNamesByContext.get(policyContext);
@@ -1673,7 +1674,7 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
             : identifiers.nameForDefinition(identifierPath(
               definitionIndex === 1
                 ? `security_policies[${pIdx}].name`
-                : `security_policies[${pIdx}].name#zone-pair:${srcZone}->${dstZone}`,
+                : `security_policies[${pIdx}].name#zone-pair:${encodeJunosZonePair(srcZone, dstZone)}`,
             ));
           policyNamesByContext.set(policyContext, policyName);
         }
@@ -2116,7 +2117,7 @@ function convertNatRules(
     ));
     const role = type === 'static'
       ? 'static-nat-rule-set'
-      : `${type}-nat-rule-set:${fromZone}->${toZone}`;
+      : `${type}-nat-rule-set:${encodeJunosZonePair(fromZone, toZone)}`;
     return {
       ownerIndex,
       name: identifiers.nameForGenerated(identifierPath(`nat_rules[${ownerIndex}]`), role),
@@ -2133,7 +2134,8 @@ function convertNatRules(
       for (const [candidateFrom, candidateTo] of pairs) {
         occurrence += 1;
         if (candidateType === type && candidateFrom === fromZone && candidateTo === toZone) {
-          const suffix = occurrence === 1 ? '' : `#${type}:${fromZone}->${toZone}`;
+          const suffix = occurrence === 1
+            ? '' : `#${type}:${encodeJunosZonePair(fromZone, toZone)}`;
           return identifiers.nameForDefinition(
             identifierPath(`nat_rules[${ruleIndex}].name${suffix}`),
           );
