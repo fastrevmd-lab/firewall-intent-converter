@@ -76,13 +76,225 @@ function walkAst(root, visit) {
   walk(root);
 }
 
-function staticStringValue(node) {
-  if (node?.type === 'ParenthesizedExpression') return staticStringValue(node.expression);
+function templateStringValue(node, bindings, raw) {
+  let value = '';
+  for (let index = 0; index < node.quasis.length; index++) {
+    const quasi = raw ? node.quasis[index].value.raw : node.quasis[index].value.cooked;
+    if (typeof quasi !== 'string') return null;
+    value += quasi;
+    if (index < node.expressions.length) {
+      const expression = staticStringValue(node.expressions[index], bindings);
+      if (expression === null) return null;
+      value += expression;
+    }
+  }
+  return value;
+}
+
+function staticStringValue(node, bindings = new Map()) {
+  if (node?.type === 'ParenthesizedExpression') {
+    return staticStringValue(node.expression, bindings);
+  }
   if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
-    return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw;
+  if (node?.type === 'Identifier') {
+    const value = bindings.valueFor?.(node);
+    return typeof value === 'string' ? value : null;
+  }
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const left = staticStringValue(node.left, bindings);
+    const right = staticStringValue(node.right, bindings);
+    return left === null || right === null ? null : left + right;
+  }
+  if (node?.type === 'TemplateLiteral') {
+    return templateStringValue(node, bindings, false);
+  }
+  if (node?.type === 'TaggedTemplateExpression') {
+    let tag = node.tag;
+    while (tag?.type === 'ParenthesizedExpression') tag = tag.expression;
+    const stringRaw = tag?.type === 'MemberExpression'
+      && tag.computed === false
+      && tag.optional !== true
+      && tag.object.type === 'Identifier'
+      && tag.object.name === 'String'
+      && tag.property.type === 'Identifier'
+      && tag.property.name === 'raw'
+      && bindings.isBuiltinStringRaw?.(tag.object, node.start) === true;
+    if (stringRaw && node.quasi.type === 'TemplateLiteral') {
+      return templateStringValue(node.quasi, bindings, true);
+    }
   }
   return null;
+}
+
+function patternBindingNames(pattern, names = []) {
+  if (!pattern) return names;
+  if (pattern.type === 'Identifier') names.push(pattern.name);
+  else if (pattern.type === 'RestElement') patternBindingNames(pattern.argument, names);
+  else if (pattern.type === 'AssignmentPattern') patternBindingNames(pattern.left, names);
+  else if (pattern.type === 'ArrayPattern') {
+    for (const element of pattern.elements) patternBindingNames(element, names);
+  } else if (pattern.type === 'ObjectPattern') {
+    for (const property of pattern.properties) {
+      patternBindingNames(property.type === 'RestElement' ? property.argument : property.value, names);
+    }
+  }
+  return names;
+}
+
+function staticConstBindings(nodes, parents) {
+  const scopeTypes = new Set([
+    'Program', 'BlockStatement', 'CatchClause',
+    'FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression',
+    'ClassExpression', 'ForStatement', 'ForInStatement', 'ForOfStatement',
+  ]);
+  const scopes = new Map();
+
+  const nearestScope = node => {
+    let current = node;
+    while (current) {
+      if (scopes.has(current)) return scopes.get(current);
+      current = parents.get(current);
+    }
+    return null;
+  };
+
+  for (const node of nodes) {
+    if (!scopeTypes.has(node.type)) continue;
+    scopes.set(node, {
+      bindings: new Map(),
+      node,
+      parent: nearestScope(parents.get(node)),
+    });
+  }
+
+  const executionScope = node => {
+    let scope = nearestScope(node);
+    while (scope && !['Program', 'FunctionDeclaration', 'FunctionExpression',
+      'ArrowFunctionExpression'].includes(scope.node.type)) scope = scope.parent;
+    return scope;
+  };
+  const resolveName = (name, node) => {
+    let scope = nearestScope(node);
+    while (scope) {
+      if (scope.bindings.has(name)) return scope.bindings.get(name);
+      scope = scope.parent;
+    }
+    return null;
+  };
+  const resolve = identifier => resolveName(identifier.name, identifier);
+  const register = (scope, name, kind, initializer = null) => {
+    if (!scope) return null;
+    const existing = scope.bindings.get(name);
+    if (existing) {
+      existing.kind = 'ambiguous';
+      existing.initializer = null;
+      return existing;
+    }
+    const binding = { initializer, kind, name, scope, written: false };
+    scope.bindings.set(name, binding);
+    return binding;
+  };
+  const registerPattern = (scope, pattern, kind) => {
+    for (const name of patternBindingNames(pattern)) register(scope, name, kind);
+  };
+
+  const candidates = [];
+  for (const node of nodes) {
+    if (node.type === 'VariableDeclarator') {
+      const declaration = parents.get(node);
+      let owner = nearestScope(node);
+      if (declaration?.kind === 'var') owner = executionScope(node);
+      if (node.id.type === 'Identifier') {
+        const binding = register(owner, node.id.name, declaration?.kind, node.init);
+        if (declaration?.kind === 'const' && node.init) candidates.push(binding);
+      } else {
+        registerPattern(owner, node.id, declaration?.kind);
+      }
+    } else if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']
+      .includes(node.type)) {
+      const functionScope = scopes.get(node);
+      if (node.id?.type === 'Identifier') {
+        register(
+          node.type === 'FunctionDeclaration' ? functionScope.parent : functionScope,
+          node.id.name,
+          'function',
+        );
+      }
+      for (const parameter of node.params) registerPattern(functionScope, parameter, 'parameter');
+    } else if (['ClassDeclaration', 'ClassExpression'].includes(node.type)
+        && node.id?.type === 'Identifier') {
+      register(nearestScope(node), node.id.name, 'class');
+    } else if (['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier']
+      .includes(node.type)) {
+      register(nearestScope(node), node.local.name, 'import');
+    } else if (node.type === 'CatchClause') {
+      registerPattern(scopes.get(node), node.param, 'catch');
+    }
+  }
+
+  let globalStringMutated = false;
+  const rawMember = (node, bindings) => {
+    let target = node;
+    while (target?.type === 'ParenthesizedExpression') target = target.expression;
+    if (target?.type !== 'MemberExpression' || target.object.type !== 'Identifier'
+        || target.object.name !== 'String') return null;
+    const raw = target.computed
+      ? staticStringValue(target.property, bindings)
+      : target.property.type === 'Identifier' ? target.property.name : null;
+    return raw === 'raw' ? target : null;
+  };
+  const recordWrite = (target, bindings) => {
+    let writeTarget = target;
+    while (writeTarget?.type === 'ParenthesizedExpression') writeTarget = writeTarget.expression;
+    if (writeTarget?.type === 'Identifier') {
+      const binding = resolve(writeTarget);
+      if (binding) binding.written = true;
+      else if (writeTarget.name === 'String') globalStringMutated = true;
+      return;
+    }
+    const member = rawMember(writeTarget, bindings);
+    if (member && !resolve(member.object)) globalStringMutated = true;
+    if (writeTarget?.type === 'ArrayPattern' || writeTarget?.type === 'ObjectPattern') {
+      for (const name of patternBindingNames(writeTarget)) {
+        const binding = resolveName(name, writeTarget);
+        if (binding) binding.written = true;
+      }
+    }
+  };
+  const values = new Map();
+  values.valueFor = identifier => values.get(resolve(identifier));
+  values.isBuiltinStringRaw = identifier => !globalStringMutated && !resolve(identifier);
+
+  const computeValues = () => {
+    values.clear();
+    const pending = new Set(candidates.filter(binding => (
+      binding && binding.kind === 'const' && !binding.written
+    )));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const binding of pending) {
+        const value = staticStringValue(binding.initializer, values);
+        if (value === null) continue;
+        values.set(binding, value);
+        pending.delete(binding);
+        changed = true;
+      }
+    }
+  };
+
+  for (const node of nodes) {
+    if (node.type === 'AssignmentExpression') recordWrite(node.left, values);
+    else if (node.type === 'UpdateExpression') recordWrite(node.argument, values);
+  }
+  computeValues();
+  const mutationBeforeComputedWrites = globalStringMutated;
+  for (const node of nodes) {
+    if (node.type === 'AssignmentExpression') recordWrite(node.left, values);
+    else if (node.type === 'UpdateExpression') recordWrite(node.argument, values);
+  }
+  if (globalStringMutated !== mutationBeforeComputedWrites) computeValues();
+  return values;
 }
 
 function identifierCatalogFindings(source, relativePath) {
@@ -95,7 +307,12 @@ function identifierCatalogFindings(source, relativePath) {
     sourceType: 'module',
   });
   const nodes = [];
-  walkAst(ast, node => nodes.push(node));
+  const parents = new Map();
+  walkAst(ast, (node, parent) => {
+    nodes.push(node);
+    parents.set(node, parent);
+  });
+  const bindings = staticConstBindings(nodes, parents);
   const findings = [];
   const directCalls = [];
   const allowedIdentifiers = new Set();
@@ -104,7 +321,7 @@ function identifierCatalogFindings(source, relativePath) {
     if (node.type === 'ImportSpecifier') {
       const importedName = node.imported.type === 'Identifier'
         ? node.imported.name
-        : staticStringValue(node.imported);
+        : staticStringValue(node.imported, bindings);
       const localName = node.local.name;
       if (CATALOG_FUNCTIONS.has(importedName) || CATALOG_FUNCTIONS.has(localName)) {
         const exact = node.imported.type === 'Identifier'
@@ -133,7 +350,7 @@ function identifierCatalogFindings(source, relativePath) {
     }
 
     if ((node.type === 'MemberExpression' || node.type === 'Property') && node.computed) {
-      const propertyName = staticStringValue(node.property ?? node.key);
+      const propertyName = staticStringValue(node.property ?? node.key, bindings);
       if (CATALOG_FUNCTIONS.has(propertyName)) {
         findings.push(
           `${relativePath}:${node.loc.start.line} forbidden computed ${propertyName} access`,
@@ -316,6 +533,66 @@ describe('set converter injection defense', () => {
       ['fixture.js:1 forbidden computed sanitizeJunosName access'],
     ],
     [
+      'concatenated computed property access',
+      "obj['sanitizeJunos' + 'Name'](value);",
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'expression-template computed property access',
+      "obj[`sanitizeJunos${'Name'}`](value);",
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'const alias concatenation',
+      "const key = 'sanitizeJunos' + 'Name';\nobj[key](value);",
+      ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'String.raw tagged template access',
+      "obj[String.raw`sanitizeJunos${'Name'}`](value);",
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'const alias expression template destructuring',
+      "const key = `set${'Identifier'}`;\nconst { [key]: validate } = helpers;",
+      ['fixture.js:2 forbidden computed setIdentifier access'],
+    ],
+    [
+      'nested parenthesized static aliases',
+      "const prefix = (('sanitize' + 'Junos'));\nconst key = (`${prefix}${('Name')}`);\nobj[((key))](value);",
+      ['fixture.js:3 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'const alias with unrelated shadow parameter',
+      "const key = 'sanitizeJunos' + 'Name';\nobj[key](value);\nfunction unrelated(key) { return obj[key](value); }",
+      ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'String.raw with unrelated shadow parameter',
+      "obj[String.raw`sanitizeJunos${'Name'}`](value);\nfunction unrelated(String) { return obj[String.raw`sanitizeJunosName`](value); }",
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'nested block protected const resolution',
+      "{\n  const key = 'sanitizeJunos' + 'Name';\n  obj[key](value);\n}",
+      ['fixture.js:3 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'nested block const shadowing',
+      "const key = 'sanitizeJunos' + 'Name';\n{\n  const key = 'ordinary';\n  obj[key](value);\n}\nobj[key](value);",
+      ['fixture.js:6 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'named class-expression shadow isolation',
+      "const key = 'sanitizeJunosName';\nobj[key](value);\nconst C = class key {};",
+      ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'for-loop shadow isolation',
+      "const key = 'sanitizeJunosName';\nobj[key](value);\nfor (let key of values) {}",
+      ['fixture.js:2 forbidden computed sanitizeJunosName access'],
+    ],
+    [
       'computed destructuring alias',
       "const { ['setIdentifier']: validate } = helpers;",
       ['fixture.js:1 forbidden computed setIdentifier access'],
@@ -393,6 +670,25 @@ describe('set converter injection defense', () => {
       'if (ready) /sanitizeJunosName|setIdentifier/.test(value);',
     ].join('\n');
     expect(identifierCatalogFindings(safeText, 'fixture.js')).toEqual([]);
+  });
+
+  it.each([
+    ['mutable ordinary key', "let key = 'ordinary'; obj[key](value);"],
+    ['call-result ordinary key', 'const key = getKey(); obj[key](value);'],
+    ['partly dynamic ordinary key', "const key = dynamicPart + 'Suffix'; obj[key](value);"],
+    ['mutable protected key', "let key = 'sanitizeJunosName'; obj[key](value);"],
+    ['call-result protected key', "const key = identity('sanitizeJunosName'); obj[key](value);"],
+    ['reassigned protected const key', "const key = 'sanitizeJunosName'; key = dynamicKey; obj[key](value);"],
+    ['shadowed String.raw', 'function read(String) { return obj[String.raw`sanitizeJunosName`](value); }'],
+    ['reassigned String.raw', "String.raw = customTag; obj[String.raw`sanitizeJunos${'Name'}`](value);"],
+    ['updated String.raw', "String.raw++; obj[String.raw`sanitizeJunos${'Name'}`](value);"],
+    ['reassigned String', "String = CustomString; obj[String.raw`sanitizeJunos${'Name'}`](value);"],
+    ['const-shadowed String.raw', "const String = CustomString; obj[String.raw`sanitizeJunos${'Name'}`](value);"],
+    ['called String.raw mutator', "function mutate() { String.raw = customTag; } mutate(); obj[String.raw`sanitizeJunosName`](value);"],
+    ['global mutation before called use', "function use() { return obj[String.raw`sanitizeJunosName`](value); } String.raw = customTag; use();"],
+    ['const-computed String.raw mutation', "const prop = 'raw'; String[prop] = customTag; obj[String.raw`sanitizeJunosName`](value);"],
+  ])('does not fold %s', (_label, source) => {
+    expect(identifierCatalogFindings(source, 'fixture.js')).toEqual([]);
   });
 
   it('allows only unaliased static imports and marked direct calls', () => {
