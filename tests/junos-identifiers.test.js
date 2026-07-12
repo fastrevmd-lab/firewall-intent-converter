@@ -1562,23 +1562,140 @@ describe('Junos identifier catalog', () => {
 
   it('collects merged logical-system slots and cross-link references', () => {
     const slots = [
-      { lsName: 'branch a', intermediateConfig: fullConfig(), interfaceMappings: {} },
-      { lsName: 'branch b', intermediateConfig: { zones: [{ name: 'inside b' }] }, interfaceMappings: {} },
+      { lsName: 'branch a', intermediateConfig: { zones: [{ name: 'transit zone' }] }, interfaceMappings: {} },
+      { lsName: 'branch b', intermediateConfig: { zones: [{ name: 'transit zone' }] }, interfaceMappings: {} },
     ];
     const links = [{ ls1: 'branch a', ls2: 'branch b', sharedZone: 'transit zone' }];
     const symbols = collectMergedJunosIdentifierSymbols(slots, links);
+    const plan = planMergedJunosIdentifiers(slots, links);
 
     expect(symbols.definitions).toEqual(expect.arrayContaining([
       expect.objectContaining({ definitionPath: 'configSlots[0].lsName', sourceName: 'branch a' }),
       expect.objectContaining({ definitionPath: 'configSlots[1].lsName', sourceName: 'branch b' }),
       expect.objectContaining({ definitionPath: 'configSlots[0].intermediateConfig.zones[0].name' }),
-      expect.objectContaining({ definitionPath: 'crossLsLinks[0].sharedZone', role: 'cross-link-zone-ls1' }),
-      expect.objectContaining({ definitionPath: 'crossLsLinks[0].sharedZone', role: 'cross-link-zone-ls2' }),
     ]));
+    expect(symbols.definitions.some(definition => definition.role?.startsWith('cross-link-zone-')))
+      .toBe(false);
     expect(symbols.references).toEqual(expect.arrayContaining([
       expect.objectContaining({ referencePath: 'crossLsLinks[0].ls1', sourceName: 'branch a' }),
       expect.objectContaining({ referencePath: 'crossLsLinks[0].ls2', sourceName: 'branch b' }),
+      expect.objectContaining({ referencePath: 'crossLsLinks[0].sharedZone#ls1', sourceName: 'transit zone' }),
+      expect.objectContaining({ referencePath: 'crossLsLinks[0].sharedZone#ls2', sourceName: 'transit zone' }),
     ]));
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls1'))
+      .toBe(plan.nameForDefinition('configSlots[0].intermediateConfig.zones[0].name'));
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls2'))
+      .toBe(plan.nameForDefinition('configSlots[1].intermediateConfig.zones[0].name'));
+  });
+
+  it('generates a cross-link zone only on a missing side and binds both references', () => {
+    const slots = [
+      { lsName: 'branch a', intermediateConfig: { zones: [{ name: 'transit zone' }] } },
+      { lsName: 'branch b', intermediateConfig: { zones: [] } },
+    ];
+    const links = [{ ls1: 'branch a', ls2: 'branch b', sharedZone: 'transit zone' }];
+    const symbols = collectMergedJunosIdentifierSymbols(slots, links);
+    const plan = planMergedJunosIdentifiers(slots, links);
+    const generated = symbols.definitions.filter(definition => (
+      definition.role?.startsWith('cross-link-zone-')
+    ));
+
+    expect(generated).toEqual([
+      expect.objectContaining({
+        context: 'logical-system:branch b',
+        definitionPath: 'crossLsLinks[0].sharedZone#ls2',
+        role: 'cross-link-zone-ls2',
+      }),
+    ]);
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls1'))
+      .toBe(plan.nameForDefinition('configSlots[0].intermediateConfig.zones[0].name'));
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls2'))
+      .toBe(plan.nameForGenerated('crossLsLinks[0].sharedZone#ls2', 'cross-link-zone-ls2'));
+  });
+
+  it('generates and binds cross-link zones when absent on both sides', () => {
+    const slots = [
+      { lsName: 'branch a', intermediateConfig: { zones: [] } },
+      { lsName: 'branch b', intermediateConfig: { zones: [] } },
+    ];
+    const links = [{ ls1: 'branch a', ls2: 'branch b', sharedZone: 'transit zone' }];
+    const symbols = collectMergedJunosIdentifierSymbols(slots, links);
+    const plan = planMergedJunosIdentifiers(slots, links);
+    const generated = symbols.definitions.filter(definition => (
+      definition.role?.startsWith('cross-link-zone-')
+    ));
+
+    expect(generated).toHaveLength(2);
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls1'))
+      .toBe(plan.nameForGenerated('crossLsLinks[0].sharedZone#ls1', 'cross-link-zone-ls1'));
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls2'))
+      .toBe(plan.nameForGenerated('crossLsLinks[0].sharedZone#ls2', 'cross-link-zone-ls2'));
+  });
+
+  it('selects a stable generated cross-link owner when links are reordered', () => {
+    const slots = [
+      { lsName: 'branch a', intermediateConfig: { zones: [] } },
+      { lsName: 'branch b', intermediateConfig: { zones: [] } },
+      { lsName: 'branch c', intermediateConfig: { zones: [] } },
+    ];
+    const links = [
+      { ls1: 'branch a', ls2: 'branch b', sharedZone: 'transit zone' },
+      { ls1: 'branch c', ls2: 'branch a', sharedZone: 'transit zone' },
+    ];
+    const generatedForBranchA = inputLinks => collectMergedJunosIdentifierSymbols(
+      slots,
+      inputLinks,
+    ).definitions.find(definition => (
+      definition.context === 'logical-system:branch a'
+      && definition.sourceName === 'transit zone'
+      && definition.generated
+    ));
+    const forward = generatedForBranchA(links);
+    const reordered = generatedForBranchA([...links].reverse());
+
+    expect({ role: reordered.role, stableParentKey: reordered.stableParentKey }).toEqual({
+      role: forward.role,
+      stableParentKey: forward.stableParentKey,
+    });
+  });
+
+  it('keeps cross-link zone collision groups local to each logical system', () => {
+    const slots = [
+      {
+        lsName: 'branch a',
+        intermediateConfig: { zones: [{ name: 'Shared Zone' }, { name: 'Shared@Zone' }] },
+      },
+      {
+        lsName: 'branch b',
+        intermediateConfig: { zones: [{ name: 'Shared@Zone' }] },
+      },
+    ];
+    const links = [{ ls1: 'branch a', ls2: 'branch b', sharedZone: 'Shared Zone' }];
+    const plan = planMergedJunosIdentifiers(slots, links);
+
+    expect(plan.nameForReference('crossLsLinks[0].sharedZone#ls1'))
+      .not.toBe(plan.nameForReference('crossLsLinks[0].sharedZone#ls2'));
+  });
+
+  it.each([
+    [
+      'unknown',
+      [
+        { lsName: 'branch a', intermediateConfig: {} },
+        { lsName: 'branch b', intermediateConfig: {} },
+      ],
+      [{ ls1: 'missing', ls2: 'branch b', sharedZone: 'transit' }],
+    ],
+    [
+      'ambiguous',
+      [
+        { lsName: 'branch a', intermediateConfig: {} },
+        { lsName: 'branch a', intermediateConfig: {} },
+      ],
+      [{ ls1: 'branch a', ls2: 'branch a', sharedZone: 'transit' }],
+    ],
+  ])('fails closed for %s cross-link logical-system endpoints', (_label, slots, links) => {
+    expect(() => planMergedJunosIdentifiers(slots, links)).toThrow();
   });
 
   it('exposes frozen catalog keys and deterministic public planning wrappers', () => {

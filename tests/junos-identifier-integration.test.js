@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { convertToSrxSetCommands } from '../src/converters/srx-converter.js';
-import { buildSrxXml } from '../src/converters/srx-xml-builder.js';
+import {
+  convertMergedToSrxSetCommands,
+  convertToSrxSetCommands,
+} from '../src/converters/srx-converter.js';
+import {
+  buildMergedSrxXml,
+  buildSrxXml,
+} from '../src/converters/srx-xml-builder.js';
 import { setMapVendorApp } from '../src/parsers/parser-utils.js';
 import {
   JunosIdentifierPlanningError,
@@ -70,6 +76,28 @@ function collisionConfig() {
       policy('Allow Web Two', 'trust', 'untrust', 'Web@Server'),
     ],
   });
+}
+
+function mergeSlot(lsName, intermediateConfig) {
+  return { lsName, intermediateConfig, interfaceMappings: {} };
+}
+
+function configWithAddress(name, extra = {}) {
+  return baseConfig({
+    address_objects: [{ name, type: 'host', value: '192.0.2.10/32' }],
+    ...extra,
+  });
+}
+
+function stableMappingAssociations(mapping) {
+  return mapping.entries.map(entry => ({
+    context: entry.context,
+    namespace: entry.namespace,
+    kind: entry.kind,
+    sourceName: entry.sourceName,
+    outputName: entry.outputName,
+    resolution: entry.resolution,
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
 }
 
 function baseAdvancedConfig() {
@@ -1851,5 +1879,156 @@ describe('XML identifier-plan integration', () => {
       namespace: setError.namespace,
       context: setError.context,
     }));
+  });
+});
+
+describe('merged Set and XML identifier-plan integration', () => {
+  it('isolates local namespaces and keeps cross-link references correct', () => {
+    const slots = [
+      mergeSlot('Branch Office', configWithAddress('Web Server')),
+      mergeSlot('Branch@Office', configWithAddress('Web Server')),
+    ];
+    const links = [{
+      ls1: 'Branch Office',
+      ls2: 'Branch@Office',
+      sharedZone: 'Shared Zone',
+      lt1Unit: 1,
+      lt2Unit: 2,
+    }];
+    const setResult = convertMergedToSrxSetCommands(slots, links);
+    const xmlResult = buildMergedSrxXml(slots, links);
+    const entries = setResult.identifierMappings.entries;
+    const localAddresses = entries.filter(entry => (
+      entry.namespace === 'address-book-entry' && entry.sourceName === 'Web Server'
+    ));
+    const logicalSystems = entries.filter(entry => entry.namespace === 'target-context');
+    const linkSides = ['ls1', 'ls2'].map(side => ({
+      logicalSystem: setResult.identifierMappings.entries.find(entry => (
+        entry.referencePaths.includes(`crossLsLinks[0].${side}`)
+      )).outputName,
+      zone: setResult.identifierMappings.entries.find(entry => (
+        entry.referencePaths.includes(`crossLsLinks[0].sharedZone#${side}`)
+      )).outputName,
+    }));
+
+    expect(setResult.identifierMappings).toEqual(xmlResult.identifierMappings);
+    expect(localAddresses.map(entry => entry.outputName)).toEqual(['Web-Server', 'Web-Server']);
+    expect(new Set(localAddresses.map(entry => entry.context)).size).toBe(2);
+    expect(logicalSystems).toHaveLength(2);
+    expect(new Set(logicalSystems.map(entry => entry.outputName)).size).toBe(2);
+    for (const { logicalSystem, zone } of linkSides) {
+      expect(setResult.commands.some(command => command.includes(
+        `set logical-systems ${logicalSystem} security zones security-zone ${zone} `,
+      ))).toBe(true);
+      expect(xmlResult.xml).toMatch(new RegExp(
+        `<logical-systems>\\s*<name>${logicalSystem}</name>[\\s\\S]*?<security>[\\s\\S]*?<name>${zone}</name>`,
+      ));
+    }
+    expect(setResult.summary.identifier_collisions_resolved).toBe(2);
+    expect(xmlResult.summary.identifier_collisions_resolved).toBe(2);
+    expect(setResult.warnings.filter(warning => warning.subType === 'identifier_collision'))
+      .toHaveLength(2);
+    expect(xmlResult.warnings.filter(warning => warning.subType === 'identifier_collision'))
+      .toHaveLength(2);
+  });
+
+  it('keeps output-name associations stable when slots and links are reordered', () => {
+    const slots = [
+      mergeSlot('Branch Office', configWithAddress('Web Server')),
+      mergeSlot('Branch@Office', configWithAddress('Web Server')),
+      mergeSlot('Datacenter', configWithAddress('Database')),
+    ];
+    const links = [
+      { ls1: 'Branch Office', ls2: 'Datacenter', sharedZone: 'Transit One', lt1Unit: 1, lt2Unit: 2 },
+      { ls1: 'Branch@Office', ls2: 'Datacenter', sharedZone: 'Transit Two', lt1Unit: 3, lt2Unit: 4 },
+    ];
+    const reorderedSlots = [slots[2], slots[1], slots[0]];
+    const reorderedLinks = [links[1], links[0]];
+
+    const forwardSet = convertMergedToSrxSetCommands(slots, links);
+    const reorderedSet = convertMergedToSrxSetCommands(reorderedSlots, reorderedLinks);
+    const forwardXml = buildMergedSrxXml(slots, links);
+    const reorderedXml = buildMergedSrxXml(reorderedSlots, reorderedLinks);
+
+    expect(stableMappingAssociations(reorderedSet.identifierMappings))
+      .toEqual(stableMappingAssociations(forwardSet.identifierMappings));
+    expect(stableMappingAssociations(reorderedXml.identifierMappings))
+      .toEqual(stableMappingAssociations(forwardXml.identifierMappings));
+  });
+
+  it('emits each side-specific cross-link zone collision name', () => {
+    const slots = [
+      mergeSlot('Branch A', configWithAddress('Web Server', {
+        zones: [{ name: 'Shared Zone', interfaces: [] }, { name: 'Shared@Zone', interfaces: [] }],
+      })),
+      mergeSlot('Branch B', configWithAddress('Web Server', {
+        zones: [{ name: 'Shared@Zone', interfaces: [] }],
+      })),
+    ];
+    const links = [{
+      ls1: 'Branch A', ls2: 'Branch B', sharedZone: 'Shared Zone', lt1Unit: 1, lt2Unit: 2,
+    }];
+    const setResult = convertMergedToSrxSetCommands(slots, links);
+    const xmlResult = buildMergedSrxXml(slots, links);
+    const side = sideName => ({
+      logicalSystem: setResult.identifierMappings.entries.find(entry => (
+        entry.referencePaths.includes(`crossLsLinks[0].${sideName}`)
+      )).outputName,
+      zone: setResult.identifierMappings.entries.find(entry => (
+        entry.referencePaths.includes(`crossLsLinks[0].sharedZone#${sideName}`)
+      )).outputName,
+    });
+    const first = side('ls1');
+    const second = side('ls2');
+
+    expect(first.zone).not.toBe(second.zone);
+    expect(setResult.commands).toContain(
+      `set logical-systems ${first.logicalSystem} security zones security-zone ${first.zone} interfaces lt-0/0/0.1`,
+    );
+    expect(setResult.commands).toContain(
+      `set logical-systems ${second.logicalSystem} security zones security-zone ${second.zone} interfaces lt-0/0/0.2`,
+    );
+    expect(xmlResult.xml).toContain(`<name>${first.zone}</name>`);
+    expect(xmlResult.xml).toContain(`<name>${second.zone}</name>`);
+  });
+
+  it('plans root global named configuration once in both formats', () => {
+    const slots = [mergeSlot('Branch', baseConfig())];
+    const globalConfig = baseConfig({
+      snmp_config: [
+        { type: 'community', name: 'Operations Team', authorization: 'read-only' },
+        { type: 'community', name: 'Operations@Team', authorization: 'read-only' },
+      ],
+      aaa_config: [
+        { type: 'profile', name: 'Admin Access', authentication_order: ['radius'] },
+        { type: 'profile', name: 'Admin@Access', authentication_order: ['tacplus'] },
+      ],
+    });
+    const setResult = convertMergedToSrxSetCommands(slots, [], globalConfig);
+    const xmlResult = buildMergedSrxXml(slots, [], globalConfig);
+    const globalEntries = setResult.identifierMappings.entries.filter(entry => (
+      entry.definitionPath?.startsWith('globalConfig.')
+    ));
+
+    expect(xmlResult.identifierMappings).toEqual(setResult.identifierMappings);
+    expect(globalEntries).toHaveLength(4);
+    for (const entry of globalEntries) {
+      expect(entry.context.startsWith('root')).toBe(true);
+      expect(setResult.commands.some(command => command.includes(` ${entry.outputName} `)))
+        .toBe(true);
+      expect(xmlResult.xml).toContain(`<name>${entry.outputName}</name>`);
+    }
+  });
+
+  it.each([
+    ['unknown', [mergeSlot('Branch', baseConfig())], [{
+      ls1: 'Missing', ls2: 'Branch', sharedZone: 'Transit', lt1Unit: 1, lt2Unit: 2,
+    }]],
+    ['ambiguous', [mergeSlot('Branch', baseConfig()), mergeSlot('Branch', baseConfig())], [{
+      ls1: 'Branch', ls2: 'Branch', sharedZone: 'Transit', lt1Unit: 1, lt2Unit: 2,
+    }]],
+  ])('fails closed for %s merged logical-system endpoints', (_label, slots, links) => {
+    expect(() => convertMergedToSrxSetCommands(slots, links)).toThrow();
+    expect(() => buildMergedSrxXml(slots, links)).toThrow();
   });
 });

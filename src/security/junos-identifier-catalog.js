@@ -2071,8 +2071,12 @@ export function collectMergedJunosIdentifierSymbols(
   const natRuleSets = new Set();
   const pbfInstances = new Map();
   const sharedDefinitions = new Set();
+  const slotsByLogicalSystem = new Map();
   for (let index = 0; index < (configSlots || []).length; index += 1) {
     const slot = configSlots[index];
+    const matchingSlots = slotsByLogicalSystem.get(slot.lsName) || [];
+    matchingSlots.push({ slot, index });
+    slotsByLogicalSystem.set(slot.lsName, matchingSlots);
     const targetContext = { type: 'logical-system', name: slot.lsName };
     collector.addDefinition({
       catalogKey: JUNOS_IDENTIFIER_CATALOG.TARGET_CONTEXT,
@@ -2097,9 +2101,19 @@ export function collectMergedJunosIdentifierSymbols(
     });
   }
 
+  const crossLinkZoneUses = [];
   for (let index = 0; index < (crossLsLinks || []).length; index += 1) {
     const link = crossLsLinks[index];
     for (const side of ['ls1', 'ls2']) {
+      const matchingSlots = slotsByLogicalSystem.get(link[side]) || [];
+      if (matchingSlots.length !== 1) {
+        throw new TypeError(
+          `crossLsLinks[${index}].${side} must resolve to exactly one logical system`,
+        );
+      }
+      const [{ slot }] = matchingSlots;
+      const device = deviceContext({ type: 'logical-system', name: slot.lsName });
+      const zoneReferencePath = `crossLsLinks[${index}].sharedZone#${side}`;
       collector.addReference({
         catalogKey: JUNOS_IDENTIFIER_CATALOG.TARGET_CONTEXT,
         context: targetNamespaceContext(),
@@ -2109,17 +2123,47 @@ export function collectMergedJunosIdentifierSymbols(
         referencePath: `crossLsLinks[${index}].${side}`,
         literals: [],
       });
-      collector.addGenerated({
-        catalogKey: JUNOS_IDENTIFIER_CATALOG.ZONE,
-        context: deviceContext({ type: 'logical-system', name: link[side] }),
-        namespace: 'zone',
-        kind: 'zone',
+      crossLinkZoneUses.push({
+        device,
+        link,
+        side,
+        slot,
         sourceName: link.sharedZone,
-        definitionPath: `crossLsLinks[${index}].sharedZone`,
-        role: `cross-link-zone-${side}`,
-        stableParentKey: `cross-link:${link.ls1}->${link.ls2}:${link.sharedZone}`,
+        referencePath: zoneReferencePath,
       });
     }
+  }
+
+  const missingZoneUses = new Map();
+  for (const use of crossLinkZoneUses) {
+    const existingZone = (use.slot.intermediateConfig?.zones || [])
+      .some(zone => zone.name === use.sourceName);
+    if (!existingZone) {
+      const key = JSON.stringify([use.device, use.sourceName]);
+      const groupedUses = missingZoneUses.get(key) || [];
+      groupedUses.push(use);
+      missingZoneUses.set(key, groupedUses);
+    }
+  }
+  for (const uses of missingZoneUses.values()) {
+    const [owner] = [...uses].sort((left, right) => JSON.stringify([
+      left.link.ls1, left.link.ls2, left.sourceName, left.side,
+    ]).localeCompare(JSON.stringify([
+      right.link.ls1, right.link.ls2, right.sourceName, right.side,
+    ])));
+    collector.addGenerated({
+      catalogKey: JUNOS_IDENTIFIER_CATALOG.ZONE,
+      context: owner.device,
+      namespace: 'zone',
+      kind: 'zone',
+      sourceName: owner.sourceName,
+      definitionPath: owner.referencePath,
+      role: `cross-link-zone-${owner.side}`,
+      stableParentKey: `cross-link-zone:${owner.slot.lsName}:${owner.sourceName}`,
+    });
+  }
+  for (const use of crossLinkZoneUses) {
+    addZoneReference(collector, use.device, use.sourceName, use.referencePath);
   }
 
   if (globalConfig && Object.keys(globalConfig).length > 0) {

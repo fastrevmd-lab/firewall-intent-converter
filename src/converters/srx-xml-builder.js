@@ -22,7 +22,10 @@ import {
   xmlText,
 } from '../security/junos-serialization.js';
 import { validateJunosInput } from '../security/junos-input-validation.js';
-import { planJunosIdentifiers } from '../security/junos-identifiers.js';
+import {
+  planJunosIdentifiers,
+  planMergedJunosIdentifiers,
+} from '../security/junos-identifiers.js';
 import { canonicalizeJunosSecurityFeatures } from '../security/junos-identifier-catalog.js';
 import { validateXmlOutput } from '../security/junos-output-validation.js';
 
@@ -3390,7 +3393,7 @@ function buildSystemConfigXml(systemConfig, lines, indent = '  ') {
  * @param {Array<{lsName: string, intermediateConfig: Object, interfaceMappings: Object}>} configSlots
  * @param {Array<{ls1: string, ls2: string, sharedZone: string, lt1Unit: number, lt2Unit: number}>} crossLsLinks
  * @param {Object} globalConfig - Chassis-level config
- * @returns {{ xml: string, warnings: Object[], summary: Object }}
+ * @returns {{ xml: string, warnings: Object[], summary: Object, identifierMappings: Object }}
  */
 export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig = {}) {
   if (!Array.isArray(configSlots) || !Array.isArray(crossLsLinks)) {
@@ -3403,9 +3406,27 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
     validateJunosInput(slot.interfaceMappings || {}, `configSlots[${index}].interfaceMappings`);
   });
   validateJunosInput({ crossLsLinks }, 'merge');
+  crossLsLinks.forEach((link, index) => {
+    setInteger(link.lt1Unit, { min: 0, max: 16385 }, `crossLsLinks[${index}].lt1Unit`);
+    setInteger(link.lt2Unit, { min: 0, max: 16385 }, `crossLsLinks[${index}].lt2Unit`);
+  });
 
+  const identifiers = planMergedJunosIdentifiers(configSlots, crossLsLinks, globalConfig);
+  const globalIdentifierPath = localPath => `globalConfig.${localPath}`;
+  const globalIdentifierNames = {
+    path: globalIdentifierPath,
+    mapping: identifiers.mapping,
+    definition: localPath => identifiers.nameForDefinition(globalIdentifierPath(localPath)),
+    reference: localPath => identifiers.nameForReference(globalIdentifierPath(localPath)),
+    generated: (localPath, role) => (
+      identifiers.nameForGenerated(globalIdentifierPath(localPath), role)
+    ),
+    generatedEntries: localPath => identifiers.mapping.entries.filter(entry => (
+      entry.definitionPath?.startsWith(`${globalIdentifierPath(localPath)}#generated:`)
+    )),
+  };
   const allLines = [];
-  const allWarnings = [];
+  const allWarnings = [...identifiers.warnings];
   const perLsSummaries = [];
 
   allLines.push('<?xml version="1.0" encoding="UTF-8"?>');
@@ -3415,22 +3436,33 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
     'configSlots',
   ));
 
+  buildHaXml(globalConfig.ha_config, allLines);
+  buildSyslogXml(globalConfig.syslog_config, allLines);
+  buildSnmpXml(globalConfig.snmp_config, allLines, globalIdentifierNames);
+  buildAaaXml(globalConfig.aaa_config, allLines, globalIdentifierNames);
+
   // Per-LS sections
   for (let slotIndex = 0; slotIndex < configSlots.length; slotIndex += 1) {
     const slot = configSlots[slotIndex];
-    const safeLsName = setIdentifier(slot.lsName, `configSlots[${slotIndex}].lsName`);
-    const ctx = { type: 'logical-system', name: safeLsName };
+    const safeLsName = identifiers.nameForDefinition(`configSlots[${slotIndex}].lsName`);
+    const ctx = { type: 'logical-system', name: slot.lsName };
     const result = buildSrxXml(
       slot.intermediateConfig,
       slot.interfaceMappings || {},
       ctx,
-      { omitConfigurationWrapper: true }
+      {
+        omitConfigurationWrapper: true,
+        identifierPlan: identifiers,
+        pathPrefix: `configSlots[${slotIndex}].intermediateConfig.`,
+        targetContextPath: `configSlots[${slotIndex}].lsName`,
+      },
     );
     allLines.push('');
     allLines.push(`  ${xmlComment(`Logical-System: ${slot.lsName}`, `configSlots[${slotIndex}].lsName`)}`);
     allLines.push(result.xml);
-    allWarnings.push(...result.warnings.map(w => ({ ...w, _ls: safeLsName })));
-    perLsSummaries.push({ lsName: safeLsName });
+    allWarnings.push(...result.warnings.slice(identifiers.warnings.length)
+      .map(w => ({ ...w, _ls: safeLsName })));
+    perLsSummaries.push({ lsName: safeLsName, summary: result.summary });
   }
 
   // Cross-LS lt- tunnel interfaces
@@ -3439,9 +3471,22 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
     allLines.push('  <!-- Cross-Logical-System Tunnel Interfaces (lt-) -->');
     for (let linkIndex = 0; linkIndex < crossLsLinks.length; linkIndex += 1) {
       const link = crossLsLinks[linkIndex];
-      const ls1 = xmlText(setIdentifier(link.ls1, `crossLsLinks[${linkIndex}].ls1`));
-      const ls2 = xmlText(setIdentifier(link.ls2, `crossLsLinks[${linkIndex}].ls2`));
-      const zone = xmlText(setIdentifier(link.sharedZone, `crossLsLinks[${linkIndex}].sharedZone`));
+      const ls1 = xmlText(
+        identifiers.nameForReference(`crossLsLinks[${linkIndex}].ls1`),
+        `crossLsLinks[${linkIndex}].ls1`,
+      );
+      const ls2 = xmlText(
+        identifiers.nameForReference(`crossLsLinks[${linkIndex}].ls2`),
+        `crossLsLinks[${linkIndex}].ls2`,
+      );
+      const zone1 = xmlText(
+        identifiers.nameForReference(`crossLsLinks[${linkIndex}].sharedZone#ls1`),
+        `crossLsLinks[${linkIndex}].sharedZone#ls1`,
+      );
+      const zone2 = xmlText(
+        identifiers.nameForReference(`crossLsLinks[${linkIndex}].sharedZone#ls2`),
+        `crossLsLinks[${linkIndex}].sharedZone#ls2`,
+      );
       const u1 = setInteger(link.lt1Unit, { min: 0, max: 16385 }, `crossLsLinks[${linkIndex}].lt1Unit`);
       const u2 = setInteger(link.lt2Unit, { min: 0, max: 16385 }, `crossLsLinks[${linkIndex}].lt2Unit`);
 
@@ -3462,7 +3507,7 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
       allLines.push(`    <security>`);
       allLines.push(`      <zones>`);
       allLines.push(`        <security-zone>`);
-      allLines.push(`          <name>${zone}</name>`);
+      allLines.push(`          <name>${zone1}</name>`);
       allLines.push(`          <interfaces>`);
       allLines.push(`            <name>lt-0/0/0.${u1}</name>`);
       allLines.push(`          </interfaces>`);
@@ -3488,7 +3533,7 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
       allLines.push(`    <security>`);
       allLines.push(`      <zones>`);
       allLines.push(`        <security-zone>`);
-      allLines.push(`          <name>${zone}</name>`);
+      allLines.push(`          <name>${zone2}</name>`);
       allLines.push(`          <interfaces>`);
       allLines.push(`            <name>lt-0/0/0.${u2}</name>`);
       allLines.push(`          </interfaces>`);
@@ -3505,9 +3550,16 @@ export function buildMergedSrxXml(configSlots, crossLsLinks = [], globalConfig =
     logical_systems: configSlots.length,
     cross_ls_links: crossLsLinks.length,
     per_ls: perLsSummaries,
+    total_warnings: allWarnings.length,
+    identifier_collisions_resolved: identifiers.collisionCount,
   };
 
   const xml = allLines.join('\n');
   validateXmlOutput(xml);
-  return { xml, warnings: allWarnings, summary };
+  return {
+    xml,
+    warnings: allWarnings,
+    summary,
+    identifierMappings: identifiers.mapping,
+  };
 }
