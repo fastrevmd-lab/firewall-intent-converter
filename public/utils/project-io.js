@@ -8,7 +8,7 @@ import {
   normalizeConversionOutput,
 } from '../../src/conversion/conversion-output.js';
 
-const CURRENT_VERSION = 4;
+export const CURRENT_VERSION = 5;
 const RECONVERT_WARNING = 'Generated output from this older project was cleared because it has no validated identifier mapping. Reconvert before export or device push.';
 
 const VENDOR_NAMES = {
@@ -66,7 +66,7 @@ const STATE_DEFAULTS = {
 /**
  * Build a save-ready project JSON payload from current app state.
  */
-export function buildProjectPayload(stateBag, projectName) {
+export function buildProjectCore(stateBag, projectName, security) {
   const state = {};
   for (const key of STATE_KEYS) {
     state[key] = stateBag[key] ?? STATE_DEFAULTS[key];
@@ -75,12 +75,22 @@ export function buildProjectPayload(stateBag, projectName) {
     state.srxOutput = assertConversionOutput(state.srxOutput);
     state.outputFormat = state.srxOutput.format;
   }
+  if (security?.mode === 'sanitized') delete state.sanitizationTable;
   return {
     fpic_version: CURRENT_VERSION,
     name: projectName,
     savedAt: new Date().toISOString(),
+    security,
     state,
   };
+}
+
+/**
+ * Legacy core-only entry retained until the project hook is moved to the
+ * security boundary. It intentionally makes no export-security decision.
+ */
+export function buildProjectPayload(stateBag, projectName) {
+  return buildProjectCore(stateBag, projectName, undefined);
 }
 
 /**
@@ -88,8 +98,6 @@ export function buildProjectPayload(stateBag, projectName) {
  * Returns { valid: true, project, warnings } or { valid: false, error }.
  */
 export function validateProjectFile(json) {
-  const warnings = [];
-
   if (!json || typeof json !== 'object') {
     return { valid: false, error: 'File is not a valid JSON object.' };
   }
@@ -105,27 +113,36 @@ export function validateProjectFile(json) {
     };
   }
 
-  if (!json.state || typeof json.state !== 'object') {
+  if (!json.state || typeof json.state !== 'object' || Array.isArray(json.state)) {
     return { valid: false, error: 'Project file is missing state data.' };
   }
 
-  if (!json.state.intermediateConfig && !json.state.configText) {
-    warnings.push('Project has no parsed config or source text. You may need to re-parse.');
-  }
-
-  let project;
   try {
-    const migration = migrateProject(json);
-    project = migration.project;
-    if (migration.staleOutputCleared) warnings.push(RECONVERT_WARNING);
+    const result = validateProjectStateCore(json);
+    return { valid: true, ...result };
   } catch (error) {
     if (error instanceof ConversionOutputError) {
       return { valid: false, error: `Project conversion output is invalid: ${error.reason}` };
     }
     throw error;
   }
+}
 
-  return { valid: true, project, warnings };
+/**
+ * Validate and migrate only project state and conversion output. Security
+ * envelope decisions are owned by project-security.js.
+ */
+export function validateProjectStateCore(project) {
+  if (!project?.state || typeof project.state !== 'object' || Array.isArray(project.state)) {
+    throw new TypeError('Project file is missing state data.');
+  }
+  const warnings = [];
+  if (!project.state.intermediateConfig && !project.state.configText) {
+    warnings.push('Project has no parsed config or source text. You may need to re-parse.');
+  }
+  const migration = migrateProject(project);
+  if (migration.staleOutputCleared) warnings.push(RECONVERT_WARNING);
+  return { project: migration.project, warnings };
 }
 
 /**
@@ -175,6 +192,10 @@ function migrateProject(project) {
 
   if (p.fpic_version < 4) {
     p.fpic_version = 4;
+  }
+
+  if (p.fpic_version < 5) {
+    p.fpic_version = 5;
   }
 
   return { project: p, staleOutputCleared };

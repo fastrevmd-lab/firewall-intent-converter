@@ -3,6 +3,17 @@ import {
   isSanitizedSecretValue,
   isSecretBearingKey,
 } from './secret-detection.js';
+import {
+  CURRENT_VERSION,
+  buildProjectCore,
+  validateProjectStateCore,
+} from './project-io.js';
+import {
+  ProjectCryptoError,
+  decryptReversibleEnvelope,
+  encryptReversiblePayload,
+  inspectEncryptedEnvelope,
+} from './project-crypto.js';
 
 export const PROJECT_SECURITY_MODES = Object.freeze({
   SANITIZED: 'sanitized',
@@ -43,6 +54,10 @@ const ERROR_MESSAGES = Object.freeze({
   original_leak: 'Sanitized export was blocked because an original value remains.',
   secret_leak: 'Sanitized export was blocked because secret-bearing content remains.',
   oversized_project: 'Project data exceeds the supported size limit.',
+  invalid_confirmation: 'Project export confirmation is invalid.',
+  unsupported_mode: 'Project security mode is not supported.',
+  unsupported_version: 'Project file version is not supported.',
+  invalid_project: 'Project file is invalid.',
 });
 
 export class ProjectSecurityError extends Error {
@@ -474,4 +489,390 @@ export function boundedProjectStringify(project) {
     }
     return serialized;
   });
+}
+
+const SANITIZED_METADATA = Object.freeze({
+  schema: 1,
+  mode: PROJECT_SECURITY_MODES.SANITIZED,
+  containsOriginals: false,
+  reversible: false,
+  restorationAvailable: false,
+});
+const PLAINTEXT_OUTER_KEYS = Object.freeze([
+  'fpic_version', 'name', 'savedAt', 'security', 'state',
+]);
+const PLAINTEXT_SECURITY_KEYS = Object.freeze([
+  'schema', 'mode', 'containsOriginals', 'reversible', 'restorationAvailable',
+]);
+
+function unsanitizedMetadata(restorationAvailable) {
+  return Object.freeze({
+    schema: 1,
+    mode: PROJECT_SECURITY_MODES.UNSANITIZED,
+    containsOriginals: true,
+    reversible: false,
+    restorationAvailable: restorationAvailable === true,
+  });
+}
+
+function legacyMetadata(mode, restorationAvailable) {
+  if (mode === PROJECT_SECURITY_MODES.SANITIZED) return SANITIZED_METADATA;
+  return Object.freeze({
+    schema: 1,
+    mode,
+    containsOriginals: true,
+    reversible: false,
+    restorationAvailable: restorationAvailable === true,
+  });
+}
+
+function buildReversiblePayload(stateBag, name) {
+  const prepared = prepareUnsanitizedProjectState(stateBag);
+  return {
+    payloadSchema: 1,
+    name,
+    savedAt: new Date().toISOString(),
+    sourceMode: PROJECT_SECURITY_MODES.SANITIZED,
+    state: { ...prepared.state, projectSecurityMode: PROJECT_SECURITY_MODES.REVERSIBLE },
+  };
+}
+
+function projectFilename(name, mode) {
+  const base = String(name).replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[-_.]+|[-_.]+$/g, '').slice(0, 100) || 'project';
+  const suffix = mode === PROJECT_SECURITY_MODES.SANITIZED
+    ? 'sanitized.fpic.json'
+    : mode === PROJECT_SECURITY_MODES.REVERSIBLE
+      ? 'reversible.fpic.enc.json'
+      : 'unsanitized.fpic.json';
+  return `${base}.${suffix}`;
+}
+
+async function serializeProjectExportInternal(stateBag, name, options) {
+  const classification = classifyProjectSecurity(stateBag);
+  if (options.mode === PROJECT_SECURITY_MODES.SANITIZED) {
+    const prepared = prepareSanitizedProjectState(stateBag);
+    const project = buildProjectCore(
+      { ...prepared.state, projectSecurityMode: PROJECT_SECURITY_MODES.SANITIZED },
+      name,
+      SANITIZED_METADATA,
+    );
+    return {
+      serialized: assertSanitizedProjectSafe(project, prepared.originals),
+      filename: projectFilename(name, PROJECT_SECURITY_MODES.SANITIZED),
+      security: project.security,
+    };
+  }
+  if (options.mode === PROJECT_SECURITY_MODES.REVERSIBLE) {
+    if (!classification.reversibleAvailable) {
+      throw new ProjectSecurityError('invalid_restoration');
+    }
+    if (options.acknowledgement !== true
+        || options.passphrase !== options.confirmationPassphrase) {
+      throw new ProjectSecurityError('invalid_confirmation');
+    }
+    const payload = buildReversiblePayload(stateBag, name);
+    const envelope = await encryptReversiblePayload(payload, options.passphrase);
+    return {
+      serialized: JSON.stringify(envelope, null, 2),
+      filename: projectFilename(name, PROJECT_SECURITY_MODES.REVERSIBLE),
+      security: envelope.security,
+    };
+  }
+  if (options.mode === PROJECT_SECURITY_MODES.UNSANITIZED) {
+    if (options.confirmation !== 'EXPORT UNSANITIZED') {
+      throw new ProjectSecurityError('invalid_confirmation');
+    }
+    const prepared = prepareUnsanitizedProjectState(stateBag);
+    const project = buildProjectCore(
+      { ...prepared.state, projectSecurityMode: PROJECT_SECURITY_MODES.UNSANITIZED },
+      name,
+      unsanitizedMetadata(classification.restorationAvailable),
+    );
+    return {
+      serialized: boundedProjectStringify(project),
+      filename: projectFilename(name, PROJECT_SECURITY_MODES.UNSANITIZED),
+      security: project.security,
+    };
+  }
+  throw new ProjectSecurityError('unsupported_mode');
+}
+
+export async function serializeProjectExport(stateBag, name, options = {}) {
+  try {
+    return await serializeProjectExportInternal(stateBag, name, options);
+  } catch (error) {
+    if (error instanceof ProjectSecurityError) {
+      throw new ProjectSecurityError(error.code);
+    }
+    if (error instanceof ProjectCryptoError) {
+      throw new ProjectCryptoError(error.code);
+    }
+    throw new ProjectSecurityError('invalid_project');
+  }
+}
+
+function hasExactKeys(value, expectedKeys) {
+  if (!assertPlainObject(value) || ownPropertySymbols(value).length > 0) return false;
+  const names = ownPropertyNames(value);
+  return names.length === expectedKeys.length
+    && names.every(key => expectedKeys.includes(key))
+    && expectedKeys.every(key => {
+      const descriptor = ownDescriptor(value, key);
+      return descriptor && !descriptor.get && !descriptor.set && descriptor.enumerable;
+    });
+}
+
+function assertCanonicalTimestamp(value) {
+  if (typeof value !== 'string') throw new ProjectSecurityError('invalid_project');
+  let canonical;
+  try {
+    canonical = new Date(value).toISOString();
+  } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  if (canonical !== value) throw new ProjectSecurityError('invalid_project');
+}
+
+function assertPlaintextOuter(project) {
+  if (!hasExactKeys(project, PLAINTEXT_OUTER_KEYS)
+      || project.fpic_version !== CURRENT_VERSION
+      || typeof project.name !== 'string'
+      || project.name.length === 0
+      || utf8Length(project.name) > 1024
+      || !assertPlainObject(project.state)
+      || !hasExactKeys(project.security, PLAINTEXT_SECURITY_KEYS)) {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  assertCanonicalTimestamp(project.savedAt);
+}
+
+function assertPlaintextMetadata(security, mode) {
+  const valid = security.schema === 1
+    && security.mode === mode
+    && security.reversible === false
+    && typeof security.restorationAvailable === 'boolean'
+    && (mode === PROJECT_SECURITY_MODES.SANITIZED
+      ? security.containsOriginals === false && security.restorationAvailable === false
+      : security.containsOriginals === true);
+  if (!valid) throw new ProjectSecurityError('invalid_project');
+}
+
+function parseProjectText(serialized) {
+  if (typeof serialized !== 'string') throw new ProjectSecurityError('invalid_project');
+  if (serialized.length > MAX_PROJECT_FILE_BYTES) {
+    throw new ProjectSecurityError('oversized_project');
+  }
+  let byteLength;
+  try {
+    byteLength = utf8Length(serialized);
+  } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  if (byteLength > MAX_PROJECT_FILE_BYTES) {
+    throw new ProjectSecurityError('oversized_project');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  if (!assertPlainObject(parsed)) throw new ProjectSecurityError('invalid_project');
+  return parsed;
+}
+
+function normalizeSanitizedRestorationState(state) {
+  const clone = cloneValidated(state);
+  clone.sanitizationTable = null;
+  if (Array.isArray(clone.configSlots)) {
+    clone.configSlots = clone.configSlots.map(slot => {
+      if (!assertPlainObject(slot)) throw new ProjectSecurityError('invalid_project');
+      return { ...slot, sanitizationTable: null };
+    });
+  }
+  return clone;
+}
+
+function validateStateCoreForImport(project) {
+  try {
+    return validateProjectStateCore(project);
+  } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
+}
+
+function validateSanitizedPlaintext(project) {
+  assertPlaintextOuter(project);
+  assertPlaintextMetadata(project.security, PROJECT_SECURITY_MODES.SANITIZED);
+  const classification = classifyProjectSecurity(project.state);
+  if (!classification.sanitizedEligible || classification.restorationAvailable) {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  assertSanitizedProjectSafe(project, []);
+  const result = validateStateCoreForImport(project);
+  result.project.state = normalizeSanitizedRestorationState(result.project.state);
+  result.project.security = SANITIZED_METADATA;
+  return result;
+}
+
+function validateUnsanitizedPlaintext(project) {
+  assertPlaintextOuter(project);
+  assertPlaintextMetadata(project.security, PROJECT_SECURITY_MODES.UNSANITIZED);
+  const prepared = prepareUnsanitizedProjectState(project.state);
+  if (prepared.restorationAvailable !== project.security.restorationAvailable) {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  const result = validateStateCoreForImport({ ...project, state: prepared.state });
+  result.project.security = unsanitizedMetadata(prepared.restorationAvailable);
+  return result;
+}
+
+function classifyLegacyProject(project) {
+  const prepared = prepareUnsanitizedProjectState(project.state);
+  if (project.state.isSanitized === true && prepared.restorationAvailable) {
+    return {
+      mode: PROJECT_SECURITY_MODES.LEGACY,
+      requiresConfirmation: true,
+      restorationAvailable: true,
+      state: prepared.state,
+    };
+  }
+  if (project.state.isSanitized === true) {
+    const sanitized = prepareSanitizedProjectState(project.state);
+    const candidate = {
+      fpic_version: CURRENT_VERSION,
+      name: typeof project.name === 'string' ? project.name : 'project',
+      savedAt: typeof project.savedAt === 'string'
+        ? project.savedAt
+        : new Date(0).toISOString(),
+      security: SANITIZED_METADATA,
+      state: sanitized.state,
+    };
+    assertSanitizedProjectSafe(candidate, sanitized.originals);
+    return {
+      mode: PROJECT_SECURITY_MODES.SANITIZED,
+      requiresConfirmation: false,
+      restorationAvailable: false,
+      state: sanitized.state,
+    };
+  }
+  return {
+    mode: PROJECT_SECURITY_MODES.UNSANITIZED,
+    requiresConfirmation: true,
+    restorationAvailable: prepared.restorationAvailable,
+    state: prepared.state,
+  };
+}
+
+function inspectLegacyProject(project) {
+  const classification = classifyLegacyProject(project);
+  const security = legacyMetadata(
+    classification.mode,
+    classification.restorationAvailable,
+  );
+  const result = validateStateCoreForImport({
+    ...project,
+    security,
+    state: classification.state,
+  });
+  result.project.security = security;
+  if (classification.mode === PROJECT_SECURITY_MODES.SANITIZED) {
+    result.project.state = normalizeSanitizedRestorationState(result.project.state);
+  }
+  return {
+    kind: classification.mode,
+    security,
+    envelope: result.project,
+    warnings: result.warnings,
+    requiresConfirmation: classification.requiresConfirmation,
+  };
+}
+
+function inspectParsedProject(parsed) {
+  if (!Number.isSafeInteger(parsed.fpic_version) || parsed.fpic_version < 1) {
+    throw new ProjectSecurityError('invalid_project');
+  }
+  if (parsed.fpic_version > CURRENT_VERSION) {
+    throw new ProjectSecurityError('unsupported_version');
+  }
+  if (parsed.fpic_version < CURRENT_VERSION) return inspectLegacyProject(parsed);
+
+  const mode = parsed.security?.mode;
+  if (mode === PROJECT_SECURITY_MODES.REVERSIBLE) {
+    const envelope = inspectEncryptedEnvelope(parsed);
+    return {
+      kind: PROJECT_SECURITY_MODES.REVERSIBLE,
+      security: envelope.security,
+      envelope,
+      warnings: [],
+      requiresConfirmation: true,
+    };
+  }
+  if (mode === PROJECT_SECURITY_MODES.SANITIZED) {
+    const result = validateSanitizedPlaintext(parsed);
+    return {
+      kind: mode,
+      security: SANITIZED_METADATA,
+      envelope: result.project,
+      warnings: result.warnings,
+      requiresConfirmation: false,
+    };
+  }
+  if (mode === PROJECT_SECURITY_MODES.UNSANITIZED) {
+    const result = validateUnsanitizedPlaintext(parsed);
+    return {
+      kind: mode,
+      security: result.project.security,
+      envelope: result.project,
+      warnings: result.warnings,
+      requiresConfirmation: true,
+    };
+  }
+  throw new ProjectSecurityError('invalid_project');
+}
+
+export function inspectProjectImport(serialized) {
+  try {
+    return inspectParsedProject(parseProjectText(serialized));
+  } catch (error) {
+    if (error instanceof ProjectSecurityError
+        && ['unsupported_version', 'oversized_project'].includes(error.code)) {
+      throw new ProjectSecurityError(error.code);
+    }
+    throw new ProjectSecurityError('invalid_project');
+  }
+}
+
+export async function openProjectImport(serialized, { passphrase } = {}) {
+  const inspected = inspectProjectImport(serialized);
+  if (inspected.kind !== PROJECT_SECURITY_MODES.REVERSIBLE) {
+    return {
+      project: inspected.envelope,
+      security: inspected.security,
+      warnings: inspected.warnings,
+      requiresConfirmation: inspected.requiresConfirmation,
+    };
+  }
+
+  const payload = await decryptReversibleEnvelope(inspected.envelope, passphrase);
+  try {
+    const prepared = prepareUnsanitizedProjectState(payload.state);
+    const result = validateStateCoreForImport({
+      fpic_version: CURRENT_VERSION,
+      name: payload.name,
+      savedAt: payload.savedAt,
+      security: inspected.security,
+      state: prepared.state,
+    });
+    result.project.security = inspected.security;
+    return {
+      project: result.project,
+      security: inspected.security,
+      warnings: result.warnings,
+      requiresConfirmation: true,
+    };
+  } catch {
+    throw new ProjectSecurityError('invalid_project');
+  }
 }

@@ -9,8 +9,11 @@ import {
   assertSanitizedProjectSafe,
   boundedProjectStringify,
   classifyProjectSecurity,
+  inspectProjectImport,
+  openProjectImport,
   prepareSanitizedProjectState,
   prepareUnsanitizedProjectState,
+  serializeProjectExport,
 } from '../public/utils/project-security.js';
 
 const table = original => [{
@@ -133,6 +136,10 @@ describe('project security boundary', () => {
       original_leak: 'Sanitized export was blocked because an original value remains.',
       secret_leak: 'Sanitized export was blocked because secret-bearing content remains.',
       oversized_project: 'Project data exceeds the supported size limit.',
+      invalid_confirmation: 'Project export confirmation is invalid.',
+      unsupported_mode: 'Project security mode is not supported.',
+      unsupported_version: 'Project file version is not supported.',
+      invalid_project: 'Project file is invalid.',
     };
     for (const [code, message] of Object.entries(expected)) {
       expect(new ProjectSecurityError(code)).toMatchObject({
@@ -450,5 +457,69 @@ describe('project security boundary', () => {
       },
     });
     expect(assertSanitizedProjectSafe(project, [])).toBe(JSON.stringify(project, null, 2));
+  });
+
+  it('rejects unsupported export modes with a fixed non-reflective failure', async () => {
+    await expect(serializeProjectExport(sanitizedState, 'safe', {
+      mode: 'CALLER-CONTROLLED-MODE',
+    })).rejects.toMatchObject({
+      code: 'unsupported_mode',
+      message: 'Project security mode is not supported.',
+    });
+  });
+
+  it.each([
+    ['null options', null],
+    ['throwing mode getter', Object.defineProperty({}, 'mode', {
+      enumerable: true,
+      get() { throw new Error('SENSITIVE-GETTER-DETAIL'); },
+    })],
+  ])('maps malformed export options to a fixed failure: %s', async (_label, options) => {
+    let error;
+    try {
+      await serializeProjectExport(sanitizedState, 'safe', options);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      code: 'invalid_project',
+      message: 'Project file is invalid.',
+    });
+    expect(error.message).not.toContain('SENSITIVE-GETTER-DETAIL');
+  });
+
+  it.each([
+    ['non-string input', null],
+    ['invalid JSON', '{"caller":"SENSITIVE-DETAIL"'],
+    ['missing version', '{"state":{}}'],
+    ['invalid version', '{"fpic_version":0,"state":{}}'],
+  ])('rejects malformed import input without reflecting it: %s', (_label, serialized) => {
+    let error;
+    try {
+      inspectProjectImport(serialized);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      code: 'invalid_project',
+      message: 'Project file is invalid.',
+    });
+    expect(error.message).not.toContain('SENSITIVE-DETAIL');
+  });
+
+  it('does not accept a decrypted reversible payload as plaintext v5', async () => {
+    const plaintextPayload = JSON.stringify({
+      payloadSchema: 1,
+      name: 'private',
+      savedAt: '2026-07-12T00:00:00.000Z',
+      sourceMode: 'sanitized',
+      state: sanitizedState,
+    });
+    expect(() => inspectProjectImport(plaintextPayload)).toThrow(expect.objectContaining({
+      code: 'invalid_project',
+    }));
+    await expect(openProjectImport(plaintextPayload, {})).rejects.toMatchObject({
+      code: 'invalid_project',
+    });
   });
 });
