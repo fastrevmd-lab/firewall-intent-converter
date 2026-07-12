@@ -46,6 +46,7 @@ jobs:
           tests/conversion-consumers.test.js
           tests/llm-settings.test.js
           tests/credential-security.test.js
+          tests/secret-detection.test.js
 
       - name: Run self-contained JavaScript suites
         shell: bash

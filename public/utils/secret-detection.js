@@ -1,0 +1,130 @@
+const PLACEHOLDER_RE = /^SANITIZED_(?:HASH|KEY|COMMUNITY|CERT)_\d+$/;
+const KEY_RE = /^(?:password|passwd|passwordhash|phash|encryptedpassword|secret|sharedsecret|secondarysecret|psk|presharedkey|psksecret|authkey|authenticationkey|authenticationpassword|privacykey|privacypassword|apikey|snmpcommunity|radiussecret|radiuskey|tacacssecret|tacacskey|tacplussecret|tacpluskey|privatekey|certificatekey)$/;
+
+function normalizedKey(key) {
+  return String(key).replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function syntax(ruleId, category, placeholderKind, regex, valueGroups, render) {
+  return Object.freeze({ ruleId, category, placeholderKind, regex, valueGroups, render });
+}
+
+const quotedOrBare = (groups, placeholder) => groups[1] + placeholder;
+const quoted = (groups, placeholder) => groups[1] + '"' + placeholder + '"';
+
+const SECRET_SYNTAXES = Object.freeze([
+  syntax('xml-nested-key', 'key', 'KEY', /(<(?:pre-shared-key|api-key|auth-key|secret|key)>\s*<key>)([^<]+)(<\/key>)/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('xml-direct-key', 'key', 'KEY', /(<(?:pre-shared-key|api-key|auth-key)>)(?!\s*<key>)([^<]+)(<\/[^>]+>)/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('xml-hash', 'hash', 'HASH', /(<(?:phash|password-hash|encrypted-secret)>)([^<]+)(<\/[^>]+>)/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('xml-private-key', 'certificate', 'CERT', /(<(?:private-key|certificate-key|ssl-key|secret-key)>)([^<]+)(<\/[^>]+>)/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('xml-snmp-community', 'community', 'COMMUNITY', /(<community>)([^<]+)(<\/community>)/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('attribute-hash', 'hash', 'HASH', /(^|\n)(\s*(?:password|secret|pre-shared-key|auth-key)\s+")((?:\$)[^"]+)(")/gi, 3,
+    (groups, placeholder) => groups[1] + groups[2] + placeholder + groups[4]),
+
+  syntax('fortigate-enc-password', 'hash', 'HASH', /(set\s+(?:password|passwd)\s+)(ENC\s+(?:"[^"]+"|\S+))/gi, 2, quotedOrBare),
+  syntax('fortigate-quoted-password', 'hash', 'HASH', /(set\s+(?:password|passwd)\s+)"([^"]+)"/gi, 2, quoted),
+  syntax('fortigate-unquoted-password', 'hash', 'HASH', /(set\s+(?:password|passwd)\s+)(?!ENC\s|")(\S+)/gi, 2, quotedOrBare),
+  syntax('fortigate-enc-secret', 'key', 'KEY', /(set\s+(?:secret|secondary-secret|psksecret|tacacs-secret|auth-password|privacy-password)\s+)(ENC\s+(?:"[^"]+"|\S+))/gi, 2, quotedOrBare),
+  syntax('fortigate-quoted-secret', 'key', 'KEY', /(set\s+(?:secret|secondary-secret|psksecret|tacacs-secret|auth-password|privacy-password)\s+)"([^"]+)"/gi, 2, quoted),
+  syntax('fortigate-unquoted-secret', 'key', 'KEY', /(set\s+(?:secret|secondary-secret|psksecret|tacacs-secret|auth-password|privacy-password)\s+)(?!ENC\s|")(\S+)/gi, 2, quotedOrBare),
+
+  syntax('fortigate-enc-community', 'community', 'COMMUNITY', /(set\s+community\s+)(ENC\s+(?:"[^"]+"|\S+))/gi, 2, quotedOrBare),
+  syntax('snmp-community-cli', 'community', 'COMMUNITY', /((?:set\s+snmp\s+community|snmp-server\s+community|set\s+community)\s+)(?!ENC\s)(?:"([^"]+)"|(\S+))/gi, [2, 3], quotedOrBare),
+  syntax('snmp-community-hierarchical', 'community', 'COMMUNITY', /(\bcommunity\s+)(?:"([^"]+)"|([^\s{;]+))(\s*\{)/gi, [2, 3],
+    (groups, placeholder) => groups[1] + placeholder + groups[4]),
+  syntax('aaa-secret-cli', 'key', 'KEY', /((?:radius-server|tacacs-server|tacplus-server|set\s+system\s+(?:radius-server|tacplus-server))\s+(?:host\s+)?\S+\s+(?:secret|key)\s+)(?:"([^"]+)"|([^\s;]+))/gi, [2, 3], quoted),
+  syntax('asa-aaa-server-key', 'key', 'KEY', /((?:^|\n)\s*aaa-server\s+\S+\s+\([^\)\r\n]+\)\s+host\s+\S+\s*\r?\n\s*(?:key|secret)\s+)(?:"([^"]+)"|(\S+))/gim, [2, 3], quoted),
+  syntax('aaa-secret-hierarchical', 'key', 'KEY', /((?:radius-server|tacacs-server|tacplus-server)\s+\S+\s*\{\s*(?:[^{};]+;\s*)*(?:secret|key)\s+)(?:"([^"]+)"|([^\s;}]+))/gi, [2, 3], quoted),
+
+  syntax('cli-pre-shared-key', 'key', 'KEY', /((?:(?:ikev[12]\s+(?:(?:local|remote)-authentication\s+)?)?pre-shared-key\s+)(?:(?:ascii-text|hexadecimal)\s+)?)(?!\{)(?:"([^"]+)"|([^\s;]+))/gi, [2, 3], quoted),
+  syntax('hierarchical-pre-shared-key', 'key', 'KEY', /(pre-shared-key\s*\{\s*(?:ascii-text|hexadecimal)\s+)(?:"([^"]+)"|([^\s;}]+))/gi, [2, 3], quoted),
+  syntax('asa-isakmp-key', 'key', 'KEY', /(crypto\s+isakmp\s+key\s+)(\S+)/gi, 2, quotedOrBare),
+  syntax('encrypted-password', 'hash', 'HASH', /((?:encrypted-password|enable\s+secret)\s+)(?:"([^"]+)"|([^\s;]+))/gi, [2, 3], quoted),
+  syntax('enable-password', 'hash', 'HASH', /((?:enable\s+)?password\s+)(\S+)(\s+encrypted\b)/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('username-password', 'hash', 'HASH', /(username\s+\S+\s+(?:password|secret)\s+)(?:"([^"]+)"|(\S+))/gi, [2, 3], quotedOrBare),
+  syntax('auth-privacy-password', 'key', 'KEY', /((?:authentication-password|privacy-password|authentication-key|privacy-key)\s+)(?:"([^"]+)"|([^\s;]+))/gi, [2, 3], quoted),
+  syntax('cli-private-key', 'certificate', 'CERT', /((?:private-key|certificate-key|ssl-key|secret-key)\s+)(?:"([^"]+)"|([^\s;]+))/gi, [2, 3], quoted),
+
+  syntax('json-secret', 'key', 'KEY', /("(?:shared-secret|pre-shared-key|psksecret|radius-secret|radius-key|tacacs-secret|tacacs-key|tacplus-secret|tacplus-key)"\s*:\s*")([^"]+)(")/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('json-password-hash', 'hash', 'HASH', /("(?:password|password-hash|phash|encrypted-password)"\s*:\s*")([^"]+)(")/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('json-snmp-community', 'community', 'COMMUNITY', /("snmp-community"\s*:\s*")([^"]+)(")/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('json-private-key', 'certificate', 'CERT', /("(?:private-key|certificate-key|ssl-key|secret-key|certificate-secret)"\s*:\s*")([^"]+)(")/gi, 2,
+    (groups, placeholder) => groups[1] + placeholder + groups[3]),
+  syntax('text-aaa-secret', 'key', 'KEY', /((?:radius|tacacs|tacplus)[ -](?:secret|key)\s*:\s*)(\S+)/gi, 2, quotedOrBare),
+  syntax('text-private-key', 'certificate', 'CERT', /((?:private[ -]key|certificate[ -](?:key|secret)|ssl[ -]key)\s*:\s*)(\S+)/gi, 2, quotedOrBare),
+
+  syntax('sonicwall-secret', 'key', 'KEY', /((?:Shared Secret|Pre-Shared Key)\s*:\s*)(\S+)/gi, 2, quotedOrBare),
+  syntax('sonicwall-password-hash', 'hash', 'HASH', /(Password Hash\s*:\s*)(\S+)/gi, 2, quotedOrBare),
+  syntax('sonicwall-password', 'hash', 'HASH', /(Password\s*:\s*)(\S+)/gi, 2, quotedOrBare),
+  syntax('sonicwall-snmp-community', 'community', 'COMMUNITY', /(SNMP Community\s*:\s*)(\S+)/gi, 2, quotedOrBare),
+
+  syntax('pem-private-key', 'certificate', 'CERT', /-----BEGIN\s+(?:(?:RSA|EC|DSA|ENCRYPTED|OPENSSH)\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:(?:RSA|EC|DSA|ENCRYPTED|OPENSSH)\s+)?PRIVATE\s+KEY-----/g, 0,
+    (_groups, placeholder) => placeholder),
+]);
+
+function cloneRegex(regex) {
+  return new RegExp(regex.source, regex.flags);
+}
+
+function secretValue(spec, groups) {
+  const indexes = Array.isArray(spec.valueGroups) ? spec.valueGroups : [spec.valueGroups];
+  for (const index of indexes) {
+    if (groups[index] !== undefined) return groups[index];
+  }
+  return undefined;
+}
+
+export function isSanitizedSecretValue(value) {
+  return typeof value === 'string' && PLACEHOLDER_RE.test(value);
+}
+
+export function isSecretBearingKey(key) {
+  return KEY_RE.test(normalizedKey(key));
+}
+
+export function findSecretsInText(text) {
+  if (typeof text !== 'string') return [];
+  const findings = [];
+  for (const spec of SECRET_SYNTAXES) {
+    const regex = cloneRegex(spec.regex);
+    for (const match of text.matchAll(regex)) {
+      const original = secretValue(spec, match);
+      if (!original || isSanitizedSecretValue(original.trim())) continue;
+      findings.push({ category: spec.category, ruleId: spec.ruleId });
+    }
+  }
+  return findings;
+}
+
+export function redactConfigSecrets(text) {
+  if (typeof text !== 'string') throw new TypeError('configuration text must be a string');
+  const counters = { HASH: 0, KEY: 0, COMMUNITY: 0, CERT: 0 };
+  for (const match of text.matchAll(/SANITIZED_(HASH|KEY|COMMUNITY|CERT)_(\d+)/g)) {
+    counters[match[1]] = Math.max(counters[match[1]], Number(match[2]) + 1);
+  }
+  const counts = { hash: 0, key: 0, community: 0, cert: 0 };
+  const replacements = [];
+  let output = text;
+  for (const spec of SECRET_SYNTAXES) {
+    output = output.replace(cloneRegex(spec.regex), (...args) => {
+      const groups = args.slice(0, -2);
+      const captured = secretValue(spec, groups);
+      const original = captured?.trim();
+      if (!original || isSanitizedSecretValue(original)) return groups[0];
+      const placeholder = 'SANITIZED_' + spec.placeholderKind + '_' + counters[spec.placeholderKind]++;
+      replacements.push({ type: spec.category, placeholder, original });
+      counts[spec.category === 'certificate' ? 'cert' : spec.category] += 1;
+      return spec.render(groups, placeholder);
+    });
+  }
+  return { text: output, replacements, counts };
+}
