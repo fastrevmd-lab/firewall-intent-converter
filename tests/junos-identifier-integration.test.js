@@ -562,6 +562,88 @@ describe('Set identifier-plan integration', () => {
     expect(result.commands).toContain('set applications application-set Baz.Qux-set application Baz.Qux-9000');
   });
 
+  it('maps only interface operands when source identifiers resemble interface names', () => {
+    const config = baseConfig({
+      zones: [{
+        name: 'port1',
+        interfaces: ['port1'],
+        description: 'zone port1 keeps port10 text',
+      }],
+      interfaces: [{ name: 'port1', ip: '192.0.2.1/24' }],
+      address_objects: [
+        { name: 'port1', type: 'host', value: '192.0.2.10/32' },
+        { name: 'port10', type: 'host', value: '192.0.2.11/32' },
+      ],
+      applications: [
+        { name: 'port1', protocol: 'tcp', port: '8080' },
+        { name: 'port10', protocol: 'tcp', port: '8081' },
+      ],
+      security_policies: [policy('port1', 'port1', 'port1', 'port1', {
+        applications: ['port1'],
+        description: 'policy port1 keeps port10 text',
+      })],
+    });
+    const mappedInterface = 'ge-0/0/0.0';
+    const result = convertToSrxSetCommands(config, { port1: mappedInterface });
+    const portOneEntries = result.identifierMappings.entries.filter(entry => (
+      entry.sourceName === 'port1'
+    ));
+
+    expect(portOneEntries.length).toBeGreaterThanOrEqual(4);
+    expect(portOneEntries.every(entry => entry.outputName === 'port1')).toBe(true);
+    expect(result.commands).toEqual(expect.arrayContaining([
+      `set security zones security-zone port1 interfaces ${mappedInterface}`,
+      'set interfaces ge-0/0/0 unit 0 family inet address 192.0.2.1/24',
+      'set security address-book global address port1 192.0.2.10/32',
+      'set security address-book global address port10 192.0.2.11/32',
+      'set applications application port1 destination-port 8080',
+      'set applications application port10 destination-port 8081',
+      'set security policies from-zone port1 to-zone port1 policy port1 match destination-address port1',
+      'set security policies from-zone port1 to-zone port1 policy port1 match application port1',
+      'set security zones security-zone port1 description "zone port1 keeps port10 text"',
+      'set security policies from-zone port1 to-zone port1 policy port1 description "policy port1 keeps port10 text"',
+    ]));
+    expect(result.commands.filter(command => command.includes(mappedInterface))).toEqual([
+      `set security zones security-zone port1 interfaces ${mappedInterface}`,
+    ]);
+  });
+
+  it('emits collision-safe planned definitions for NAT-referenced missing zones', () => {
+    const config = baseConfig({
+      zones: [{ name: 'outside', interfaces: [] }],
+      nat_rules: [
+        {
+          name: 'Branch One', type: 'source',
+          src_zones: ['Branch Zone'], dst_zones: ['outside'],
+          src_addresses: ['any'], dst_addresses: ['any'],
+          translated_src: { type: 'interface' },
+        },
+        {
+          name: 'Branch Two', type: 'source',
+          src_zones: ['Branch@Zone'], dst_zones: ['outside'],
+          src_addresses: ['any'], dst_addresses: ['any'],
+          translated_src: { type: 'interface' },
+        },
+      ],
+    });
+    const result = convertToSrxSetCommands(config);
+    const generatedZones = result.identifierMappings.entries.filter(entry => (
+      entry.namespace === 'zone'
+      && entry.definitionPath?.includes('#generated:nat-missing-zone:')
+    ));
+
+    expect(generatedZones).toHaveLength(2);
+    expect(new Set(generatedZones.map(entry => entry.outputName)).size).toBe(2);
+    for (const entry of generatedZones) {
+      expect(entry.referencePaths).toHaveLength(1);
+      expect(result.commands.filter(command => (
+        command === `set security zones security-zone ${entry.outputName}`
+      ))).toHaveLength(1);
+      expect(result.commands.some(command => command.endsWith(` from zone ${entry.outputName}`)))
+        .toBe(true);
+    }
+  });
+
   it('fails closed when an injected plan does not cover a core definition path', () => {
     const config = collisionConfig();
     const emptyPlan = {

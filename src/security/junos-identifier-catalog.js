@@ -140,6 +140,10 @@ function preferredNatRuleSetName(type, fromZone, toZone) {
   return type === 'static' ? 'STATIC-NAT' : `${fromZone}-to-${toZone}`;
 }
 
+function natMissingZoneRole(sourceName) {
+  return `nat-missing-zone:${sourceName}`;
+}
+
 function preferredVpnNames(vpn) {
   const vpnName = preferredVpnName(vpn);
   return {
@@ -1074,6 +1078,27 @@ function collectPoliciesAndSchedules(config, state) {
 
 function collectNat(config, state) {
   const { collector, device, prefix, natRuleSets } = state;
+  const configuredZones = new Set((config.zones || []).map(zone => zone.name));
+  const missingZones = new Set();
+  for (const rule of config.nat_rules || []) {
+    for (const zone of [...sourceZones(rule), ...destinationZones(rule)]) {
+      if (zone !== 'any' && !configuredZones.has(zone)) missingZones.add(zone);
+    }
+  }
+  for (const sourceName of [...missingZones].sort()) {
+    const role = natMissingZoneRole(sourceName);
+    collector.addGenerated({
+      catalogKey: JUNOS_IDENTIFIER_CATALOG.ZONE,
+      context: device,
+      namespace: 'zone',
+      kind: 'zone',
+      sourceName,
+      definitionPath: joinedPath(prefix, 'nat_rules'),
+      role,
+      stableParentKey: role,
+    });
+  }
+
   for (let index = 0; index < (config.nat_rules || []).length; index += 1) {
     const rule = config.nat_rules[index];
     const types = rule.type === 'source-and-destination'

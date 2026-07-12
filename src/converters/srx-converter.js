@@ -256,29 +256,35 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     commands.push('set security policies default-policy permit-all');
   }
 
-  convertNatRules(config.nat_rules, commands, warnings, summary, config.address_objects, identifiers, identifierPath);
-  convertStaticRoutes(config.static_routes, commands, warnings, summary);
+  convertNatRules(
+    config.nat_rules,
+    commands,
+    warnings,
+    summary,
+    config.address_objects,
+    config.zones,
+    identifiers,
+    identifierPath,
+  );
+  convertStaticRoutes(config.static_routes, commands, warnings, summary, interfaceMappings);
   convertBgpConfig(config.bgp_config, commands, warnings, summary);
   convertOspfConfig(config.ospf_config, commands, warnings, summary, interfaceMappings);
   convertOspf3Config(config.ospf3_config, commands, warnings, summary, interfaceMappings);
-  convertEvpnConfig(config.evpn_config, commands, warnings, summary);
-  convertVxlanConfig(config.vxlan_config, commands, warnings, summary);
-  convertHaConfig(config.ha_config, commands, warnings, summary);
+  convertEvpnConfig(config.evpn_config, commands, warnings, summary, interfaceMappings);
+  convertVxlanConfig(config.vxlan_config, commands, warnings, summary, interfaceMappings);
+  convertHaConfig(config.ha_config, commands, warnings, summary, interfaceMappings);
   convertScreenConfig(config.screen_config, commands, warnings, summary);
-  convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary);
+  convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary, interfaceMappings);
   convertSyslogConfig(config.syslog_config, commands, warnings, summary);
   convertSnmpConfig(config.snmp_config, commands, warnings, summary);
   convertAaaConfig(config.aaa_config, commands, warnings, summary);
-  convertDhcpConfig(config.dhcp_config, commands, warnings, summary);
-  convertQosConfig(config.qos_config, commands, warnings, summary);
+  convertDhcpConfig(config.dhcp_config, commands, warnings, summary, interfaceMappings);
+  convertQosConfig(config.qos_config, commands, warnings, summary, interfaceMappings);
   convertL2Config(config, commands, warnings, summary, interfaceMappings);
   convertPbfConfig(config.pbf_rules, commands, warnings, summary, interfaceMappings, config.address_objects);
   convertSslProxyConfig(config, commands, warnings, summary);
   convertFlowMonitoringConfig(config.flow_monitoring_config, commands, warnings, summary, interfaceMappings);
   convertUserIdentification(config.security_policies, commands, warnings);
-
-  // Fix 4: Post-process all commands to replace remaining vendor interface names
-  sanitizeAllInterfaceNames(commands, interfaceMappings);
 
   // Unsupported feature notices (only if AAA was not auto-converted)
   if (!config.aaa_config || config.aaa_config.length === 0) {
@@ -553,57 +559,6 @@ function mapInterfaceName(panosIface, interfaceMappings = {}) {
 function isValidSrxInterface(ifName) {
   if (!ifName) return false;
   return /^(ge-|xe-|et-|lo0|st0|irb|ae\d|fxp|em\d|reth|vlan|me\d)/i.test(ifName);
-}
-
-/**
- * Post-processes all commands to replace remaining vendor interface names
- * that leaked through sections not using mapInterfaceName() (syslog, routing, NAT, etc.).
- * Modifies the commands array in-place.
- */
-function sanitizeAllInterfaceNames(commands, interfaceMappings = {}) {
-  // Patterns for vendor interfaces that should never appear in SRX config
-  const vendorPatterns = [
-    // Cisco 3-segment: GigabitEthernet0/0/1
-    { re: /GigabitEthernet(\d+)\/(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, s3, _, u) => `ge-0/${s2}/${s3}.${u || '0'}` },
-    // Cisco 2-segment: GigabitEthernet1/1
-    { re: /GigabitEthernet(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, _, u) => `ge-0/${s1}/${s2}.${u || '0'}` },
-    // Cisco TenGig
-    { re: /TenGigabitEthernet(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, _, u) => `xe-0/${s1}/${s2}.${u || '0'}` },
-    // Huawei XGigabitEthernet
-    { re: /XGigabitEthernet(\d+)\/(\d+)\/(\d+)(\.(\d+))?/gi, replace: (m, s1, s2, s3, _, u) => `xe-0/${s2}/${s3}.${u || '0'}` },
-    // FortiGate: port1 → ge-0/0/0 (only match standalone "portN" not inside other words)
-    { re: /\bport(\d+)(\.(\d+))?\b/gi, replace: (m, p, _, u) => `ge-0/0/${parseInt(p) - 1}.${u || '0'}` },
-    // PAN-OS: ethernet1/2
-    { re: /\bethernet(\d+)\/(\d+)(\.(\d+))?\b/gi, replace: (m, s, p, _, u) => `ge-0/${parseInt(s) - 1}/${parseInt(p) - 1}.${u || '0'}` },
-    // Check Point: eth0 (only when followed by typical interface context)
-    { re: /\beth(\d+)(\.(\d+))?\b/gi, replace: (m, p, _, u) => `ge-0/0/${p}.${u || '0'}` },
-    // Tunnel → st0
-    { re: /\btunnel(\d+)(\.(\d+))?\b/gi, replace: (m, n) => `st0.${n}` },
-    // Loopback
-    { re: /\bloopback(\d*)(\.(\d+))?\b/gi, replace: (m, n, _, u) => `lo0.${u || n || '0'}` },
-  ];
-
-  for (let i = 0; i < commands.length; i++) {
-    const cmd = commands[i];
-    if (!cmd.startsWith('set ') && !cmd.startsWith('deactivate ')) continue;
-
-    let updated = cmd;
-    for (const { re, replace } of vendorPatterns) {
-      // Reset lastIndex for global regexes
-      re.lastIndex = 0;
-      updated = updated.replace(re, replace);
-    }
-    // Also apply user-defined mappings
-    for (const [vendor, srx] of Object.entries(interfaceMappings)) {
-      if (updated.includes(vendor)) {
-        const srxName = srx.includes('.') ? srx : `${srx}.0`;
-        updated = updated.split(vendor).join(srxName);
-      }
-    }
-    if (updated !== cmd) {
-      commands[i] = updated;
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2059,7 +2014,16 @@ function resolveNatAddress(addr, addrLookup, warnings) {
   return resolved;
 }
 
-function convertNatRules(natRules, commands, warnings, summary, addressObjects, identifiers, identifierPath) {
+function convertNatRules(
+  natRules,
+  commands,
+  warnings,
+  summary,
+  addressObjects,
+  configuredZones,
+  identifiers,
+  identifierPath,
+) {
   if (!natRules || natRules.length === 0) return;
 
   // Build lookup map: address-object name → IP/subnet value
@@ -2143,12 +2107,33 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects, 
   commands.push('# NAT Rules');
   commands.push('# =============================================');
 
+  const configuredZoneNames = new Set((configuredZones || []).map(zone => zone.name));
+  const missingZoneNames = new Set();
+  for (const rule of natRules) {
+    for (const zone of [...sourceZonesFor(rule), ...destinationZonesFor(rule)]) {
+      if (zone !== 'any' && !configuredZoneNames.has(zone)) missingZoneNames.add(zone);
+    }
+  }
+  const missingZoneOutputs = new Map([...missingZoneNames].sort().map(sourceName => [
+    sourceName,
+    identifiers.nameForGenerated(
+      identifierPath('nat_rules'),
+      natMissingZoneRole(sourceName),
+    ),
+  ]));
+
   // Bug 8 fix: Ensure all zones referenced in NAT rules are defined.
   // Collect already-defined zones from prior commands, then create any missing ones.
   const definedZones = new Set();
   for (const cmd of commands) {
     const zoneMatch = cmd.match(/^set security zones security-zone (\S+)/);
     if (zoneMatch) definedZones.add(zoneMatch[1]);
+  }
+  for (const zoneName of missingZoneOutputs.values()) {
+    if (!definedZones.has(zoneName)) {
+      commands.push(`set security zones security-zone ${zoneName}`);
+      definedZones.add(zoneName);
+    }
   }
   for (let ruleIndex = 0; ruleIndex < natRules.length; ruleIndex += 1) {
     const rule = natRules[ruleIndex];
@@ -2157,12 +2142,7 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects, 
       ['destination', destinationZonesFor(rule)],
     ]) {
       for (const zone of zones) {
-        const safeName = zoneReference(ruleIndex, rule, direction, zone);
-        if (safeName === 'any') continue;
-        if (!definedZones.has(safeName)) {
-          commands.push(`set security zones security-zone ${safeName}`);
-          definedZones.add(safeName);
-        }
+        zoneReference(ruleIndex, rule, direction, zone);
       }
     }
   }
@@ -2446,7 +2426,7 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects, 
   commands.push('');
 }
 
-function convertStaticRoutes(routes, commands, warnings, summary) {
+function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappings = {}) {
   if (!routes || routes.length === 0) return;
 
   commands.push('# =============================================');
@@ -2462,7 +2442,9 @@ function convertStaticRoutes(routes, commands, warnings, summary) {
   for (const route of routes) {
     if (!route.destination) continue;
     const dest = route.destination.trim();
-    const nextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const rawNextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const nextHop = route.next_hop_type === 'next-vr'
+      ? rawNextHop : mapInterfaceName(rawNextHop, interfaceMappings);
     const key = `${route.vrf || ''}|${dest}`;
     if (nextHop && route.next_hop_type !== 'next-vr' && route.next_hop_type !== 'discard') {
       routesWithNextHop.add(key);
@@ -2473,7 +2455,9 @@ function convertStaticRoutes(routes, commands, warnings, summary) {
     if (!route.destination) continue;
 
     const dest = route.destination.trim();
-    const nextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const rawNextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const nextHop = route.next_hop_type === 'next-vr'
+      ? rawNextHop : mapInterfaceName(rawNextHop, interfaceMappings);
     const key = `${route.vrf || ''}|${dest}`;
 
     if (route.vrf) {
@@ -2839,7 +2823,7 @@ function convertOspf3Config(ospf3Config, commands, warnings, summary, interfaceM
 // EVPN Configuration
 // ---------------------------------------------------------------------------
 
-function convertEvpnConfig(evpnConfig, commands, warnings, summary) {
+function convertEvpnConfig(evpnConfig, commands, warnings, summary, interfaceMappings = {}) {
   if (!evpnConfig || evpnConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -2872,7 +2856,11 @@ function convertEvpnConfig(evpnConfig, commands, warnings, summary) {
     // Switch-options (global or per-instance)
     if (evpn.route_distinguisher) {
       const swPrefix = evpn.instance ? prefix : 'set ';
-      commands.push(`${swPrefix}switch-options vtep-source-interface ${evpn.vtep_source_interface || 'lo0.0'}`);
+      const vtepSource = mapInterfaceName(
+        evpn.vtep_source_interface || 'lo0.0',
+        interfaceMappings,
+      );
+      commands.push(`${swPrefix}switch-options vtep-source-interface ${vtepSource}`);
       commands.push(`${swPrefix}switch-options route-distinguisher ${evpn.route_distinguisher}`);
     }
 
@@ -2912,7 +2900,7 @@ function convertEvpnConfig(evpnConfig, commands, warnings, summary) {
 // VxLAN Configuration (standalone, non-EVPN)
 // ---------------------------------------------------------------------------
 
-function convertVxlanConfig(vxlanConfig, commands, warnings, summary) {
+function convertVxlanConfig(vxlanConfig, commands, warnings, summary, interfaceMappings = {}) {
   if (!vxlanConfig || vxlanConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -2927,7 +2915,11 @@ function convertVxlanConfig(vxlanConfig, commands, warnings, summary) {
 
     // VTEP source interface
     if (tunnel.vtep_source_interface || tunnel.source_interface) {
-      commands.push(`${prefix}switch-options vtep-source-interface ${tunnel.vtep_source_interface || tunnel.source_interface}`);
+      const vtepSource = mapInterfaceName(
+        tunnel.vtep_source_interface || tunnel.source_interface,
+        interfaceMappings,
+      );
+      commands.push(`${prefix}switch-options vtep-source-interface ${vtepSource}`);
     }
 
     // VNI entries
@@ -2974,11 +2966,11 @@ function convertVxlanConfig(vxlanConfig, commands, warnings, summary) {
 /**
  * Converts HA configuration to SRX chassis cluster or MNHA set commands.
  */
-function convertHaConfig(haConfig, commands, warnings, summary) {
+function convertHaConfig(haConfig, commands, warnings, summary, interfaceMappings = {}) {
   if (!haConfig || !haConfig.enabled) return;
 
   if (haConfig.ha_type === 'mnha') {
-    convertMnhaConfig(haConfig, commands, warnings, summary);
+    convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappings);
     return;
   }
 
@@ -3015,7 +3007,8 @@ function convertHaConfig(haConfig, commands, warnings, summary) {
     const name = (iface.name || '').toLowerCase();
     if (name === 'fab0' || name === 'fab1' || name.includes('fabric')) {
       if (iface.interface) {
-        commands.push(`set interfaces ${name.startsWith('fab') ? name : 'fab0'} fabric-options member-interfaces ${iface.interface}`);
+        const memberInterface = mapInterfaceName(iface.interface, interfaceMappings);
+        commands.push(`set interfaces ${name.startsWith('fab') ? name : 'fab0'} fabric-options member-interfaces ${memberInterface}`);
       }
     } else if (name.includes('ha1') || name.includes('heartbeat') || name.includes('failover') || name.includes('control')) {
       // Map to SRX control-link (fxp1) — add as comment since fxp1 is implicit
@@ -3093,7 +3086,7 @@ function buildMnhaPeerList(haConfig, nodeCount) {
  * Uses `set chassis high-availability` instead of `set chassis cluster`.
  * Supports 2-node, 3-node, and 4-node MNHA topologies.
  */
-function convertMnhaConfig(haConfig, commands, warnings, summary) {
+function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappings = {}) {
   const nodeCount = haConfig.node_count || 2;
   commands.push('# =============================================');
   commands.push(`# Multinode High Availability (MNHA) — ${nodeCount}-Node Configuration`);
@@ -3118,7 +3111,8 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
       commands.push(`${prefix} peer-id ${peer.peer_id} peer-ip ${peer.peer_ip}`);
     }
     if (peer.icl_interface) {
-      commands.push(`${prefix} peer-id ${peer.peer_id} interface ${peer.icl_interface}`);
+      const iclInterface = mapInterfaceName(peer.icl_interface, interfaceMappings);
+      commands.push(`${prefix} peer-id ${peer.peer_id} interface ${iclInterface}`);
     }
     if (peer.vpn_profile) {
       commands.push(`${prefix} peer-id ${peer.peer_id} vpn-profile ${peer.vpn_profile}`);
@@ -3151,7 +3145,8 @@ function convertMnhaConfig(haConfig, commands, warnings, summary) {
     for (const lg of (haConfig.monitoring.link_groups || [])) {
       if (lg.enabled && lg.interfaces && lg.interfaces.length > 0) {
         for (const iface of lg.interfaces) {
-          commands.push(`${prefix} services-redundancy-group 1 interface-monitor ${iface} weight 255`);
+          const monitorInterface = mapInterfaceName(iface, interfaceMappings);
+          commands.push(`${prefix} services-redundancy-group 1 interface-monitor ${monitorInterface} weight 255`);
         }
       }
     }
@@ -3294,7 +3289,7 @@ function mapAuthAlgorithm(algo, context = 'ipsec') {
   return map[algo.toLowerCase()] || algo;
 }
 
-function convertVpnTunnels(tunnels, commands, warnings, summary) {
+function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappings = {}) {
   if (!tunnels || tunnels.length === 0) return;
 
   commands.push('# =============================================');
@@ -3311,7 +3306,8 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
   // vSRX commit check fails if bind-interface references an unconfigured st0 unit.
   for (const vpn of tunnels) {
     if (vpn.tunnel_interface) {
-      const bindIf = vpn.tunnel_interface.startsWith('st0') ? vpn.tunnel_interface : 'st0.0';
+      const mappedTunnel = mapInterfaceName(vpn.tunnel_interface, interfaceMappings);
+      const bindIf = mappedTunnel.startsWith('st0') ? mappedTunnel : 'st0.0';
       if (!emittedTunnelInterfaces.has(bindIf)) {
         emittedTunnelInterfaces.add(bindIf);
         const [stBase, stUnit = '0'] = bindIf.split('.');
@@ -3328,7 +3324,10 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
     // skip the entire VPN config with a warning instead of emitting invalid config.
     let resolvedExtIf = null;
     if (vpn.ike_gateway?.external_interface) {
-      const candidateIf = vpn.ike_gateway.external_interface;
+      const candidateIf = mapInterfaceName(
+        vpn.ike_gateway.external_interface,
+        interfaceMappings,
+      );
       // Check if it's already a valid SRX interface name (e.g., ge-0/0/0.0)
       if (/^(ge|xe|et|ae|lo|irb|st|reth)-?\d/.test(candidateIf)) {
         resolvedExtIf = candidateIf.includes('.') ? candidateIf : `${candidateIf}.0`;
@@ -3337,8 +3336,9 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
     if (!resolvedExtIf && vpn.ike_gateway?.local_address) {
       // local_address might be an IP, not an interface — use fallback
       const la = vpn.ike_gateway.local_address;
-      if (/^(ge|xe|et|ae|lo|irb|reth)-?\d/.test(la)) {
-        resolvedExtIf = la.includes('.') ? la : `${la}.0`;
+      const mappedLocal = mapInterfaceName(la, interfaceMappings);
+      if (/^(ge|xe|et|ae|lo|irb|reth)-?\d/.test(mappedLocal)) {
+        resolvedExtIf = mappedLocal.includes('.') ? mappedLocal : `${mappedLocal}.0`;
       }
       // If local_address is an IP address, we can't derive the interface — use ge-0/0/0.0 as default
       if (!resolvedExtIf && /^\d+\.\d+\.\d+\.\d+/.test(la)) {
@@ -3418,7 +3418,8 @@ function convertVpnTunnels(tunnels, commands, warnings, summary) {
     commands.push(`set security ipsec vpn ${vpnName} ike gateway ${gwName}`);
     commands.push(`set security ipsec vpn ${vpnName} ike ipsec-policy ${ipsecPolName}`);
     if (vpn.tunnel_interface) {
-      const bindIf = vpn.tunnel_interface.startsWith('st0') ? vpn.tunnel_interface : 'st0.0';
+      const mappedTunnel = mapInterfaceName(vpn.tunnel_interface, interfaceMappings);
+      const bindIf = mappedTunnel.startsWith('st0') ? mappedTunnel : 'st0.0';
       commands.push(`set security ipsec vpn ${vpnName} bind-interface ${bindIf}`);
     }
 
@@ -3660,7 +3661,7 @@ function convertSnmpConfig(snmpConfig, commands, warnings, summary) {
 // DHCP Configuration Converter
 // ---------------------------------------------------------------------------
 
-function convertDhcpConfig(dhcpConfig, commands, warnings, summary) {
+function convertDhcpConfig(dhcpConfig, commands, warnings, summary, interfaceMappings = {}) {
   if (!dhcpConfig || dhcpConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -3670,7 +3671,7 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary) {
   for (const cfg of dhcpConfig) {
     if (cfg.type === 'relay') {
       // DHCP Relay: set forwarding-options helpers bootp interface <if> server <ip>
-      const iface = cfg.interface || 'ge-0/0/0.0';
+      const iface = mapInterfaceName(cfg.interface || 'ge-0/0/0.0', interfaceMappings);
       const servers = cfg.servers || [];
       for (const srv of servers) {
         commands.push(`set forwarding-options helpers bootp interface ${iface} server ${srv}`);
@@ -3728,7 +3729,8 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary) {
       if (cfg.interfaces || cfg.interface) {
         const ifList = cfg.interfaces || [cfg.interface];
         for (const iface of ifList.filter(Boolean)) {
-          commands.push(`set system services dhcp-local-server group ${poolName} interface ${iface}`);
+          const mappedInterface = mapInterfaceName(iface, interfaceMappings);
+          commands.push(`set system services dhcp-local-server group ${poolName} interface ${mappedInterface}`);
         }
       }
 
@@ -3744,7 +3746,7 @@ function convertDhcpConfig(dhcpConfig, commands, warnings, summary) {
 // QoS / CoS Configuration Converter
 // ---------------------------------------------------------------------------
 
-function convertQosConfig(qosConfig, commands, warnings, summary) {
+function convertQosConfig(qosConfig, commands, warnings, summary, interfaceMappings = {}) {
   if (!qosConfig || qosConfig.length === 0) return;
 
   commands.push('# =============================================');
@@ -3761,7 +3763,7 @@ function convertQosConfig(qosConfig, commands, warnings, summary) {
       summary.qos_configs_converted = (summary.qos_configs_converted || 0) + 1;
     } else if (qos.type === 'interface-cos') {
       // Interface CoS binding
-      const ifName = qos.interface || 'ge-0/0/0';
+      const ifName = mapInterfaceName(qos.interface || 'ge-0/0/0', interfaceMappings);
       if (qos.scheduler_map) commands.push(`set class-of-service interfaces ${ifName} scheduler-map ${sanitizeJunosName(qos.scheduler_map)}`);
       if (qos.shaping_rate) commands.push(`set class-of-service interfaces ${ifName} shaping-rate ${qos.shaping_rate}`);
       summary.qos_configs_converted = (summary.qos_configs_converted || 0) + 1;
@@ -3789,7 +3791,8 @@ function convertQosConfig(qosConfig, commands, warnings, summary) {
         }
       }
       if (qos.interface) {
-        commands.push(`set class-of-service interfaces ${qos.interface} scheduler-map ${name}`);
+        const ifName = mapInterfaceName(qos.interface, interfaceMappings);
+        commands.push(`set class-of-service interfaces ${ifName} scheduler-map ${name}`);
       }
       summary.qos_configs_converted = (summary.qos_configs_converted || 0) + 1;
     } else {
@@ -3861,7 +3864,8 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
       commands.push(`set bridge-domains ${bdName} vlan-id ${bd.vlan_id}`);
     }
     if (bd.irb_interface) {
-      commands.push(`set bridge-domains ${bdName} routing-interface ${bd.irb_interface}`);
+      const routingInterface = mapInterfaceName(bd.irb_interface, interfaceMappings);
+      commands.push(`set bridge-domains ${bdName} routing-interface ${routingInterface}`);
     }
     summary.bridge_domains_converted = (summary.bridge_domains_converted || 0) + 1;
   }
@@ -3870,7 +3874,8 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
 
   // L2 interfaces — set family bridge
   for (const l2if of l2Interfaces) {
-    const parts = l2if.name.match(/^(.+?)\.(\d+)$/);
+    const mappedName = mapInterfaceName(l2if.name, interfaceMappings);
+    const parts = mappedName.match(/^(.+?)\.(\d+)$/);
     if (parts) {
       const [, base, unit] = parts;
       commands.push(`set interfaces ${base} unit ${unit} family bridge`);
@@ -3882,7 +3887,7 @@ function convertL2Config(config, commands, warnings, summary, interfaceMappings 
       }
     } else {
       // No unit specified — default to unit 0
-      const base = l2if.name;
+      const base = mappedName;
       commands.push(`set interfaces ${base} unit 0 family bridge`);
       if (l2if.bridge_domain) {
         commands.push(`set interfaces ${base} unit 0 family bridge bridge-domain-name ${sanitizeJunosName(l2if.bridge_domain)}`);
@@ -4373,6 +4378,10 @@ function natSourceZones(rule) {
 function natDestinationZones(rule) {
   const zones = rule.dst_zones ?? rule.destination_zones;
   return Array.isArray(zones) && zones.length > 0 ? zones : ['any'];
+}
+
+function natMissingZoneRole(sourceName) {
+  return `nat-missing-zone:${sourceName}`;
 }
 
 function groupByZonePair(rules) {

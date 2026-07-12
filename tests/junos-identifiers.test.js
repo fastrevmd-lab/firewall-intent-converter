@@ -1180,6 +1180,58 @@ describe('Junos identifier catalog', () => {
       .toBe('unknown-app-UNMAPPED');
   });
 
+  it('plans missing NAT zones as stable generated definitions bound to references', () => {
+    const rules = [
+      {
+        name: 'Branch One', type: 'source',
+        src_zones: ['Branch Zone'], dst_zones: ['outside'],
+      },
+      {
+        name: 'Branch Two', type: 'source',
+        src_zones: ['Branch@Zone'], dst_zones: ['outside'],
+      },
+    ];
+    const configFor = natRules => ({
+      zones: [{ name: 'outside' }],
+      nat_rules: natRules,
+    });
+    const forwardSymbols = collectJunosIdentifierSymbols(configFor(rules));
+    const forward = planJunosIdentifiers(configFor(rules));
+    const reversed = planJunosIdentifiers(configFor([...rules].reverse()));
+    const generated = forwardSymbols.definitions.filter(item => (
+      item.namespace === 'zone' && item.role?.startsWith('nat-missing-zone:')
+    ));
+    const outputs = plan => new Map(plan.mapping.entries
+      .filter(entry => entry.namespace === 'zone' && entry.sourceName.startsWith('Branch'))
+      .map(entry => [entry.sourceName, entry.outputName]));
+
+    expect(generated).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceName: 'Branch Zone',
+        definitionPath: 'nat_rules',
+        role: 'nat-missing-zone:Branch Zone',
+        stableParentKey: 'nat-missing-zone:Branch Zone',
+      }),
+      expect.objectContaining({
+        sourceName: 'Branch@Zone',
+        definitionPath: 'nat_rules',
+        role: 'nat-missing-zone:Branch@Zone',
+        stableParentKey: 'nat-missing-zone:Branch@Zone',
+      }),
+    ]));
+    expect(outputs(reversed)).toEqual(outputs(forward));
+    expect(new Set(outputs(forward).values()).size).toBe(2);
+    for (const entry of forward.mapping.entries.filter(item => (
+      item.namespace === 'zone' && item.sourceName.startsWith('Branch')
+    ))) {
+      expect(entry.definitionPath).toContain('#generated:nat-missing-zone:');
+      expect(entry.referencePaths).toHaveLength(1);
+      expect(forward.nameForReference(entry.referencePaths[0])).toBe(entry.outputName);
+      expect(forward.nameForGenerated('nat_rules', `nat-missing-zone:${entry.sourceName}`))
+        .toBe(entry.outputName);
+    }
+  });
+
   it('catalogs absent identifier fields as generated owner-scoped fallbacks', () => {
     const symbols = collectJunosIdentifierSymbols({
       screen_config: [{ zone: 'outside' }],
