@@ -30,6 +30,7 @@ import {
 } from '../security/junos-serialization.js';
 import { validateJunosInput } from '../security/junos-input-validation.js';
 import { planJunosIdentifiers } from '../security/junos-identifiers.js';
+import { canonicalizeJunosSecurityFeatures } from '../security/junos-identifier-catalog.js';
 import { validateSetOutput } from '../security/junos-output-validation.js';
 
 /**
@@ -1098,38 +1099,29 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
 
   const utmTypes = ['virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'email-filter',
     'application-control', 'dlp', 'dns-security', 'decryption', 'waf', 'casb', 'voip'];
-  const featureNamespaceFor = (mapped, profileDef) => {
-    if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-virus') return 'utm-anti-virus-profile';
-    if (mapped.srxFeature === 'utm' && mapped.srxType === 'web-filtering') return 'utm-web-filtering-profile';
-    if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-spam') return 'utm-anti-spam-profile';
-    if (mapped.srxFeature === 'utm' && mapped.srxType === 'dns-security'
-        && (profileDef?.blockedDomains || []).length > 0) return 'dns-filtering-rule';
-    if (mapped.srxFeature === 'appfw'
-        && Object.values(profileDef?.categories || {})
-          .some(action => ['block', 'block-all', 'reset'].includes(action))) {
-      return 'application-firewall-rule-set';
+  const securityFeatures = canonicalizeJunosSecurityFeatures({
+    security_policies: policies,
+    security_profile_definitions: profileDefs,
+  });
+  const featureUseLookup = new Map();
+  for (const feature of securityFeatures) {
+    for (const use of feature.uses) {
+      featureUseLookup.set(`${use.policyIndex}\0${use.type}`, feature);
     }
-    return null;
-  };
+  }
 
   // Collect unique UTM profile combinations per rule
   const comboMap = new Map(); // serialized combo → { profiles, policyName, rules[] }
-  const featureOwners = new Map();
+  const defaultUtmPolicies = [];
   for (let policyIndex = 0; policyIndex < policies.length; policyIndex += 1) {
     const policy = policies[policyIndex];
     const sp = policy.security_profiles || {};
+    if (policy.profile_group && Object.keys(sp).length === 0) {
+      defaultUtmPolicies.push({ policy, policyIndex });
+    }
     const utmProfiles = {};
     for (const t of utmTypes) {
       if (sp[t]) utmProfiles[t] = sp[t];
-    }
-    for (const [profileType, profileValue] of Object.entries(utmProfiles)) {
-      const mapped = mapProfileToSrx(profileType, profileValue);
-      const profileDef = profileDefs[`${profileType}:${profileValue}`];
-      const namespace = featureNamespaceFor(mapped, profileDef);
-      const featureKey = namespace ? `${namespace}\0${profileValue}` : null;
-      if (featureKey && !featureOwners.has(featureKey)) {
-        featureOwners.set(featureKey, { policyIndex, profileType });
-      }
     }
     if (Object.keys(utmProfiles).length === 0) continue;
 
@@ -1140,9 +1132,27 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
     comboMap.get(key).policyIndexes.push(policyIndex);
   }
 
-  if (comboMap.size === 0) return { utmCommands, utmPolicyMap };
+  if (comboMap.size === 0 && defaultUtmPolicies.length === 0) return { utmCommands, utmPolicyMap };
 
   utmCommands.push('# =============================================');
+
+  if (defaultUtmPolicies.length > 0) {
+    const owner = [...defaultUtmPolicies].sort((left, right) => (
+      String(left.policy.name || '').localeCompare(String(right.policy.name || ''))
+    ))[0];
+    const defaultUtmName = identifiers.nameForGenerated(
+      identifierPath(`security_policies[${owner.policyIndex}]`),
+      'default-utm-policy',
+    );
+    utmCommands.push(`# Default UTM policy for source profile groups without individual profile detail`);
+    utmCommands.push(`set security utm utm-policy ${defaultUtmName}`);
+    for (const { policyIndex } of defaultUtmPolicies) {
+      utmPolicyMap[policyIndex] = defaultUtmName;
+      identifiers.nameForReference(
+        identifierPath(`security_policies[${policyIndex}]#utm-policy`),
+      );
+    }
+  }
   utmCommands.push('# UTM Feature Profiles & Policies');
   utmCommands.push('# NOTE: Generated profiles use recommended defaults — review and customize for your environment');
   utmCommands.push('# =============================================');
@@ -1163,13 +1173,12 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
       const mapped = mapProfileToSrx(pType, pValue);
       const defKey = `${pType}:${pValue}`;
       const profileDef = profileDefs[defKey];
-      const featureNamespace = featureNamespaceFor(mapped, profileDef);
+      const feature = featureUseLookup.get(`${combo.policyIndexes[0]}\0${pType}`);
       let profileName = mapped.srxProfile;
-      if (featureNamespace) {
-        const featureOwner = featureOwners.get(`${featureNamespace}\0${pValue}`);
+      if (feature) {
         profileName = identifiers.nameForGenerated(
-          identifierPath(`security_policies[${featureOwner.policyIndex}]`),
-          `security-profile-${featureOwner.profileType}`,
+          identifierPath(`security_policies[${feature.ownerIndex}]`),
+          feature.role,
         );
         for (const policyIndex of combo.policyIndexes) {
           identifiers.nameForReference(
@@ -1190,7 +1199,7 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
           for (const [category] of blockedCategories) {
             ruleNum++;
             const ruleName = identifiers.nameForGenerated(
-              identifierPath(`security_policies[${ownerIndex}]`),
+              identifierPath(`security_policies[${feature.ownerIndex}]`),
               `application-firewall-rule-${ruleNum}`,
             );
             utmCommands.push(`set security application-firewall rule-sets ${rsName} rule ${ruleName} match dynamic-application-group junos:${sanitizeJunosName(category)}`);
@@ -1614,8 +1623,6 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
     const srcZones = policy[sourceZoneField]?.length > 0 ? policy[sourceZoneField] : ['any'];
     const dstZones = policy[destinationZoneField]?.length > 0 ? policy[destinationZoneField] : ['any'];
 
-    const hasIndividualProfiles = Object.keys(policy.security_profiles || {}).length > 0;
-
     // Handle zone-based policy paths
     let definitionIndex = 0;
     const policyNamesByContext = new Map();
@@ -1751,12 +1758,6 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
           ));
           commands.push(`# NOTE: SSL proxy skipped — profile "${sslProfile}" requires manual PKI setup before enabling`);
           commands.push(`# set ${policyPath} then permit application-services ssl-proxy profile-name ${sslProfile}`);
-        }
-
-        // Profile group fallback (if no individual profiles but group exists)
-        if (policy.profile_group && !hasIndividualProfiles) {
-          commands.push(`# NOTE: PAN-OS profile group "${policy.profile_group}" — individual profiles not specified, applied default UTM+IDP`);
-          commands.push(`set ${policyPath} then permit application-services utm-policy default-utm`);
         }
 
         // Schedule reference
@@ -3606,7 +3607,9 @@ function convertVpnTunnels(tunnels, commands, warnings, summary, interfaceMappin
     if (vpn.proxy_id && vpn.proxy_id.length > 0) {
       for (let i = 0; i < vpn.proxy_id.length; i++) {
         const pid = vpn.proxy_id[i];
-        const tsName = `ts${i + 1}`;
+        const selectorPath = `${ownerPath}.proxy_id[${i}]`;
+        identifiers.nameForGenerated(selectorPath, 'vpn-traffic-selector');
+        const tsName = identifiers.nameForReference(`${selectorPath}#traffic-selector`);
         if (pid.local) commands.push(`set security ipsec vpn ${vpnName} traffic-selector ${tsName} local-ip ${pid.local}`);
         if (pid.remote) commands.push(`set security ipsec vpn ${vpnName} traffic-selector ${tsName} remote-ip ${pid.remote}`);
       }
@@ -4212,6 +4215,10 @@ function isIpOrPrefixLiteral(value) {
     || (value.includes(':') && /^[0-9A-Fa-f:.]+(?:\/\d{1,3})?$/.test(value));
 }
 
+function pbfAddressFamily(value) {
+  return String(value).includes(':') ? 'inet6' : 'inet';
+}
+
 /**
  * Converts PBF rules to SRX filter-based forwarding configuration.
  *
@@ -4232,7 +4239,7 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
   for (let objectIndex = 0; objectIndex < (addressObjects || []).length; objectIndex += 1) {
     const obj = addressObjects[objectIndex];
     const addrVal = obj.value || obj.ip || obj.network || obj.subnet || obj.address;
-    if (obj.name && addrVal && (obj.type === 'host' || obj.type === 'subnet')) {
+    if (obj.name && addrVal && ['host', 'subnet', 'network', 'ip-netmask', 'ip-prefix'].includes(obj.type)) {
       addrLookup.set(obj.name, addrVal);
       addrLookup.set(
         identifiers.nameForDefinition(identifierPath(`address_objects[${objectIndex}].name`)),
@@ -4276,7 +4283,8 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
 
   // 2. Build firewall filter terms
   const filterName = identifiers.nameForGenerated(identifierPath('pbf_rules'), 'pbf-filter');
-  const filterInterfaces = new Set();
+  const filterInterfaces = new Map();
+  const usedFamilies = new Set();
   let termCount = 0;
 
   for (let ruleIndex = 0; ruleIndex < pbfRules.length; ruleIndex += 1) {
@@ -4285,7 +4293,15 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
     const termName = identifiers.nameForDefinition(
       identifierPath(`pbf_rules[${ruleIndex}].name`),
     );
-    const termBase = `set firewall family inet filter ${filterName} term ${termName}`;
+    const matchedValues = [
+      ...(rule.src_addresses || []),
+      ...(rule.dst_addresses || []),
+    ].filter(value => value !== 'any').map(value => (
+      isIpOrPrefixLiteral(value) ? value : addrLookup.get(value)
+    )).filter(Boolean);
+    const family = matchedValues.length > 0 ? pbfAddressFamily(matchedValues[0]) : 'inet';
+    usedFamilies.add(family);
+    const termBase = `set firewall family ${family} filter ${filterName} term ${termName}`;
 
     // Match: source addresses (resolve named objects to IP values for firewall filters)
     for (let addressIndex = 0; addressIndex < (rule.src_addresses || []).length; addressIndex += 1) {
@@ -4357,7 +4373,9 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
     if (rule.from_type === 'interface') {
       for (const iface of (rule.from_value || [])) {
         const srxIface = mapInterfaceName(iface, interfaceMappings);
-        filterInterfaces.add(srxIface);
+        const interfaces = filterInterfaces.get(family) || new Set();
+        interfaces.add(srxIface);
+        filterInterfaces.set(family, interfaces);
       }
     }
 
@@ -4379,14 +4397,18 @@ function convertPbfConfig(pbfRules, commands, warnings, summary, interfaceMappin
       identifierPath('pbf_rules'),
       'pbf-default-term',
     );
-    commands.push(`set firewall family inet filter ${filterName} term ${defaultTerm} then accept`);
+    for (const family of usedFamilies) {
+      commands.push(`set firewall family ${family} filter ${filterName} term ${defaultTerm} then accept`);
+    }
     commands.push('');
   }
 
   // 3. Bind filter to from-interfaces
-  for (const iface of filterInterfaces) {
-    const [base, unit = '0'] = iface.split('.');
-    commands.push(`set interfaces ${base} unit ${unit} family inet filter input ${filterName}`);
+  for (const [family, interfaces] of filterInterfaces) {
+    for (const iface of interfaces) {
+      const [base, unit = '0'] = iface.split('.');
+      commands.push(`set interfaces ${base} unit ${unit} family ${family} filter input ${filterName}`);
+    }
   }
 
   if (filterInterfaces.size > 0) commands.push('');
@@ -4511,15 +4533,32 @@ function convertSslProxyConfig(config, commands, warnings, summary, identifiers,
 
   // 1. PKI CA profile placeholder (needed for forward proxy)
   if (fwdProxyProfiles.size > 0) {
+    const pkiOwners = decryptionRules
+      .map((rule, index) => ({ rule, path: `decryption_rules[${index}]`, key: `rule:${rule.name || ''}` }))
+      .filter(({ rule }) => (
+        !rule.disabled
+        && ['decrypt', 'decrypt-and-forward'].includes(rule.action)
+        && rule.decryption_type !== 'ssl-inbound-inspection'
+        && rule.decryption_type !== 'ssh-proxy'
+      ));
+    (config.security_policies || []).forEach((policy, index) => {
+      if (policy._srx_decrypt && policy.action === 'allow' && !policy._srx_decrypt_profile) {
+        pkiOwners.push({ path: `security_policies[${index}]`, key: `policy:${policy.name || ''}` });
+      }
+    });
+    const pkiOwner = pkiOwners.sort((left, right) => left.key.localeCompare(right.key))[0];
+    const pkiOwnerPath = identifierPath(pkiOwner.path);
+    const caProfileName = identifiers.nameForGenerated(pkiOwnerPath, 'ssl-pki-ca-profile');
+    const caIdentityName = identifiers.nameForGenerated(pkiOwnerPath, 'ssl-pki-ca-identity');
     commands.push('');
     commands.push('# PKI Configuration — CA profile for SSL forward proxy');
-    commands.push('set security pki ca-profile FPIC-CA ca-identity FPIC-CA');
+    commands.push(`set security pki ca-profile ${caProfileName} ca-identity ${caIdentityName}`);
     commands.push('# NOTE: Import the CA certificate after commit:');
-    commands.push('#   request security pki ca-certificate load ca-profile FPIC-CA filename /var/tmp/ca-cert.pem');
+    commands.push(`#   request security pki ca-certificate load ca-profile ${caProfileName} filename /var/tmp/ca-cert.pem`);
     commands.push('# NOTE: Generate key pair for signing:');
-    commands.push('#   request security pki generate-key-pair certificate-id FPIC-CA size 2048');
-    commands.push('#   request security pki local-certificate generate-self-signed certificate-id FPIC-CA \\');
-    commands.push('#     subject "CN=FPIC-CA,OU=Security,O=Organization" domain-name example.com');
+    commands.push(`#   request security pki generate-key-pair certificate-id ${caIdentityName} size 2048`);
+    commands.push(`#   request security pki local-certificate generate-self-signed certificate-id ${caIdentityName} \\`);
+    commands.push(`#     subject "CN=${caIdentityName},OU=Security,O=Organization" domain-name example.com`);
     commands.push('');
   }
 

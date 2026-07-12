@@ -688,12 +688,12 @@ describe('Junos identifier catalog', () => {
         role: 'pbf-routing-instance',
       }),
       expect.objectContaining({
-        sourceName: 'ssl-fwd-corp tls',
+        sourceName: 'corp tls',
         definitionPath: 'decryption_rules[0]',
         role: 'ssl-forward-profile',
       }),
       expect.objectContaining({
-        sourceName: 'ssl-inbound-server tls',
+        sourceName: 'server tls',
         definitionPath: 'decryption_rules[1]',
         role: 'ssl-inbound-profile',
       }),
@@ -901,9 +901,36 @@ describe('Junos identifier catalog', () => {
     const symbols = collectJunosIdentifierSymbols(config);
 
     expect(symbols.definitions.filter(item => item.sourceName === 'shared ike')).toHaveLength(2);
-    expect(symbols.definitions.filter(item => item.sourceName === 'ssl-fwd-shared tls')).toHaveLength(1);
+    expect(symbols.definitions.filter(item => item.sourceName === 'shared tls')).toHaveLength(1);
     expect(capturePlanningError(() => planJunosIdentifiers(config)).code)
       .toBe('duplicate_definition');
+  });
+
+  it.each([
+    ['forward then inbound', ['ssl-forward-proxy', 'ssl-inbound-inspection']],
+    ['inbound then forward', ['ssl-inbound-inspection', 'ssl-forward-proxy']],
+  ])('rejects ambiguous SSL policy profile references with %s ordering', (_label, modes) => {
+    const config = {
+      security_policies: [{
+        name: 'decrypt policy',
+        action: 'allow',
+        _srx_decrypt: true,
+        _srx_decrypt_profile: 'Shared TLS',
+      }],
+      decryption_rules: modes.map((decryptionType, index) => ({
+        name: `decrypt-${index + 1}`,
+        action: 'decrypt',
+        decryption_type: decryptionType,
+        decryption_profile: 'Shared TLS',
+      })),
+    };
+
+    expect(capturePlanningError(() => planJunosIdentifiers(config))).toMatchObject({
+      code: 'ambiguous_reference',
+      namespace: 'ssl-proxy-profile',
+      sourceName: 'Shared TLS',
+      referencePaths: ['security_policies[0]._srx_decrypt_profile'],
+    });
   });
 
   it('keeps VPN generated source identity distinct before allocation', () => {
@@ -1201,7 +1228,7 @@ describe('Junos identifier catalog', () => {
       kind: 'dns-filtering-rule',
       sourceName: 'Strict DNS',
       definitionPath: 'security_policies[0]',
-      role: 'security-profile-dns-security',
+      role: 'security-feature:dns-filtering-rule',
     }));
     expect(symbols.references).toContainEqual(expect.objectContaining({
       namespace: 'dns-filtering-rule',
@@ -1209,7 +1236,7 @@ describe('Junos identifier catalog', () => {
       referencePath: 'security_policies[0].security_profiles.dns-security',
     }));
     expect(plan.nameForReference('security_policies[0].security_profiles.dns-security'))
-      .toBe(plan.nameForGenerated('security_policies[0]', 'security-profile-dns-security'));
+      .toBe(plan.nameForGenerated('security_policies[0]', 'security-feature:dns-filtering-rule'));
   });
 
   it('preserves periods only for explicit multi-port preferred names', () => {
@@ -1281,6 +1308,25 @@ describe('Junos identifier catalog', () => {
       expect(forward.nameForGenerated('nat_rules', `nat-missing-zone:${entry.sourceName}`))
         .toBe(entry.outputName);
     }
+  });
+
+  it('keeps VPN traffic-selector identities stable when proxy IDs are reordered', () => {
+    const selectors = [
+      { local: '10.2.0.0/16', remote: '172.16.2.0/24' },
+      { local: '10.1.0.0/16', remote: '172.16.1.0/24' },
+    ];
+    const configFor = proxyId => ({
+      vpn_tunnels: [{ name: 'Branch VPN', proxy_id: proxyId }],
+    });
+    const forward = planJunosIdentifiers(configFor(selectors));
+    const reversed = planJunosIdentifiers(configFor([...selectors].reverse()));
+
+    expect(forward.nameForGenerated('vpn_tunnels[0].proxy_id[0]', 'vpn-traffic-selector'))
+      .toBe(reversed.nameForGenerated('vpn_tunnels[0].proxy_id[1]', 'vpn-traffic-selector'));
+    expect(forward.nameForGenerated('vpn_tunnels[0].proxy_id[1]', 'vpn-traffic-selector'))
+      .toBe(reversed.nameForGenerated('vpn_tunnels[0].proxy_id[0]', 'vpn-traffic-selector'));
+    expect(forward.nameForReference('vpn_tunnels[0].proxy_id[0]#traffic-selector'))
+      .toBe(forward.nameForGenerated('vpn_tunnels[0].proxy_id[0]', 'vpn-traffic-selector'));
   });
 
   it('catalogs absent identifier fields as generated owner-scoped fallbacks', () => {
@@ -1377,6 +1423,32 @@ describe('Junos identifier catalog', () => {
     expect(plan.mapping.entries.filter(item => (
       item.namespace === 'utm-anti-virus-profile'
     )).every(item => item.resolution === 'generated-collision-renamed')).toBe(true);
+  });
+
+  it('canonicalizes equivalent UTM feature owners across profile types and policy order', () => {
+    const policies = [
+      { name: 'wildfire owner', security_profiles: { 'wildfire-analysis': 'Shared AV' } },
+      { name: 'virus owner', security_profiles: { virus: 'Shared AV' } },
+      { name: 'collision', security_profiles: { virus: 'Shared@AV' } },
+    ];
+    const configFor = securityPolicies => ({ security_policies: securityPolicies });
+    const forwardSymbols = collectJunosIdentifierSymbols(configFor(policies));
+    const reverseSymbols = collectJunosIdentifierSymbols(configFor([...policies].reverse()));
+    const featureIdentity = symbols => symbols.definitions
+      .filter(item => item.namespace === 'utm-anti-virus-profile')
+      .map(item => ({
+        sourceName: item.sourceName,
+        role: item.role,
+        stableParentKey: item.stableParentKey,
+      }))
+      .sort((left, right) => left.sourceName.localeCompare(right.sourceName));
+    const outputBySource = plan => new Map(plan.mapping.entries
+      .filter(item => item.namespace === 'utm-anti-virus-profile')
+      .map(item => [item.sourceName, item.outputName]));
+
+    expect(featureIdentity(reverseSymbols)).toEqual(featureIdentity(forwardSymbols));
+    expect(outputBySource(planJunosIdentifiers(configFor([...policies].reverse()))))
+      .toEqual(outputBySource(planJunosIdentifiers(configFor(policies))));
   });
 
   it('uses any-zone definitions and synthetic references for explicit empty zone arrays', () => {

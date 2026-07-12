@@ -370,29 +370,84 @@ describe('Set identifier-plan integration', () => {
   it('keeps raw PBF IP prefixes outside identifier planning', () => {
     const config = baseAdvancedConfig();
     config.pbf_rules = [{
-      name: 'Raw Prefixes',
+      name: 'Raw IPv4 Prefixes',
       action: 'discard',
-      src_addresses: ['192.0.2.0/24', '::ffff:192.0.2.0/120'],
+      src_addresses: ['192.0.2.0/24'],
+      dst_addresses: ['198.51.100.0/24'],
+    }, {
+      name: 'Raw IPv6 Prefixes',
+      action: 'discard',
+      src_addresses: ['::ffff:192.0.2.0/120'],
       dst_addresses: ['2001:db8::/64'],
     }];
 
     const result = convertToSrxSetCommands(config);
     const term = result.identifierMappings.entries.find(entry => (
-      entry.namespace === 'firewall-filter-term' && entry.sourceName === 'Raw Prefixes'
+      entry.namespace === 'firewall-filter-term' && entry.sourceName === 'Raw IPv4 Prefixes'
+    )).outputName;
+    const ipv6Term = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'firewall-filter-term' && entry.sourceName === 'Raw IPv6 Prefixes'
     )).outputName;
 
     expect(result.commands).toContain(
       `set firewall family inet filter PBF-FILTER term ${term} from source-address 192.0.2.0/24`,
     );
     expect(result.commands).toContain(
-      `set firewall family inet filter PBF-FILTER term ${term} from source-address ::ffff:192.0.2.0/120`,
+      `set firewall family inet6 filter PBF-FILTER term ${ipv6Term} from source-address ::ffff:192.0.2.0/120`,
     );
     expect(result.commands).toContain(
-      `set firewall family inet filter PBF-FILTER term ${term} from destination-address 2001:db8::/64`,
+      `set firewall family inet6 filter PBF-FILTER term ${ipv6Term} from destination-address 2001:db8::/64`,
     );
     expect(result.identifierMappings.entries.some(entry => (
-      ['192.0.2.0/24', '::ffff:192.0.2.0/120', '2001:db8::/64'].includes(entry.sourceName)
+      ['192.0.2.0/24', '198.51.100.0/24', '::ffff:192.0.2.0/120', '2001:db8::/64'].includes(entry.sourceName)
     ))).toBe(false);
+  });
+
+  it('emits IPv6-only named PBF matches under family inet6', () => {
+    const config = baseAdvancedConfig();
+    config.address_objects = [{
+      name: 'IPv6 Segment',
+      type: 'subnet',
+      value: '2001:db8:1::/64',
+    }];
+    config.pbf_rules = [{
+      name: 'IPv6 Route',
+      action: 'discard',
+      src_addresses: ['IPv6 Segment'],
+      dst_addresses: ['any'],
+    }];
+
+    const result = convertToSrxSetCommands(config);
+    const term = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'firewall-filter-term' && entry.sourceName === 'IPv6 Route'
+    )).outputName;
+
+    expect(result.commands).toContain(
+      `set firewall family inet6 filter PBF-FILTER term ${term} from source-address 2001:db8:1::/64`,
+    );
+    expect(result.commands.some(command => command.includes(
+      `firewall family inet filter PBF-FILTER term ${term}`,
+    ))).toBe(false);
+  });
+
+  it('rejects mixed-family PBF matches at the conflicting safe field path', () => {
+    const config = baseAdvancedConfig();
+    config.address_objects = [{
+      name: 'IPv6 Segment',
+      type: 'subnet',
+      value: '2001:db8:1::/64',
+    }];
+    config.pbf_rules = [{
+      name: 'Mixed Route',
+      action: 'discard',
+      src_addresses: ['192.0.2.0/24'],
+      dst_addresses: ['IPv6 Segment'],
+    }];
+
+    expect(() => convertToSrxSetCommands(config)).toThrow(expect.objectContaining({
+      name: 'JunosSerializationError',
+      fieldPath: 'pbf_rules[0].dst_addresses[0]',
+    }));
   });
 
   it('uses the planned SSL profile for decrypt-and-forward rules', () => {
@@ -411,6 +466,62 @@ describe('Set identifier-plan integration', () => {
 
     expect(result.commands).toContain(
       `#   set services ssl proxy profile ${profile.outputName} root-ca <CA_PROFILE>`,
+    );
+  });
+
+  it('plans and emits the default UTM fallback definition and policy reference', () => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [policy('Grouped Security', 'trust', 'untrust', 'any', {
+      profile_group: 'Strict Group',
+    })];
+
+    const result = convertToSrxSetCommands(config);
+    const fallback = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'utm-policy' && entry.sourceName === 'default-utm'
+    ));
+
+    expect(result.commands).toContain(`set security utm utm-policy ${fallback.outputName}`);
+    expect(result.commands.some(command => command.endsWith(
+      `application-services utm-policy ${fallback.outputName}`,
+    ))).toBe(true);
+  });
+
+  it('uses planned PKI CA profile and identity names in active SSL configuration', () => {
+    const config = baseAdvancedConfig();
+    config.decryption_rules = [{
+      name: 'Decrypt Forward',
+      action: 'decrypt',
+      decryption_type: 'ssl-forward-proxy',
+      decryption_profile: 'Forward TLS',
+    }];
+
+    const result = convertToSrxSetCommands(config);
+    const caProfile = result.identifierMappings.entries.find(entry => entry.namespace === 'pki-ca-profile');
+    const caIdentity = result.identifierMappings.entries.find(entry => entry.namespace === 'pki-ca-identity');
+
+    expect(result.commands).toContain(
+      `set security pki ca-profile ${caProfile.outputName} ca-identity ${caIdentity.outputName}`,
+    );
+  });
+
+  it('uses the planned semantic traffic-selector name for each VPN proxy ID', () => {
+    const config = baseAdvancedConfig();
+    const vpn = collidingVpn(' ');
+    vpn.proxy_id = [
+      { local: '10.2.0.0/16', remote: '172.16.2.0/24' },
+      { local: '10.1.0.0/16', remote: '172.16.1.0/24' },
+    ];
+    config.vpn_tunnels = [vpn];
+
+    const result = convertToSrxSetCommands(config);
+    const vpnName = result.identifierMappings.entries.find(entry => entry.namespace === 'ipsec-vpn').outputName;
+    const secondInputSelector = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'traffic-selector'
+      && entry.definitionPath.startsWith('vpn_tunnels[0].proxy_id[1]#generated:')
+    ));
+
+    expect(result.commands).toContain(
+      `set security ipsec vpn ${vpnName} traffic-selector ${secondInputSelector.outputName} local-ip 10.1.0.0/16`,
     );
   });
 
@@ -790,7 +901,7 @@ describe('Set identifier-plan integration', () => {
     const identifierPlan = {
       ...plan,
       nameForGenerated(path, role) {
-        if (path === 'security_policies[0]' && role === 'security-profile-virus') {
+        if (path === 'security_policies[0]' && role === 'security-feature:utm-anti-virus-profile') {
           definitionLookup = true;
         }
         return plan.nameForGenerated(path, role);
@@ -807,6 +918,44 @@ describe('Set identifier-plan integration', () => {
 
     expect(definitionLookup).toBe(true);
     expect(secondReferenceLookup).toBe(true);
+  });
+
+  it('uses the canonical shared AppFW owner across different UTM combinations', () => {
+    const config = baseAdvancedConfig();
+    config.security_policies = [
+      policy('Shared AppFW Z', 'trust', 'untrust', 'any', {
+        security_profiles: {
+          virus: 'Zed AV',
+          'application-control': 'Shared Apps',
+        },
+      }),
+      policy('Shared AppFW A', 'trust', 'untrust', 'any', {
+        security_profiles: {
+          virus: 'Alpha AV',
+          'application-control': 'Shared Apps',
+        },
+      }),
+    ];
+    config.security_profile_definitions = {
+      'application-control:Shared Apps': {
+        categories: { tunneling: 'block' },
+      },
+    };
+
+    const result = convertToSrxSetCommands(config);
+    const ruleSet = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'application-firewall-rule-set',
+    );
+    const child = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'application-firewall-rule',
+    );
+
+    expect(result.commands).toContain(
+      `set security application-firewall rule-sets ${ruleSet.outputName} rule ${child.outputName} then deny`,
+    );
+    expect(result.commands.filter(command => command.includes(
+      `application-firewall rule-sets ${ruleSet.outputName} rule ${child.outputName}`,
+    ))).toHaveLength(4);
   });
 
   it('uses exact generated child lookups in an injected multi-context plan', () => {

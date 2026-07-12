@@ -37,6 +37,10 @@ export const JUNOS_IDENTIFIER_CATALOG = Object.freeze({
 const ANY_LITERAL = Object.freeze(['any']);
 const APPLICATION_LITERALS = Object.freeze(['any', ...JUNOS_PREDEFINED_APPS]);
 const BUILT_IN_ROUTING_INSTANCES = Object.freeze(['default', 'master']);
+const SECURITY_PROFILE_UTM_TYPES = Object.freeze([
+  'virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'email-filter',
+  'application-control', 'dlp', 'dns-security', 'decryption', 'waf', 'casb', 'voip',
+]);
 
 function joinedPath(prefix, path) {
   return prefix ? `${prefix}.${path}` : path;
@@ -184,6 +188,96 @@ function generatedPolicyName(policy, index) {
   const parts = [action, fromZone, 'to', toZone];
   if (hint) parts.push(hint);
   return `${sanitizeJunosName(parts.join('-'))}-${index + 1}`;
+}
+
+function securityFeatureDescriptor(type, value, definitions = {}) {
+  const mapped = mapProfileToSrx(type, value);
+  const definition = definitions[`${type}:${value}`];
+  if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-virus') {
+    return { namespace: 'utm-anti-virus-profile', kind: 'anti-virus-profile', mapped };
+  }
+  if (mapped.srxFeature === 'utm' && mapped.srxType === 'web-filtering') {
+    return { namespace: 'utm-web-filtering-profile', kind: 'web-filtering-profile', mapped };
+  }
+  if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-spam') {
+    return { namespace: 'utm-anti-spam-profile', kind: 'anti-spam-profile', mapped };
+  }
+  if (mapped.srxFeature === 'utm' && mapped.srxType === 'dns-security'
+      && (definition?.blockedDomains || []).length > 0) {
+    return { namespace: 'dns-filtering-rule', kind: 'dns-filtering-rule', mapped };
+  }
+  if (mapped.srxFeature === 'appfw') {
+    const applicationFirewallRules = Object.entries(definition?.categories || {})
+      .filter(([, action]) => ['block', 'block-all', 'reset'].includes(action))
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (applicationFirewallRules.length > 0) {
+      return {
+        namespace: 'application-firewall-rule-set',
+        kind: 'application-firewall-rule-set',
+        mapped,
+        applicationFirewallRules,
+      };
+    }
+  }
+  return null;
+}
+
+export function canonicalizeJunosSecurityFeatures(config = {}) {
+  const groups = new Map();
+  const policies = config.security_policies || [];
+  const definitions = config.security_profile_definitions || {};
+  for (let policyIndex = 0; policyIndex < policies.length; policyIndex += 1) {
+    const policy = policies[policyIndex];
+    const profiles = SECURITY_PROFILE_UTM_TYPES
+      .filter(type => policy.security_profiles?.[type])
+      .map(type => [type, policy.security_profiles[type]]);
+    const policyKey = JSON.stringify([
+      profiles,
+      policy.name || '',
+      sourceZones(policy),
+      destinationZones(policy),
+      policy.action || '',
+    ]);
+    for (const [type, value] of profiles) {
+      const descriptor = securityFeatureDescriptor(type, value, definitions);
+      if (!descriptor) continue;
+      const featureKey = `${descriptor.namespace}\0${value}`;
+      const group = groups.get(featureKey) || {
+        featureKey,
+        namespace: descriptor.namespace,
+        kind: descriptor.kind,
+        sourceName: value,
+        preferredOutputName: descriptor.mapped.srxProfile,
+        role: `security-feature:${descriptor.namespace}`,
+        stableParentKey: `security-feature:${descriptor.namespace}:${value}`,
+        applicationFirewallRules: descriptor.applicationFirewallRules || [],
+        candidates: [],
+        uses: [],
+      };
+      group.candidates.push({
+        policyIndex,
+        type,
+        sortKey: JSON.stringify([policyKey, type]),
+      });
+      group.uses.push({ policyIndex, type });
+      groups.set(featureKey, group);
+    }
+  }
+  return [...groups.values()]
+    .map(group => {
+      const owner = [...group.candidates]
+        .sort((left, right) => left.sortKey.localeCompare(right.sortKey))[0];
+      const { candidates, ...feature } = group;
+      return Object.freeze({
+        ...feature,
+        ownerIndex: owner.policyIndex,
+        ownerType: owner.type,
+        uses: Object.freeze([...feature.uses].sort((left, right) => (
+          left.policyIndex - right.policyIndex || left.type.localeCompare(right.type)
+        ))),
+      });
+    })
+    .sort((left, right) => left.featureKey.localeCompare(right.featureKey));
 }
 
 function createSymbolCollector() {
@@ -732,90 +826,64 @@ function collectApplications(config, state) {
 function collectSecurityProfiles(config, state) {
   const { collector, device, prefix, sharedDefinitions } = state;
   const profileContext = `${device}/security-profiles`;
-  const utmTypes = [
-    'virus', 'wildfire-analysis', 'url-filtering', 'file-blocking', 'email-filter',
-    'application-control', 'dlp', 'dns-security', 'decryption', 'waf', 'casb', 'voip',
-  ];
   const idpTypes = ['spyware', 'vulnerability'];
   const utmCombos = new Map();
   const idpCombos = new Map();
-  const featureProfiles = new Set();
+  const securityFeatures = canonicalizeJunosSecurityFeatures(config);
+  const featureUseLookup = new Map();
+
+  for (const feature of securityFeatures) {
+    collector.addGenerated({
+      catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+      context: profileContext,
+      namespace: feature.namespace,
+      kind: feature.kind,
+      sourceName: feature.sourceName,
+      preferredOutputName: feature.preferredOutputName,
+      definitionPath: joinedPath(prefix, `security_policies[${feature.ownerIndex}]`),
+      role: feature.role,
+      stableParentKey: feature.stableParentKey,
+    });
+    for (let ruleIndex = 0; ruleIndex < feature.applicationFirewallRules.length; ruleIndex += 1) {
+      collector.addGenerated({
+        catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+        context: nestedContext(
+          profileContext,
+          'application-firewall-rule-set',
+          feature.sourceName,
+        ),
+        namespace: 'application-firewall-rule',
+        kind: 'application-firewall-rule',
+        sourceName: `appfw-r${ruleIndex + 1}`,
+        definitionPath: joinedPath(prefix, `security_policies[${feature.ownerIndex}]`),
+        role: `application-firewall-rule-${ruleIndex + 1}`,
+        stableParentKey: `application-control:${feature.sourceName}:${feature.applicationFirewallRules[ruleIndex][0]}`,
+      });
+    }
+    for (const use of feature.uses) {
+      featureUseLookup.set(`${use.policyIndex}\0${use.type}`, feature);
+    }
+  }
 
   for (let policyIndex = 0; policyIndex < (config.security_policies || []).length; policyIndex += 1) {
     const policy = config.security_policies[policyIndex];
     const securityProfiles = policy.security_profiles || {};
     const utm = {};
     const idp = {};
-    for (const type of utmTypes) {
+    for (const type of SECURITY_PROFILE_UTM_TYPES) {
       if (securityProfiles[type]) utm[type] = securityProfiles[type];
     }
     for (const type of idpTypes) {
       if (securityProfiles[type]) idp[type] = securityProfiles[type];
     }
     for (const [type, value] of Object.entries(utm)) {
-      const mapped = mapProfileToSrx(type, value);
-      let namespace;
-      let kind;
-      const preferredName = mapped.srxProfile;
-      let applicationFirewallRules = [];
-      if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-virus') {
-        namespace = 'utm-anti-virus-profile';
-        kind = 'anti-virus-profile';
-      } else if (mapped.srxFeature === 'utm' && mapped.srxType === 'web-filtering') {
-        namespace = 'utm-web-filtering-profile';
-        kind = 'web-filtering-profile';
-      } else if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-spam') {
-        namespace = 'utm-anti-spam-profile';
-        kind = 'anti-spam-profile';
-      } else if (mapped.srxFeature === 'utm' && mapped.srxType === 'dns-security') {
-        const definition = config.security_profile_definitions?.[`${type}:${value}`];
-        if (!(definition?.blockedDomains || []).length) continue;
-        namespace = 'dns-filtering-rule';
-        kind = 'dns-filtering-rule';
-      } else if (mapped.srxFeature === 'appfw') {
-        const definition = config.security_profile_definitions?.[`${type}:${value}`];
-        const blocked = Object.entries(definition?.categories || {})
-          .filter(([, action]) => ['block', 'block-all', 'reset'].includes(action))
-          .sort(([left], [right]) => left.localeCompare(right));
-        if (blocked.length === 0) continue;
-        namespace = 'application-firewall-rule-set';
-        kind = 'application-firewall-rule-set';
-        applicationFirewallRules = blocked;
-      } else {
-        continue;
-      }
-      const featureKey = `${namespace}\0${value}`;
-      if (!featureProfiles.has(featureKey)) {
-        featureProfiles.add(featureKey);
-        collector.addGenerated({
-          catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
-          context: profileContext,
-          namespace,
-          kind,
-          sourceName: value,
-          preferredOutputName: preferredName,
-          definitionPath: joinedPath(prefix, `security_policies[${policyIndex}]`),
-          role: `security-profile-${type}`,
-          stableParentKey: `${type}:${value}`,
-        });
-        for (let ruleIndex = 0; ruleIndex < applicationFirewallRules.length; ruleIndex += 1) {
-          collector.addGenerated({
-            catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
-            context: nestedContext(profileContext, 'application-firewall-rule-set', value),
-            namespace: 'application-firewall-rule',
-            kind: 'application-firewall-rule',
-            sourceName: `appfw-r${ruleIndex + 1}`,
-            definitionPath: joinedPath(prefix, `security_policies[${policyIndex}]`),
-            role: `application-firewall-rule-${ruleIndex + 1}`,
-            stableParentKey: `application-control:${value}:${applicationFirewallRules[ruleIndex][0]}`,
-          });
-        }
-      }
+      const feature = featureUseLookup.get(`${policyIndex}\0${type}`);
+      if (!feature) continue;
       collector.addReference({
         catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
         context: profileContext,
-        namespace,
-        compatibleKinds: [kind],
+        namespace: feature.namespace,
+        compatibleKinds: [feature.kind],
         sourceName: value,
         bindingSourceName: value,
         referencePath: joinedPath(prefix, `security_policies[${policyIndex}].security_profiles.${type}`),
@@ -894,6 +962,38 @@ function collectSecurityProfiles(config, state) {
   addProfileCombinations(utmCombos, 'utm');
   addProfileCombinations(idpCombos, 'idp');
 
+  const defaultUtmPolicies = (config.security_policies || [])
+    .map((policy, index) => ({ policy, index }))
+    .filter(({ policy }) => (
+      policy.profile_group && Object.keys(policy.security_profiles || {}).length === 0
+    ));
+  if (defaultUtmPolicies.length > 0) {
+    const owner = [...defaultUtmPolicies].sort((left, right) => (
+      String(left.policy.name || '').localeCompare(String(right.policy.name || ''))
+    ))[0];
+    collector.addGenerated({
+      catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+      context: profileContext,
+      namespace: 'utm-policy',
+      kind: 'utm-policy',
+      sourceName: 'default-utm',
+      definitionPath: joinedPath(prefix, `security_policies[${owner.index}]`),
+      role: 'default-utm-policy',
+      stableParentKey: 'utm-policy:default-profile-group',
+    });
+    for (const { index } of defaultUtmPolicies) {
+      collector.addReference({
+        catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+        context: profileContext,
+        namespace: 'utm-policy',
+        compatibleKinds: ['utm-policy'],
+        sourceName: 'default-utm',
+        referencePath: joinedPath(prefix, `security_policies[${index}]#utm-policy`),
+        literals: [],
+      });
+    }
+  }
+
   const blockLists = (config.external_lists || [])
     .map((list, index) => ({ list, index }))
     .filter(({ list }) => list.isBlockList)
@@ -930,38 +1030,47 @@ function collectSecurityProfiles(config, state) {
     }
   }
 
-  const sslProfileSources = new Map();
   for (let index = 0; index < (config.decryption_rules || []).length; index += 1) {
     const rule = config.decryption_rules[index];
     if (rule.disabled || !['decrypt', 'decrypt-and-forward'].includes(rule.action)) continue;
     let role;
+    let kind;
     let sourceName;
+    let preferredOutputName;
     if (rule.decryption_type === 'ssl-forward-proxy') {
       role = 'ssl-forward-profile';
-      sourceName = rule.decryption_profile ? `ssl-fwd-${rule.decryption_profile}` : 'ssl-fwd-proxy';
+      kind = 'ssl-forward-profile';
+      sourceName = rule.decryption_profile || 'ssl-fwd-proxy';
+      preferredOutputName = rule.decryption_profile
+        ? sanitizeJunosName(`ssl-fwd-${rule.decryption_profile}`)
+        : 'ssl-fwd-proxy';
     } else if (rule.decryption_type === 'ssl-inbound-inspection') {
       role = 'ssl-inbound-profile';
-      sourceName = rule.decryption_profile ? `ssl-inbound-${rule.decryption_profile}` : 'ssl-inbound-proxy';
+      kind = 'ssl-inbound-profile';
+      sourceName = rule.decryption_profile || 'ssl-inbound-proxy';
+      preferredOutputName = rule.decryption_profile
+        ? sanitizeJunosName(`ssl-inbound-${rule.decryption_profile}`)
+        : 'ssl-inbound-proxy';
     } else if (rule.decryption_type !== 'ssh-proxy') {
       role = 'ssl-forward-profile';
+      kind = 'ssl-forward-profile';
       sourceName = 'ssl-fwd-proxy';
+      preferredOutputName = 'ssl-fwd-proxy';
     }
     if (!role) continue;
-    if (rule.decryption_profile && !sslProfileSources.has(rule.decryption_profile)) {
-      sslProfileSources.set(rule.decryption_profile, sourceName);
-    }
-    const sharedKey = `${device}\0ssl-proxy-profile\0${sourceName}`;
+    const sharedKey = `${device}\0ssl-proxy-profile\0${kind}\0${sourceName}`;
     if (!sharedDefinitions.has(sharedKey)) {
       sharedDefinitions.add(sharedKey);
       collector.addGenerated({
         catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
         context: profileContext,
         namespace: 'ssl-proxy-profile',
-        kind: 'ssl-proxy-profile',
+        kind,
         sourceName,
+        preferredOutputName,
         definitionPath: joinedPath(prefix, `decryption_rules[${index}]`),
         role,
-        stableParentKey: `decryption-profile:${rule.decryption_profile || role}`,
+        stableParentKey: `decryption-profile:${kind}:${sourceName}`,
       });
     }
     if (rule.decryption_profile) {
@@ -969,7 +1078,7 @@ function collectSecurityProfiles(config, state) {
         catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
         context: profileContext,
         namespace: 'ssl-proxy-profile',
-        compatibleKinds: ['ssl-proxy-profile'],
+        compatibleKinds: [kind],
         sourceName,
         referencePath: joinedPath(prefix, `decryption_rules[${index}].decryption_profile`),
         literals: [],
@@ -980,15 +1089,14 @@ function collectSecurityProfiles(config, state) {
   for (let index = 0; index < (config.security_policies || []).length; index += 1) {
     const policy = config.security_policies[index];
     if (!policy._srx_decrypt || policy.action !== 'allow') continue;
-    const sourceName = policy._srx_decrypt_profile
-      ? sslProfileSources.get(policy._srx_decrypt_profile)
-        || `ssl-fwd-${policy._srx_decrypt_profile}`
-      : 'ssl-fwd-proxy';
+    const sourceName = policy._srx_decrypt_profile || 'ssl-fwd-proxy';
     collector.addReference({
       catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
       context: profileContext,
       namespace: 'ssl-proxy-profile',
-      compatibleKinds: ['ssl-proxy-profile'],
+      compatibleKinds: policy._srx_decrypt_profile
+        ? ['ssl-forward-profile', 'ssl-inbound-profile']
+        : ['ssl-forward-profile'],
       sourceName,
       referencePath: joinedPath(
         prefix,
@@ -998,6 +1106,43 @@ function collectSecurityProfiles(config, state) {
       ),
       literals: [],
     });
+  }
+
+  const forwardPkiOwners = [];
+  for (let index = 0; index < (config.decryption_rules || []).length; index += 1) {
+    const rule = config.decryption_rules[index];
+    if (
+      !rule.disabled
+      && ['decrypt', 'decrypt-and-forward'].includes(rule.action)
+      && rule.decryption_type !== 'ssl-inbound-inspection'
+      && rule.decryption_type !== 'ssh-proxy'
+    ) {
+      forwardPkiOwners.push({ path: `decryption_rules[${index}]`, key: `rule:${rule.name || ''}` });
+    }
+  }
+  for (let index = 0; index < (config.security_policies || []).length; index += 1) {
+    const policy = config.security_policies[index];
+    if (policy._srx_decrypt && policy.action === 'allow' && !policy._srx_decrypt_profile) {
+      forwardPkiOwners.push({ path: `security_policies[${index}]`, key: `policy:${policy.name || ''}` });
+    }
+  }
+  if (forwardPkiOwners.length > 0) {
+    const owner = [...forwardPkiOwners].sort((left, right) => left.key.localeCompare(right.key))[0];
+    for (const [namespace, role] of [
+      ['pki-ca-profile', 'ssl-pki-ca-profile'],
+      ['pki-ca-identity', 'ssl-pki-ca-identity'],
+    ]) {
+      collector.addGenerated({
+        catalogKey: JUNOS_IDENTIFIER_CATALOG.SECURITY_PROFILE,
+        context: device,
+        namespace,
+        kind: namespace,
+        sourceName: 'FPIC-CA',
+        definitionPath: joinedPath(prefix, owner.path),
+        role,
+        stableParentKey: `ssl-pki:${namespace}`,
+      });
+    }
   }
 }
 
@@ -1481,6 +1626,39 @@ function collectScreenAndVpn(config, state) {
         compatibleKinds: [kind],
         sourceName,
         referencePath: joinedPath(prefix, `vpn_tunnels[${index}].${referencePath}`),
+        literals: [],
+      });
+    }
+
+    const selectors = (vpn.proxy_id || [])
+      .map((selector, selectorIndex) => ({ selector, selectorIndex }))
+      .sort((left, right) => JSON.stringify([
+        left.selector.local || '', left.selector.remote || '',
+      ]).localeCompare(JSON.stringify([
+        right.selector.local || '', right.selector.remote || '',
+      ])));
+    const selectorContext = nestedContext(device, 'ipsec-vpn', sourceVpnName);
+    for (let canonicalIndex = 0; canonicalIndex < selectors.length; canonicalIndex += 1) {
+      const { selector, selectorIndex } = selectors[canonicalIndex];
+      const selectorPath = joinedPath(prefix, `vpn_tunnels[${index}].proxy_id[${selectorIndex}]`);
+      const sourceName = `ts${canonicalIndex + 1}`;
+      collector.addGenerated({
+        catalogKey: JUNOS_IDENTIFIER_CATALOG.IPSEC,
+        context: selectorContext,
+        namespace: 'traffic-selector',
+        kind: 'traffic-selector',
+        sourceName,
+        definitionPath: selectorPath,
+        role: 'vpn-traffic-selector',
+        stableParentKey: `vpn:${sourceVpnName}:selector:${selector.local || ''}:${selector.remote || ''}`,
+      });
+      collector.addReference({
+        catalogKey: JUNOS_IDENTIFIER_CATALOG.IPSEC,
+        context: selectorContext,
+        namespace: 'traffic-selector',
+        compatibleKinds: ['traffic-selector'],
+        sourceName,
+        referencePath: `${selectorPath}#traffic-selector`,
         literals: [],
       });
     }

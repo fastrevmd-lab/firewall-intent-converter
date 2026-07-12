@@ -118,6 +118,15 @@ describe('set converter injection defense', () => {
       config.vpn_tunnels = [{ name: 'branch', ike_gateway: { external_interface: 'ge-0/0/0.0 set system services telnet' } }];
     }],
     ['qos_config[0].priority', config => { config.qos_config = [{ type: 'scheduler', name: 'gold', priority: 'high set system services telnet' }]; }],
+    ['pbf_rules[0].src_addresses[0]', config => {
+      config.pbf_rules = [{ name: 'bad-address', action: 'discard', src_addresses: ['999.999.999.999/99'] }];
+    }],
+    ['pbf_rules[0].services[0]', config => {
+      config.pbf_rules = [{ name: 'bad-protocol', action: 'discard', services: ['icmp/80'] }];
+    }],
+    ['pbf_rules[0].services[0]', config => {
+      config.pbf_rules = [{ name: 'bad-port', action: 'discard', services: ['tcp/99999'] }];
+    }],
     ['ospf_config[0].redistribute[0].protocol', config => { config.ospf_config = [{ areas: [], redistribute: [{ protocol: 'static set system services telnet' }] }]; }],
     ['bgp_config[0].networks[0].policy', config => { config.bgp_config = [{ peer_groups: [], networks: [{ policy: 'EXPORT set system services telnet' }] }]; }],
   ])('blocks an attack at %s without reflecting its value', (fieldPath, mutate) => {
