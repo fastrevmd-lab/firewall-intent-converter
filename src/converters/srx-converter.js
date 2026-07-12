@@ -79,9 +79,10 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   }
   if (targetContext) {
     validateJunosInput(targetContext, 'targetContext');
-    if (targetContext.type !== undefined) {
-      setEnum(targetContext.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
-    }
+  }
+  const effectiveTargetContext = targetContext || config.target_context || null;
+  if (effectiveTargetContext?.type !== undefined) {
+    setEnum(effectiveTargetContext.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
   }
 
   const identifiers = options.identifierPlan || planJunosIdentifiers(config, { targetContext });
@@ -302,7 +303,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   summary.total_warnings = warnings.length;
 
   // Logical-system / tenant wrapping
-  const ctx = targetContext || config.target_context;
+  const ctx = effectiveTargetContext;
   if (ctx && ctx.type && ctx.type !== 'none' && ctx.name) {
     const ctxName = identifiers.nameForDefinition(targetContextPath);
     const prefix = ctx.type === 'logical-system'

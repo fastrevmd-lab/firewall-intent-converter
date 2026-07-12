@@ -176,6 +176,77 @@ function capturePlanningError(callback) {
 
 describe('Junos identifier allocation', () => {
   it.each([
+    ['absent', {}],
+    ['null', { type: null }],
+    ['non-string', { type: 42 }],
+    ['unknown', { type: 'evil' }],
+  ])('rejects a direct target context with an %s type', (_label, typeFields) => {
+    const error = capturePlanningError(() => planJunosIdentifiers({}, {
+      targetContext: { ...typeFields, name: 'tenant-a' },
+    }));
+
+    expect(error).toMatchObject({
+      code: 'missing_catalog_coverage',
+      definitionPaths: ['targetContext.type'],
+      reason: 'target context type must be none, logical-system, or tenant',
+    });
+  });
+
+  it('applies target type and name validation to embedded config context', () => {
+    const typeError = capturePlanningError(() => planJunosIdentifiers({
+      target_context: { type: 'invalid', name: 'tenant-a' },
+    }));
+    expect(typeError).toMatchObject({
+      definitionPaths: ['targetContext.type'],
+      reason: 'target context type must be none, logical-system, or tenant',
+    });
+
+    const nameError = capturePlanningError(() => planJunosIdentifiers({
+      target_context: { type: 'tenant', name: '' },
+    }));
+    expect(nameError).toMatchObject({
+      definitionPaths: ['targetContext.name'],
+      reason: 'active target context requires a non-blank string name',
+    });
+  });
+
+  it.each([
+    ['absent', {}],
+    ['null', { name: null }],
+    ['non-string', { name: 42 }],
+    ['blank', { name: '   ' }],
+  ])('rejects an active direct target context with an %s name', (_label, nameFields) => {
+    const error = capturePlanningError(() => planJunosIdentifiers({}, {
+      targetContext: { type: 'logical-system', ...nameFields },
+    }));
+
+    expect(error).toMatchObject({
+      code: 'missing_catalog_coverage',
+      definitionPaths: ['targetContext.name'],
+      reason: 'active target context requires a non-blank string name',
+    });
+  });
+
+  it.each([
+    ['absent', {}],
+    ['null', { lsName: null }],
+    ['non-string', { lsName: 42 }],
+    ['blank', { lsName: '   ' }],
+  ])('rejects a merged logical-system slot with an %s name', (_label, nameFields) => {
+    const error = capturePlanningError(() => planMergedJunosIdentifiers([{
+      ...nameFields,
+      intermediateConfig: {},
+      interfaceMappings: {},
+    }]));
+
+    expect(error).toMatchObject({
+      code: 'missing_catalog_coverage',
+      definitionPaths: ['configSlots[0].lsName'],
+      reason: 'active target context requires a non-blank string name',
+    });
+  });
+
+  it.each([
     ['Web Server', 'Web@Server'],
     ['Web  Server', 'Web--Server'],
     ['!!!', '???'],

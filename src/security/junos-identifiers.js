@@ -354,6 +354,29 @@ function missingLookup(kind, path) {
   });
 }
 
+export function validateJunosTargetContext(
+  targetContext,
+  definitionPath = 'targetContext.name',
+) {
+  if (!targetContext) return;
+  const typePath = definitionPath.endsWith('.name')
+    ? `${definitionPath.slice(0, -'.name'.length)}.type`
+    : 'targetContext.type';
+  if (!['none', 'logical-system', 'tenant'].includes(targetContext.type)) {
+    fail('missing_catalog_coverage', {
+      definitionPaths: [typePath],
+      reason: 'target context type must be none, logical-system, or tenant',
+    });
+  }
+  if (targetContext.type === 'none') return;
+  if (typeof targetContext.name !== 'string' || targetContext.name.trim().length === 0) {
+    fail('missing_catalog_coverage', {
+      definitionPaths: [definitionPath],
+      reason: 'active target context requires a non-blank string name',
+    });
+  }
+}
+
 /**
  * Build an immutable deterministic allocation plan from catalog records.
  */
@@ -641,6 +664,11 @@ export function createJunosIdentifierPlan(
 }
 
 export function planJunosIdentifiers(config, options = {}) {
+  const targetContext = options.targetContext || config?.target_context || null;
+  validateJunosTargetContext(
+    targetContext,
+    options.targetPath || `${options.pathPrefix || ''}targetContext.name`,
+  );
   return createJunosIdentifierPlan(
     collectJunosIdentifierSymbols(config, options),
     options,
@@ -653,6 +681,12 @@ export function planMergedJunosIdentifiers(
   globalConfig = {},
   options = {},
 ) {
+  for (let index = 0; index < (configSlots || []).length; index += 1) {
+    validateJunosTargetContext(
+      { type: 'logical-system', name: configSlots[index]?.lsName },
+      `configSlots[${index}].lsName`,
+    );
+  }
   return createJunosIdentifierPlan(
     collectMergedJunosIdentifierSymbols(
       configSlots,

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 
+import { parse } from 'acorn';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -48,59 +49,169 @@ function baseConfig() {
   };
 }
 
-function sourceLineIndex(source, offset) {
-  return source.slice(0, offset).split('\n').length - 1;
+const CATALOG_FUNCTIONS = new Set(['sanitizeJunosName', 'setIdentifier']);
+const APPROVED_NON_SYMBOL_REASONS = new Set([
+  'application-firewall dynamic-application-group match value',
+  'content-filtering block-extension match value',
+  'security-policy source-identity match value',
+  'security-policy source-identity element value',
+]);
+const MARKER_STEM = 'identifier-catalog: non-symbol';
+
+function walkAst(root, visit) {
+  const seen = new Set();
+  function walk(node, parent = null) {
+    if (!node || typeof node.type !== 'string' || seen.has(node)) return;
+    seen.add(node);
+    visit(node, parent);
+    for (const [key, value] of Object.entries(node)) {
+      if (['end', 'loc', 'range', 'start', 'type'].includes(key)) continue;
+      if (Array.isArray(value)) {
+        for (const child of value) walk(child, node);
+      } else {
+        walk(value, node);
+      }
+    }
+  }
+  walk(root);
+}
+
+function staticStringValue(node) {
+  if (node?.type === 'ParenthesizedExpression') return staticStringValue(node.expression);
+  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw;
+  }
+  return null;
 }
 
 function identifierCatalogFindings(source, relativePath) {
-  const lines = source.split('\n');
+  const comments = [];
+  const ast = parse(source, {
+    ecmaVersion: 'latest',
+    locations: true,
+    onComment: comments,
+    preserveParens: true,
+    sourceType: 'module',
+  });
+  const nodes = [];
+  walkAst(ast, node => nodes.push(node));
   const findings = [];
-  const aliasPatterns = [
-    /\b(?:sanitizeJunosName|setIdentifier)\s+as\s+[A-Za-z_$][\w$]*/g,
-    /\b[A-Za-z_$][\w$]*\s*=\s*(?:sanitizeJunosName|setIdentifier)\b/g,
-    /[,{}]\s*(?:sanitizeJunosName|setIdentifier)\s*:\s*[A-Za-z_$][\w$]*/g,
-  ];
-  for (const pattern of aliasPatterns) {
-    for (const match of source.matchAll(pattern)) {
-      findings.push(`${relativePath}:${sourceLineIndex(source, match.index) + 1} alias/rebinding`);
+  const directCalls = [];
+  const allowedIdentifiers = new Set();
+
+  for (const node of nodes) {
+    if (node.type === 'ImportSpecifier') {
+      const importedName = node.imported.type === 'Identifier'
+        ? node.imported.name
+        : staticStringValue(node.imported);
+      const localName = node.local.name;
+      if (CATALOG_FUNCTIONS.has(importedName) || CATALOG_FUNCTIONS.has(localName)) {
+        const exact = node.imported.type === 'Identifier'
+          && importedName === localName
+          && CATALOG_FUNCTIONS.has(importedName)
+          && source.slice(node.imported.start, node.imported.end) === importedName
+          && source.slice(node.local.start, node.local.end) === localName;
+        if (exact) {
+          allowedIdentifiers.add(node.imported);
+          allowedIdentifiers.add(node.local);
+        } else if (node.imported.type !== 'Identifier' && CATALOG_FUNCTIONS.has(importedName)) {
+          findings.push(
+            `${relativePath}:${node.loc.start.line} forbidden string-named ${importedName} import`,
+          );
+        }
+      }
+    }
+
+    if (node.type === 'CallExpression'
+        && node.optional !== true
+        && node.callee.type === 'Identifier'
+        && CATALOG_FUNCTIONS.has(node.callee.name)
+        && source.slice(node.callee.start, node.callee.end) === node.callee.name) {
+      allowedIdentifiers.add(node.callee);
+      directCalls.push({ line: node.callee.loc.start.line, node });
+    }
+
+    if ((node.type === 'MemberExpression' || node.type === 'Property') && node.computed) {
+      const propertyName = staticStringValue(node.property ?? node.key);
+      if (CATALOG_FUNCTIONS.has(propertyName)) {
+        findings.push(
+          `${relativePath}:${node.loc.start.line} forbidden computed ${propertyName} access`,
+        );
+      }
+    }
+
+    const literalText = node.type === 'TemplateElement'
+      ? (node.value.cooked ?? node.value.raw)
+      : node.type === 'Literal' ? staticStringValue(node) : null;
+    if (typeof literalText === 'string' && literalText.includes(MARKER_STEM)) {
+      findings.push(`${relativePath}:${node.loc.start.line} marker must be a line comment`);
     }
   }
 
-  const markersByLine = new Map();
-  lines.forEach((line, index) => {
-    const markers = [...line.matchAll(/\/\/ identifier-catalog: non-symbol ([^\n]+)/g)]
-      .filter(match => match[1].trim().length > 0)
-      .map(match => `${index}:${match.index}`);
-    if (markers.length > 0) markersByLine.set(index, markers);
-  });
+  const reportedIdentifiers = new Set();
+  for (const node of nodes) {
+    if (node.type === 'Identifier'
+        && CATALOG_FUNCTIONS.has(node.name)
+        && !allowedIdentifiers.has(node)) {
+      const occurrenceKey = `${node.start}:${node.end}:${node.name}`;
+      if (reportedIdentifiers.has(occurrenceKey)) continue;
+      reportedIdentifiers.add(occurrenceKey);
+      findings.push(`${relativePath}:${node.loc.start.line} forbidden ${node.name} occurrence`);
+    }
+  }
+
+  const approvedMarkers = [];
+  for (const comment of comments) {
+    const markerText = comment.value.trim();
+    if (!markerText.includes(MARKER_STEM)) continue;
+    if (comment.type !== 'Line') {
+      findings.push(`${relativePath}:${comment.loc.start.line} marker must be a line comment`);
+      continue;
+    }
+    const exactPrefix = `${MARKER_STEM} `;
+    const reason = markerText.startsWith(exactPrefix)
+      ? markerText.slice(exactPrefix.length)
+      : '';
+    if (!APPROVED_NON_SYMBOL_REASONS.has(reason)) {
+      findings.push(`${relativePath}:${comment.loc.start.line} unknown marker`);
+      continue;
+    }
+    approvedMarkers.push({
+      key: `${comment.start}:${approvedMarkers.length}`,
+      line: comment.loc.start.line,
+    });
+  }
 
   const callsByLine = new Map();
-  for (const match of source.matchAll(/\b(?:sanitizeJunosName|setIdentifier)\s*\(/g)) {
-    const index = sourceLineIndex(source, match.index);
-    const calls = callsByLine.get(index) || [];
-    calls.push(match[0]);
-    callsByLine.set(index, calls);
+  for (const call of directCalls) {
+    const calls = callsByLine.get(call.line) || [];
+    calls.push(call);
+    callsByLine.set(call.line, calls);
   }
-
   const usedMarkers = new Set();
-  for (const [index, calls] of callsByLine) {
+  for (const [callLine, calls] of callsByLine) {
     if (calls.length !== 1) {
-      findings.push(`${relativePath}:${index + 1} multiple direct calls`);
+      findings.push(`${relativePath}:${callLine} multiple direct calls`);
       continue;
     }
-    const candidates = [
-      ...(markersByLine.get(index - 1) || []),
-      ...(markersByLine.get(index) || []),
-    ];
+    const candidates = approvedMarkers.filter(marker => (
+      marker.line === callLine - 1 || marker.line === callLine
+    ));
     if (candidates.length !== 1) {
-      findings.push(`${relativePath}:${index + 1} missing or ambiguous marker`);
+      findings.push(`${relativePath}:${callLine} missing or ambiguous marker`);
       continue;
     }
-    if (usedMarkers.has(candidates[0])) {
-      findings.push(`${relativePath}:${index + 1} shared marker`);
+    if (usedMarkers.has(candidates[0].key)) {
+      findings.push(`${relativePath}:${callLine} shared marker`);
       continue;
     }
-    usedMarkers.add(candidates[0]);
+    usedMarkers.add(candidates[0].key);
+  }
+  for (const marker of approvedMarkers) {
+    if (!usedMarkers.has(marker.key)) {
+      findings.push(`${relativePath}:${marker.line} orphan marker`);
+    }
   }
   return findings;
 }
@@ -127,20 +238,170 @@ describe('set converter injection defense', () => {
     [
       'aliased import',
       "import { sanitizeJunosName as normalize } from './parser-utils.js';",
-      ['fixture.js:1 alias/rebinding'],
+      ['fixture.js:1 forbidden sanitizeJunosName occurrence'],
     ],
     [
       'assigned alias',
       'const normalize = setIdentifier;',
-      ['fixture.js:1 alias/rebinding'],
+      ['fixture.js:1 forbidden setIdentifier occurrence'],
     ],
     [
       'two calls sharing one marker',
-      '// identifier-catalog: non-symbol fixture field\nsanitizeJunosName(a); setIdentifier(b);',
-      ['fixture.js:2 multiple direct calls'],
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\nsanitizeJunosName(a); setIdentifier(b);',
+      ['fixture.js:2 multiple direct calls', 'fixture.js:1 orphan marker'],
     ],
   ])('rejects identifier catalog scanner bypass via %s', (_label, source, expected) => {
     expect(identifierCatalogFindings(source, 'fixture.js')).toEqual(expected);
+  });
+
+  it.each([
+    [
+      'qualified property access',
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\nobj.sanitizeJunosName(value);',
+      ['fixture.js:2 forbidden sanitizeJunosName occurrence', 'fixture.js:1 orphan marker'],
+    ],
+    [
+      'parenthesized call',
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\n(sanitizeJunosName)(value);',
+      ['fixture.js:2 forbidden sanitizeJunosName occurrence', 'fixture.js:1 orphan marker'],
+    ],
+    [
+      'optional call',
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\nsanitizeJunosName?.(value);',
+      ['fixture.js:2 forbidden sanitizeJunosName occurrence', 'fixture.js:1 orphan marker'],
+    ],
+    [
+      'direct rebinding',
+      'sanitizeJunosName = replacement;',
+      ['fixture.js:1 forbidden sanitizeJunosName occurrence'],
+    ],
+    [
+      'computed property access',
+      "obj['sanitizeJunosName'](value);",
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'escaped computed property access',
+      'obj["sanitizeJunos\\x4eame"](value);',
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'Unicode-escaped identifier call',
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\nsanitizeJunos\\u004eame(value);',
+      ['fixture.js:2 forbidden sanitizeJunosName occurrence', 'fixture.js:1 orphan marker'],
+    ],
+    [
+      'template-literal computed property access',
+      'obj[`sanitizeJunosName`](value);',
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'line-continuation computed property access',
+      'obj["sanitizeJunos\\\nName"](value);',
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'parenthesized computed property access',
+      "obj[('sanitizeJunosName')](value);",
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'parenthesized computed destructuring alias',
+      "const { [('setIdentifier')]: validate } = helpers;",
+      ['fixture.js:1 forbidden computed setIdentifier access'],
+    ],
+    [
+      'nested parenthesized template computed access',
+      'obj[((`sanitizeJunosName`))](value);',
+      ['fixture.js:1 forbidden computed sanitizeJunosName access'],
+    ],
+    [
+      'computed destructuring alias',
+      "const { ['setIdentifier']: validate } = helpers;",
+      ['fixture.js:1 forbidden computed setIdentifier access'],
+    ],
+    [
+      'basic destructuring alias',
+      'const { sanitizeJunosName: normalize } = helpers;',
+      ['fixture.js:1 forbidden sanitizeJunosName occurrence'],
+    ],
+    [
+      'ASI after side-effect import',
+      "import './side.js'\nconst { sanitizeJunosName } = helpers;",
+      ['fixture.js:2 forbidden sanitizeJunosName occurrence'],
+    ],
+    [
+      'string-named aliased import',
+      "import { 'sanitizeJunosName' as normalize } from './parser-utils.js';",
+      ['fixture.js:1 forbidden string-named sanitizeJunosName import'],
+    ],
+    [
+      'marker text inside a string',
+      "const note = '// identifier-catalog: non-symbol content-filtering block-extension match value'; sanitizeJunosName(value);",
+      ['fixture.js:1 marker must be a line comment', 'fixture.js:1 missing or ambiguous marker'],
+    ],
+    [
+      'orphan marker text inside a string',
+      "const note = '// identifier-catalog: non-symbol content-filtering block-extension match value';",
+      ['fixture.js:1 marker must be a line comment'],
+    ],
+    [
+      'generic marker reason',
+      '// identifier-catalog: non-symbol scalar validation\nsanitizeJunosName(value);',
+      ['fixture.js:1 unknown marker', 'fixture.js:2 missing or ambiguous marker'],
+    ],
+    [
+      'empty marker reason',
+      '// identifier-catalog: non-symbol \nsanitizeJunosName(value);',
+      ['fixture.js:1 unknown marker', 'fixture.js:2 missing or ambiguous marker'],
+    ],
+    [
+      'orphan approved marker',
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\nconst value = 1;',
+      ['fixture.js:1 orphan marker'],
+    ],
+    [
+      'block-comment marker',
+      '/* identifier-catalog: non-symbol content-filtering block-extension match value */\nsanitizeJunosName(value);',
+      ['fixture.js:1 marker must be a line comment', 'fixture.js:2 missing or ambiguous marker'],
+    ],
+    [
+      'one marker shared by adjacent calls',
+      'sanitizeJunosName(first); // identifier-catalog: non-symbol content-filtering block-extension match value\nsetIdentifier(second);',
+      ['fixture.js:2 shared marker'],
+    ],
+    [
+      'two markers for one call',
+      '// identifier-catalog: non-symbol content-filtering block-extension match value\nsanitizeJunosName(value); // identifier-catalog: non-symbol security-policy source-identity match value',
+      [
+        'fixture.js:2 missing or ambiguous marker',
+        'fixture.js:1 orphan marker',
+        'fixture.js:2 orphan marker',
+      ],
+    ],
+  ])('rejects formal identifier catalog mutation: %s', (_label, source, expected) => {
+    expect(identifierCatalogFindings(source, 'fixture.js')).toEqual(expected);
+  });
+
+  it('allows names in ordinary strings and comments but rejects string-literal computed access', () => {
+    const safeText = [
+      "const first = 'sanitizeJunosName';",
+      '// setIdentifier is discussed here without being called.',
+      "const second = ['setIdentifier'];",
+      'const third = /sanitizeJunosName|setIdentifier/;',
+      'const fourth = `sanitizeJunosName and setIdentifier`;',
+      'if (ready) /sanitizeJunosName|setIdentifier/.test(value);',
+    ].join('\n');
+    expect(identifierCatalogFindings(safeText, 'fixture.js')).toEqual([]);
+  });
+
+  it('allows only unaliased static imports and marked direct calls', () => {
+    const allowed = [
+      "import { sanitizeJunosName } from './parser-utils.js';",
+      '// identifier-catalog: non-symbol content-filtering block-extension match value',
+      'const value = `${sanitizeJunosName(input)}`;',
+    ].join('\n');
+    expect(identifierCatalogFindings(allowed, 'fixture.js')).toEqual([]);
   });
 
   it('escapes printable quoted text and returns structurally valid output', () => {
@@ -250,6 +511,67 @@ describe('set converter injection defense', () => {
       {},
       { type: 'logical-system set system services telnet', name: 'tenant-a' },
     )).toThrow(expect.objectContaining({ fieldPath: 'targetContext.type' }));
+  });
+
+  it('rejects invalid embedded target-context types consistently in Set and XML', () => {
+    const config = baseConfig();
+    config.target_context = { type: 'evil', name: 'tenant-a' };
+    for (const convert of [convertToSrxSetCommands, buildSrxXml]) {
+      expect(() => convert(config)).toThrow(expect.objectContaining({
+        name: 'JunosSerializationError',
+        fieldPath: 'targetContext.type',
+      }));
+    }
+  });
+
+  it.each([
+    ['absent', {}],
+    ['null', { name: null }],
+    ['non-string', { name: 42 }],
+    ['blank', { name: '   ' }],
+  ])('fails closed for an active %s target-context name in Set and XML', (_label, nameFields) => {
+    const targetContext = { type: 'logical-system', ...nameFields };
+    for (const convert of [convertToSrxSetCommands, buildSrxXml]) {
+      expect(() => convert(baseConfig(), {}, targetContext)).toThrow(expect.objectContaining({
+        name: 'JunosIdentifierPlanningError',
+        code: 'missing_catalog_coverage',
+        definitionPaths: ['targetContext.name'],
+        reason: 'active target context requires a non-blank string name',
+      }));
+    }
+  });
+
+  it('fails closed for an active target context supplied by the config', () => {
+    const config = baseConfig();
+    config.target_context = { type: 'tenant', name: '  ' };
+    for (const convert of [convertToSrxSetCommands, buildSrxXml]) {
+      expect(() => convert(config)).toThrow(expect.objectContaining({
+        name: 'JunosIdentifierPlanningError',
+        code: 'missing_catalog_coverage',
+        definitionPaths: ['targetContext.name'],
+      }));
+    }
+  });
+
+  it.each([
+    ['absent', {}],
+    ['null', { lsName: null }],
+    ['non-string', { lsName: 42 }],
+    ['blank', { lsName: '   ' }],
+  ])('fails closed for a merged %s logical-system name in Set and XML', (_label, nameFields) => {
+    const slots = [{
+      ...nameFields,
+      intermediateConfig: baseConfig(),
+      interfaceMappings: {},
+    }];
+    for (const convert of [convertMergedToSrxSetCommands, buildMergedSrxXml]) {
+      expect(() => convert(slots)).toThrow(expect.objectContaining({
+        name: 'JunosIdentifierPlanningError',
+        code: 'missing_catalog_coverage',
+        definitionPaths: ['configSlots[0].lsName'],
+        reason: 'active target context requires a non-blank string name',
+      }));
+    }
   });
 
   it('validates user-supplied SRX interface mappings', () => {

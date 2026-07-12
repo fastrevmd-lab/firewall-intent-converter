@@ -57,6 +57,10 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
     setToken(mappedName, `interfaceMappings.${sourceName}`, /^[A-Za-z0-9_.:/-]+$/);
   }
   if (targetContext) validateJunosInput(targetContext, 'targetContext');
+  const effectiveTargetContext = targetContext || config.target_context || null;
+  if (effectiveTargetContext?.type !== undefined) {
+    setEnum(effectiveTargetContext.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
+  }
 
   const identifiers = options.identifierPlan || planJunosIdentifiers(config, { targetContext });
   const identifierPath = localPath => `${options.pathPrefix || ''}${localPath}`;
@@ -96,11 +100,8 @@ export function buildSrxXml(config, interfaceMappings = {}, targetContext = null
     : null;
 
   // Determine context wrapping
-  const ctx = targetContext || config.target_context;
+  const ctx = effectiveTargetContext;
   const useContext = ctx && ctx.type && ctx.type !== 'none' && ctx.name;
-  if (ctx?.type !== undefined) {
-    setEnum(ctx.type, ['none', 'logical-system', 'tenant'], 'targetContext.type');
-  }
   const indent = useContext ? '    ' : '  ';
 
   const omitWrapper = options.omitConfigurationWrapper || false;
