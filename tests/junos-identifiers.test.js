@@ -1132,6 +1132,54 @@ describe('Junos identifier catalog', () => {
     expect(secIntel(forward).get('external-list:a feed')).toBe('secIntel-rule-1');
   });
 
+  it('catalogs emitted DNS-security filtering rules and references', () => {
+    const config = {
+      security_policies: [{
+        name: 'dns policy',
+        security_profiles: { 'dns-security': 'Strict DNS' },
+      }],
+      security_profile_definitions: {
+        'dns-security:Strict DNS': { blockedDomains: ['bad.example'] },
+      },
+    };
+    const symbols = collectJunosIdentifierSymbols(config);
+    const plan = planJunosIdentifiers(config);
+
+    expect(symbols.definitions).toContainEqual(expect.objectContaining({
+      namespace: 'dns-filtering-rule',
+      kind: 'dns-filtering-rule',
+      sourceName: 'Strict DNS',
+      definitionPath: 'security_policies[0]',
+      role: 'security-profile-dns-security',
+    }));
+    expect(symbols.references).toContainEqual(expect.objectContaining({
+      namespace: 'dns-filtering-rule',
+      sourceName: 'Strict DNS',
+      referencePath: 'security_policies[0].security_profiles.dns-security',
+    }));
+    expect(plan.nameForReference('security_policies[0].security_profiles.dns-security'))
+      .toBe(plan.nameForGenerated('security_policies[0]', 'security-profile-dns-security'));
+  });
+
+  it('preserves periods only for explicit multi-port preferred names', () => {
+    const plan = planJunosIdentifiers({
+      service_objects: [{ name: 'Foo.Bar', protocol: 'tcp', port_range: '8080,8081' }],
+      applications: [{ name: 'Baz.Qux', protocol: 'udp', port: '9000,9001' }],
+      security_policies: [{ name: 'custom', applications: ['unknown.app'] }],
+    });
+
+    expect(plan.nameForGenerated('service_objects[0]', 'service-multi-port-set'))
+      .toBe('Foo.Bar-set');
+    expect(plan.nameForGenerated('service_objects[0]', 'service-port:8080'))
+      .toBe('Foo.Bar-8080');
+    expect(plan.nameForGenerated('applications[0]', 'application-multi-port-set'))
+      .toBe('Baz.Qux-set');
+    expect(plan.nameForGenerated('applications[0]', 'application-port:9000'))
+      .toBe('Baz.Qux-9000');
+    expect(plan.nameForReference('security_policies[0].applications[0]'))
+      .toBe('unknown-app-UNMAPPED');
+  });
+
   it('catalogs absent identifier fields as generated owner-scoped fallbacks', () => {
     const symbols = collectJunosIdentifierSymbols({
       screen_config: [{ zone: 'outside' }],

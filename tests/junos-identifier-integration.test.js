@@ -4,9 +4,10 @@ import { convertToSrxSetCommands } from '../src/converters/srx-converter.js';
 import { setMapVendorApp } from '../src/parsers/parser-utils.js';
 import {
   JunosIdentifierPlanningError,
+  planJunosIdentifiers,
   planMergedJunosIdentifiers,
 } from '../src/security/junos-identifiers.js';
-import { loadAppMappings, mapVendorApp } from '../src/utils/app-mappings.js';
+import { getJunosEmission, loadAppMappings, mapVendorApp } from '../src/utils/app-mappings.js';
 
 const storage = {};
 global.localStorage = {
@@ -361,6 +362,204 @@ describe('Set identifier-plan integration', () => {
       expect(result.commands.some(command => command.endsWith(` utm-policy ${utmPolicy.outputName}`)))
         .toBe(true);
     }
+  });
+
+  it('does not emit placeholder applications for explicit multi-port definitions', () => {
+    const config = baseConfig({
+      service_objects: [{ name: 'Explicit Service', protocol: 'tcp', port_range: '8080,8081' }],
+      applications: [{ name: 'Explicit App', protocol: 'udp', port: '9000,9001' }],
+      security_policies: [policy('Explicit Multi', 'trust', 'untrust', 'any', {
+        applications: ['Explicit App'],
+        services: ['Explicit Service'],
+      })],
+    });
+    const result = convertToSrxSetCommands(config);
+    const setEntries = result.identifierMappings.entries.filter(entry => (
+      entry.namespace === 'application-entry'
+      && entry.kind === 'application-set'
+    ));
+
+    expect(setEntries).toHaveLength(2);
+    for (const entry of setEntries) {
+      expect(result.commands.some(command => (
+        command.startsWith(`set applications application-set ${entry.outputName} application `)
+      ))).toBe(true);
+      expect(result.commands.some(command => (
+        command.startsWith(`set applications application ${entry.outputName} `)
+      ))).toBe(false);
+    }
+    expect(result.commands.join('\n')).not.toContain('INTERVIEW REQUIRED: Explicit App');
+  });
+
+  it('uses exact generated child lookups in an injected multi-context plan', () => {
+    const customName = 'apple-push-notifications';
+    const ports = getJunosEmission(customName, 'panos').ports.map(String);
+    const collidingApplications = ports.map(port => ({
+      name: `${customName}-p${port}`,
+      protocol: 'tcp',
+      port: '65000',
+    }));
+    const configFor = applications => baseConfig({
+      applications,
+      security_policies: [policy('Apple Push', 'trust', 'untrust', 'any', {
+        applications: [customName],
+      })],
+    });
+    const first = configFor(collidingApplications);
+    const second = configFor([]);
+    const slots = [
+      { lsName: 'branch-a', intermediateConfig: first },
+      { lsName: 'branch-b', intermediateConfig: second },
+    ];
+    const identifierPlan = planMergedJunosIdentifiers(slots);
+    const result = convertToSrxSetCommands(
+      second,
+      {},
+      { type: 'logical-system', name: 'branch-b' },
+      {
+        identifierPlan,
+        pathPrefix: 'configSlots[1].intermediateConfig.',
+        targetContextPath: 'configSlots[1].lsName',
+      },
+    );
+    const firstOwner = 'configSlots[0].intermediateConfig.security_policies[0].applications[0]';
+    const secondOwner = 'configSlots[1].intermediateConfig.security_policies[0].applications[0]';
+
+    for (const port of ports) {
+      const role = `custom-application-port:${port}`;
+      const firstName = identifierPlan.nameForGenerated(firstOwner, role);
+      const secondName = identifierPlan.nameForGenerated(secondOwner, role);
+      expect(secondName).not.toBe(firstName);
+      expect(result.commands.some(command => command.includes(` application ${secondName}`)))
+        .toBe(true);
+      expect(result.commands.some(command => command.includes(` application ${firstName}`)))
+        .toBe(false);
+    }
+  });
+
+  it('preserves planned mysql literals beside colliding custom names', () => {
+    const config = baseConfig({
+      applications: [{ name: 'custom-mysql', protocol: 'tcp', port: '13306' }],
+      security_policies: [policy('Database', 'trust', 'untrust', 'any', {
+        applications: ['mysql'],
+      })],
+    });
+    const result = convertToSrxSetCommands(config);
+
+    expect(result.commands).toContain(
+      'set security policies from-zone trust to-zone untrust policy Database match application junos-mysql',
+    );
+    expect(result.commands).toContain('set applications application custom-mysql destination-port 13306');
+    expect(result.commands).not.toContain('set applications application custom-mysql destination-port 3306');
+    expect(result.commands.join('\n')).not.toContain('Auto-generated Missing Application Definitions');
+  });
+
+  it('catalogs and emits DNS-security rule names through exact profile references', () => {
+    const config = baseConfig({
+      security_policies: [policy('DNS Security', 'trust', 'untrust', 'any', {
+        security_profiles: { 'dns-security': 'Strict DNS' },
+      })],
+      security_profile_definitions: {
+        'dns-security:Strict DNS': { blockedDomains: ['bad.example'] },
+      },
+    });
+    const result = convertToSrxSetCommands(config);
+    const dnsRule = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'dns-filtering-rule',
+    );
+
+    expect(dnsRule.referencePaths).toContain(
+      'security_policies[0].security_profiles.dns-security',
+    );
+    expect(result.commands).toContain(
+      `set services dns-filtering dns-filtering-rule ${dnsRule.outputName} match-name bad.example`,
+    );
+  });
+
+  it('keeps NAT zone pairs structured when a zone contains the old delimiter', () => {
+    const config = baseConfig({
+      zones: [
+        { name: 'a->b', interfaces: [] },
+        { name: 'outside', interfaces: [] },
+      ],
+      nat_rules: [{
+        name: 'Arrow NAT', type: 'source',
+        src_zones: ['a->b'], dst_zones: ['outside'],
+        src_addresses: ['any'], dst_addresses: ['any'],
+        translated_src: { type: 'interface' },
+      }],
+    });
+    const result = convertToSrxSetCommands(config);
+    const fromZone = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'zone' && entry.sourceName === 'a->b'
+    )).outputName;
+    const ruleSet = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'nat-rule-set',
+    ).outputName;
+    const rule = result.identifierMappings.entries.find(
+      entry => entry.namespace === 'nat-rule',
+    ).outputName;
+
+    expect(result.commands).toContain(`set security nat source rule-set ${ruleSet} from zone ${fromZone}`);
+    expect(result.commands.some(command => command.includes(
+      `security nat source rule-set ${ruleSet} rule ${rule} `,
+    ))).toBe(true);
+  });
+
+  it('uses alias-form NAT zone fields and effective paths for empty arrays', () => {
+    const config = baseConfig({
+      zones: [
+        { name: 'inside', interfaces: [] },
+        { name: 'outside', interfaces: [] },
+      ],
+      nat_rules: [
+        {
+          name: 'Alias NAT', type: 'source',
+          source_zones: ['inside'], destination_zones: ['outside'],
+          src_addresses: ['any'], dst_addresses: ['any'],
+          translated_src: { type: 'interface' },
+        },
+        {
+          name: 'Empty Alias NAT', type: 'source',
+          source_zones: [], destination_zones: [],
+          src_addresses: ['any'], dst_addresses: ['any'],
+          translated_src: { type: 'interface' },
+        },
+      ],
+    });
+    const plan = planJunosIdentifiers(config);
+    const referenceLookups = [];
+    const identifierPlan = {
+      ...plan,
+      nameForReference(path) {
+        referenceLookups.push(path);
+        return plan.nameForReference(path);
+      },
+    };
+    const result = convertToSrxSetCommands(config, {}, null, { identifierPlan });
+
+    expect(referenceLookups).toEqual(expect.arrayContaining([
+      'nat_rules[0].source_zones[0]',
+      'nat_rules[0].destination_zones[0]',
+      'nat_rules[1]#effective-source-zone',
+      'nat_rules[1]#effective-destination-zone',
+    ]));
+    const aliasRuleSet = result.identifierMappings.entries.find(entry => (
+      entry.namespace === 'nat-rule-set' && entry.sourceName === 'inside-to-outside'
+    )).outputName;
+    expect(result.commands).toContain(`set security nat source rule-set ${aliasRuleSet} from zone inside`);
+    expect(result.commands).toContain(`set security nat source rule-set ${aliasRuleSet} to zone outside`);
+  });
+
+  it('preserves periods in explicit multi-port preferred names', () => {
+    const config = baseConfig({
+      service_objects: [{ name: 'Foo.Bar', protocol: 'tcp', port_range: '8080,8081' }],
+      applications: [{ name: 'Baz.Qux', protocol: 'udp', port: '9000,9001' }],
+    });
+    const result = convertToSrxSetCommands(config);
+
+    expect(result.commands).toContain('set applications application-set Foo.Bar-set application Foo.Bar-8080');
+    expect(result.commands).toContain('set applications application-set Baz.Qux-set application Baz.Qux-9000');
   });
 
   it('fails closed when an injected plan does not cover a core definition path', () => {

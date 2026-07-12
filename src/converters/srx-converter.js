@@ -280,10 +280,6 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // Fix 4: Post-process all commands to replace remaining vendor interface names
   sanitizeAllInterfaceNames(commands, interfaceMappings);
 
-  // Fix 7: Final pass — auto-generate definitions for any application referenced
-  // in policy match but never defined as a custom or predefined application
-  autoGenerateMissingAppDefinitions(commands);
-
   // Unsupported feature notices (only if AAA was not auto-converted)
   if (!config.aaa_config || config.aaa_config.length === 0) {
     commands.push('# =============================================');
@@ -607,151 +603,6 @@ function sanitizeAllInterfaceNames(commands, interfaceMappings = {}) {
     if (updated !== cmd) {
       commands[i] = updated;
     }
-  }
-}
-
-/**
- * Final pass: scan all `match application` commands, collect app names,
- * check against `set applications application` commands, and auto-generate
- * definitions for any missing ones.
- */
-function autoGenerateMissingAppDefinitions(commands) {
-  const referencedApps = new Set();
-  const definedApps = new Set();
-
-  for (const cmd of commands) {
-    const matchApp = cmd.match(/^set .* match application (\S+)/);
-    if (matchApp && matchApp[1] !== 'any') {
-      referencedApps.add(matchApp[1]);
-    }
-    // Also scan application-set member references — these apps need definitions too
-    const appSetMember = cmd.match(/^set applications application-set \S+ application (\S+)/);
-    if (appSetMember) {
-      referencedApps.add(appSetMember[1]);
-    }
-    const defApp = cmd.match(/^set applications application (\S+)/);
-    if (defApp) {
-      definedApps.add(defApp[1]);
-    }
-    const defSet = cmd.match(/^set applications application-set (\S+)/);
-    if (defSet) {
-      definedApps.add(defSet[1]);
-    }
-  }
-
-  // junos-* apps that may not exist on all platforms (vSRX, older versions)
-  // We define them with a 'custom-' prefix since 'junos-' is reserved
-  const PLATFORM_DEPENDENT_APPS = {
-    'junos-mysql':    { protocol: 'tcp', port: '3306', alias: 'custom-mysql' },
-    'junos-mssql':    { protocol: 'tcp', port: '1433', alias: 'custom-mssql' },
-    'junos-oracle':   { protocol: 'tcp', port: '1521', alias: 'custom-oracle' },
-    'junos-postgres': { protocol: 'tcp', port: '5432', alias: 'custom-postgres' },
-    'junos-mongodb':  { protocol: 'tcp', port: '27017', alias: 'custom-mongodb' },
-    'junos-redis':    { protocol: 'tcp', port: '6379', alias: 'custom-redis' },
-    'junos-memcached':{ protocol: 'tcp', port: '11211', alias: 'custom-memcached' },
-    'junos-ocsp':     { protocol: 'tcp', port: '80', alias: 'custom-ocsp' },
-    'junos-quic':     { protocol: 'udp', port: '443', alias: 'custom-quic' },
-    'junos-imap':     { protocol: 'tcp', port: '143', alias: 'custom-imap' },
-    'junos-imaps':    { protocol: 'tcp', port: '993', alias: 'custom-imaps' },
-    'junos-pop3':     { protocol: 'tcp', port: '110', alias: 'custom-pop3' },
-    'junos-pop3s':    { protocol: 'tcp', port: '995', alias: 'custom-pop3s' },
-  };
-
-  // Check against predefined Junos apps — but always define platform-dependent ones
-  const missing = [];
-  for (const app of referencedApps) {
-    if (definedApps.has(app)) continue;
-    if (PLATFORM_DEPENDENT_APPS[app]) {
-      missing.push(app); // Always generate — may not exist on target
-      continue;
-    }
-    // Standard predefined apps are always available — no custom definition needed
-    if (JUNOS_PREDEFINED_APPS.has(app)) continue;
-    // For any junos-* app not in our known list and not a standard predefined,
-    // still generate a custom definition since vSRX and older platforms may lack it
-    if (app.startsWith('junos-')) {
-      missing.push(app);
-      continue;
-    }
-    missing.push(app);
-  }
-
-  if (missing.length === 0) return;
-
-  // Find insertion point: before the first policy command (so definitions come first)
-  // Or append at end before unsupported notices
-  const insertionCmds = [];
-  insertionCmds.push('# =============================================');
-  insertionCmds.push('# Auto-generated Missing Application Definitions');
-  insertionCmds.push('# (referenced in policies but not yet defined)');
-  insertionCmds.push('# =============================================');
-
-  for (const appName of missing) {
-    // Check platform-dependent junos-* apps first (known port mappings)
-    // Use alias name since 'junos-' prefix is reserved on Junos
-    const platformApp = PLATFORM_DEPENDENT_APPS[appName];
-    if (platformApp) {
-      const defName = platformApp.alias || appName;
-      insertionCmds.push(`set applications application ${defName} protocol ${platformApp.protocol}`);
-      insertionCmds.push(`set applications application ${defName} destination-port ${platformApp.port}`);
-      // Replace all references to the original name with the alias in existing commands
-      for (let i = 0; i < commands.length; i++) {
-        if (commands[i].includes(appName)) {
-          commands[i] = commands[i].replaceAll(appName, defName);
-        }
-      }
-      continue;
-    }
-    // Catch-all for unknown junos-* apps — create custom alias with TCP/1 placeholder
-    if (appName.startsWith('junos-')) {
-      const alias = appName.replace('junos-', 'custom-');
-      insertionCmds.push(`# ${appName} not available on target platform — using placeholder`);
-      insertionCmds.push(`set applications application ${alias} protocol tcp`);
-      insertionCmds.push(`set applications application ${alias} destination-port 1`);
-      insertionCmds.push(`set applications application ${alias} description "Placeholder for ${appName}"`);
-      for (let i = 0; i < commands.length; i++) {
-        if (commands[i].includes(appName)) {
-          commands[i] = commands[i].replaceAll(appName, alias);
-        }
-      }
-      continue;
-    }
-    // Try to infer protocol/port from name
-    // Pattern 1: explicit proto-port like "tcp-8080", "udp-53"
-    const protoPortMatch = appName.match(/^(tcp|udp|sctp)-(\d[\d-]*)$/i);
-    // Pattern 2: short name like "n-993", "n-587" → infer TCP + port
-    const shortNameMatch = !protoPortMatch && appName.match(/^[a-zA-Z]-(\d+)$/);
-    // Pattern 3: descriptive name ending with port like "NAS-Web-Admin-5000" → infer TCP + trailing port
-    const trailingPortMatch = !protoPortMatch && !shortNameMatch && appName.match(/-(\d+)$/);
-
-    if (protoPortMatch) {
-      const proto = protoPortMatch[1].toLowerCase();
-      const port = protoPortMatch[2];
-      insertionCmds.push(`set applications application ${appName} protocol ${proto}`);
-      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
-    } else if (shortNameMatch) {
-      const port = shortNameMatch[1];
-      insertionCmds.push(`set applications application ${appName} protocol tcp`);
-      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
-    } else if (trailingPortMatch) {
-      const port = trailingPortMatch[1];
-      insertionCmds.push(`set applications application ${appName} protocol tcp`);
-      insertionCmds.push(`set applications application ${appName} destination-port ${port}`);
-    } else {
-      insertionCmds.push(`# WARNING: "${appName}" — could not infer port, set to placeholder`);
-      insertionCmds.push(`set applications application ${appName} protocol tcp`);
-      insertionCmds.push(`set applications application ${appName} destination-port 1`);
-      insertionCmds.push(`set applications application ${appName} description "Placeholder - REQUIRES MANUAL CONFIGURATION"`);
-    }
-  }
-  insertionCmds.push('');
-
-  // Insert before the first policy command so definitions precede references
-  const firstPolicyIdx = commands.findIndex(cmd => cmd.includes('security policies'));
-  if (firstPolicyIdx >= 0) {
-    commands.splice(firstPolicyIdx, 0, ...insertionCmds);
-  } else {
-    commands.push(...insertionCmds);
   }
 }
 
@@ -1331,14 +1182,18 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, i
 
     for (const [pType, pValue] of Object.entries(combo.profiles)) {
       const mapped = mapProfileToSrx(pType, pValue);
-      const profileName = ['utm', 'appfw'].includes(mapped.srxFeature)
+      const defKey = `${pType}:${pValue}`;
+      const profileDef = profileDefs[defKey];
+      const emitsDnsRule = mapped.srxType === 'dns-security'
+        && (profileDef?.blockedDomains || []).length > 0;
+      const hasCatalogedProfile = mapped.srxFeature === 'appfw'
+        || (mapped.srxFeature === 'utm'
+          && (mapped.srxType !== 'dns-security' || emitsDnsRule));
+      const profileName = hasCatalogedProfile
         ? identifiers.nameForReference(
           identifierPath(`security_policies[${ownerIndex}].security_profiles.${pType}`),
         )
         : mapped.srxProfile;
-
-      const defKey = `${pType}:${pValue}`;
-      const profileDef = profileDefs[defKey];
 
       // AppFW: generate actual rule-set if we have category data
       if (mapped.srxFeature === 'appfw') {
@@ -1984,17 +1839,48 @@ const commaPortSetMap = new Map();
  */
 const predefServiceMap = new Map();
 
+function generatedRole(entry) {
+  const marker = '#generated:';
+  const markerIndex = entry?.definitionPath?.lastIndexOf(marker) ?? -1;
+  return markerIndex < 0 ? null : entry.definitionPath.slice(markerIndex + marker.length);
+}
+
+function generatedOwnerPath(entry) {
+  const marker = '#generated:';
+  const markerIndex = entry?.definitionPath?.lastIndexOf(marker) ?? -1;
+  return markerIndex < 0 ? null : entry.definitionPath.slice(0, markerIndex);
+}
+
 function planApplicationUse(appName, referencePath, warnings, warningElement, sourceVendor, identifiers) {
   const plannedName = identifiers.nameForReference(referencePath);
   const mappingEntry = identifiers.mapping.entries.find(entry => (
     entry.referencePaths.includes(referencePath)
   ));
   if (!mappingEntry) return plannedName;
-  if (!mappingEntry.resolution.startsWith('generated')
-      && !mappingEntry.resolution.startsWith('unresolved')) return plannedName;
+  if (!mappingEntry.resolution.startsWith('generated')) return plannedName;
 
-  const isSrxSource = ['srx', 'greenfield', 'srx_healthcheck'].includes(sourceVendor);
-  if (isSrxSource || mapAppToJunos(appName, sourceVendor)) return plannedName;
+  const role = generatedRole(mappingEntry);
+  const ownerPath = generatedOwnerPath(mappingEntry);
+  if (['service-multi-port-set', 'application-multi-port-set'].includes(role)) {
+    return plannedName;
+  }
+  if (role === 'passthrough-application') {
+    unresolvedServiceApps.set(plannedName, appName);
+    return plannedName;
+  }
+  if (role === 'unmapped-application') {
+    unmappedApps.set(plannedName, appName);
+    warnings.push(createWarning(
+      'warning',
+      warningElement,
+      `Application "${appName}" has no known Junos equivalent — listed in INTERVIEW REQUIRED block`,
+      'Provide the correct protocol/port(s) for this application and replace the <name>-UNMAPPED placeholder.',
+    ));
+    return plannedName;
+  }
+  if (!['custom-application', 'custom-application-set'].includes(role) || !ownerPath) {
+    return plannedName;
+  }
 
   const emission = getJunosEmission(appName, sourceVendor);
   if (emission?.kind === 'custom') {
@@ -2006,25 +1892,12 @@ function planApplicationUse(appName, referencePath, warnings, warningElement, so
       subNames: new Map(emission.ports.map(port => [
         String(port),
         emission.ports.length > 1
-          ? identifiers.mapping.entries.find(entry => (
-            entry.sourceName === `${appName}:port:${port}`
-            && entry.kind === 'application'
-            && entry.resolution.startsWith('generated')
-          ))?.outputName
-            ?? identifiers.nameForGenerated(referencePath, `custom-application-port:${port}`)
+          ? identifiers.nameForGenerated(ownerPath, `custom-application-port:${port}`)
           : plannedName,
       ])),
     });
     return plannedName;
   }
-
-  unmappedApps.set(plannedName, appName);
-  warnings.push(createWarning(
-    'warning',
-    warningElement,
-    `Application "${appName}" has no known Junos equivalent — listed in INTERVIEW REQUIRED block`,
-    'Provide the correct protocol/port(s) for this application and replace the <name>-UNMAPPED placeholder.',
-  ));
   return plannedName;
 }
 
@@ -2204,12 +2077,13 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects, 
   }
 
   const natRuleIndex = new Map(natRules.map((rule, index) => [rule, index]));
-  const sourceZonesFor = rule => (rule.src_zones?.length > 0 ? rule.src_zones : ['any']);
-  const destinationZonesFor = rule => (rule.dst_zones?.length > 0 ? rule.dst_zones : ['any']);
+  const sourceZonesFor = natSourceZones;
+  const destinationZonesFor = natDestinationZones;
   const typesFor = rule => (rule.type === 'source-and-destination'
     ? ['source', 'destination'] : [rule.type || 'source']);
   const zoneReference = (ruleIndex, rule, direction, zone) => {
-    const field = direction === 'source' ? 'src_zones' : 'dst_zones';
+    const field = direction === 'source'
+      ? natSourceZoneField(rule) : natDestinationZoneField(rule);
     const values = direction === 'source' ? sourceZonesFor(rule) : destinationZonesFor(rule);
     const index = values.indexOf(zone);
     const localPath = rule[field]?.length > 0
@@ -2303,8 +2177,7 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects, 
     // Group by zone pair for SRX rule-sets
     const ruleSetGroups = groupByZonePair(sourceNatRules);
 
-    for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
-      const [fromZone, toZone] = zonePair.split('->');
+    for (const { fromZone, toZone, rules } of ruleSetGroups) {
       // Fix 5: NAT rule-sets cannot use 'any' as zone — replace with actual zones
       const { name: ruleSetName } = ruleSetInfo('source', fromZone, toZone);
       const ruleSetPath = `security nat source rule-set ${ruleSetName}`;
@@ -2444,8 +2317,7 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects, 
   if (destNatRules.length > 0) {
     const ruleSetGroups = groupByZonePair(destNatRules);
 
-    for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
-      const [fromZone, toZone] = zonePair.split('->');
+    for (const { fromZone, toZone, rules } of ruleSetGroups) {
       const { name: ruleSetName } = ruleSetInfo('destination', fromZone, toZone);
       const ruleSetPath = `security nat destination rule-set ${ruleSetName}`;
       const zoneRule = rules[0];
@@ -4485,17 +4357,40 @@ function convertFlowMonitoringConfig(flowConfig, commands, warnings, summary, in
  * Groups NAT rules by source-zone → destination-zone pair.
  * SRX organizes NAT rules into rule-sets per zone pair.
  */
-function groupByZonePair(rules) {
-  const groups = {};
-  for (const rule of rules) {
-    const fromZones = rule.src_zones.length > 0 ? rule.src_zones : ['any'];
-    const toZones = rule.dst_zones.length > 0 ? rule.dst_zones : ['any'];
+function natSourceZoneField(rule) {
+  return rule.src_zones !== undefined ? 'src_zones' : 'source_zones';
+}
 
-    for (const from of fromZones) {
-      for (const to of toZones) {
-        const key = `${from}->${to}`;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(rule);
+function natDestinationZoneField(rule) {
+  return rule.dst_zones !== undefined ? 'dst_zones' : 'destination_zones';
+}
+
+function natSourceZones(rule) {
+  const zones = rule.src_zones ?? rule.source_zones;
+  return Array.isArray(zones) && zones.length > 0 ? zones : ['any'];
+}
+
+function natDestinationZones(rule) {
+  const zones = rule.dst_zones ?? rule.destination_zones;
+  return Array.isArray(zones) && zones.length > 0 ? zones : ['any'];
+}
+
+function groupByZonePair(rules) {
+  const groups = [];
+  for (const rule of rules) {
+    const fromZones = natSourceZones(rule);
+    const toZones = natDestinationZones(rule);
+
+    for (const fromZone of fromZones) {
+      for (const toZone of toZones) {
+        let group = groups.find(item => (
+          item.fromZone === fromZone && item.toZone === toZone
+        ));
+        if (!group) {
+          group = { fromZone, toZone, rules: [] };
+          groups.push(group);
+        }
+        group.rules.push(rule);
       }
     }
   }

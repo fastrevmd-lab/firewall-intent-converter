@@ -314,8 +314,9 @@ function addApplicationReference(
   });
 }
 
-function suffixPreservingApplicationName(sourceName, suffix = '') {
-  let preferred = sanitizeJunosName(sourceName).replace(/\./g, '-');
+function suffixPreservingApplicationName(sourceName, suffix = '', { replacePeriods = true } = {}) {
+  let preferred = sanitizeJunosName(sourceName);
+  if (replacePeriods) preferred = preferred.replace(/\./g, '-');
   if (/^\d/.test(preferred)) preferred = `app-${preferred}`;
   const baseLength = Math.max(1, 63 - suffix.length);
   return `${preferred.slice(0, baseLength)}${suffix}`.slice(0, 63);
@@ -569,7 +570,11 @@ function collectApplications(config, state) {
   function addCommaPortItem(item, rootPath, kind, index, port) {
     const ownerPath = joinedPath(prefix, `${rootPath}[${index}]`);
     const setIdentity = `${item.name}:set`;
-    const setName = suffixPreservingApplicationName(item.name, '-set');
+    const setName = suffixPreservingApplicationName(
+      item.name,
+      '-set',
+      { replacePeriods: false },
+    );
     applicationAliases.set(item.name, {
       bindingSourceName: setIdentity,
       compatibleKinds: ['application-set'],
@@ -594,7 +599,9 @@ function collectApplications(config, state) {
         kind: 'application',
         sourceName: `${item.name}:port:${part}`,
         preferredOutputName: suffixPreservingApplicationName(
-          item.name, `-${part.replace('-', 'to')}`,
+          item.name,
+          `-${part.replace('-', 'to')}`,
+          { replacePeriods: false },
         ),
         definitionPath: ownerPath,
         role: `${kind}-port:${part}`,
@@ -750,6 +757,11 @@ function collectSecurityProfiles(config, state) {
       } else if (mapped.srxFeature === 'utm' && mapped.srxType === 'anti-spam') {
         namespace = 'utm-anti-spam-profile';
         kind = 'anti-spam-profile';
+      } else if (mapped.srxFeature === 'utm' && mapped.srxType === 'dns-security') {
+        const definition = config.security_profile_definitions?.[`${type}:${value}`];
+        if (!(definition?.blockedDomains || []).length) continue;
+        namespace = 'dns-filtering-rule';
+        kind = 'dns-filtering-rule';
       } else if (mapped.srxFeature === 'appfw') {
         const definition = config.security_profile_definitions?.[`${type}:${value}`];
         const blocked = Object.entries(definition?.categories || {})
