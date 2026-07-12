@@ -2,7 +2,7 @@
   "name": "firewall-policy-converter",
   "version": "1.2.0",
   "description": "Professional firewall configuration conversion tool — PAN-OS to Juniper SRX",
-  "license": "MIT",
+  "license": "(MIT OR Apache-2.0)",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
