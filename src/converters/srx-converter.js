@@ -29,6 +29,7 @@ import {
   setToken,
 } from '../security/junos-serialization.js';
 import { validateJunosInput } from '../security/junos-input-validation.js';
+import { planJunosIdentifiers } from '../security/junos-identifiers.js';
 import { validateSetOutput } from '../security/junos-output-validation.js';
 
 /**
@@ -54,41 +55,6 @@ function serializeSetComments(commands) {
   }
 }
 
-/**
- * Generates a descriptive rule name from policy content when the original
- * name is generic (e.g., "Rule-1", "policy_23") or missing.
- * Pattern: {action}-{srcZone}-to-{dstZone}-{primaryApp}-{index}
- */
-function generateDescriptiveName(policy, pIdx) {
-  const name = policy.name || '';
-
-  // Only generate if name looks generic
-  const isGeneric = !name ||
-    /^(rule|policy|permit|deny)[-_]?\d+$/i.test(name) ||
-    /^\d+$/.test(name);
-
-  if (!isGeneric) return sanitizeJunosName(name);
-
-  const action = (policy.action === 'allow' || policy.action === 'permit') ? 'permit' : 'deny';
-  const srcZ = (policy.src_zones?.[0] || 'any').toLowerCase();
-  const dstZ = (policy.dst_zones?.[0] || 'any').toLowerCase();
-
-  let appHint = '';
-  if (policy.applications?.length > 0 && policy.applications[0] !== 'any') {
-    appHint = policy.applications[0].toLowerCase().replace(/^junos-/, '');
-  } else if (policy.services?.length > 0 && policy.services[0] !== 'any') {
-    appHint = policy.services[0].toLowerCase();
-  }
-
-  const parts = [action, srcZ, 'to', dstZ];
-  if (appHint) parts.push(appHint);
-
-  let generated = parts.join('-');
-  generated = sanitizeJunosName(generated);
-
-  return `${generated}-${pIdx + 1}`;
-}
-
 // ---------------------------------------------------------------------------
 // Main Converter Entry Point
 // ---------------------------------------------------------------------------
@@ -98,9 +64,11 @@ function generateDescriptiveName(policy, pIdx) {
  *
  * @param {Object} config - Intermediate JSON config from the parser
  * @param {Object} [interfaceMappings] - User-defined PAN-OS → SRX interface mappings
- * @returns {{ commands: string[], warnings: Object[], summary: Object }}
+ * @param {Object|null} [targetContext] - Optional logical-system or tenant wrapper
+ * @param {Object} [options] - Internal identifier-plan/path options for composed conversion
+ * @returns {{ commands: string[], warnings: Object[], summary: Object, identifierMappings: Object }}
  */
-export function convertToSrxSetCommands(config, interfaceMappings = {}, targetContext = null) {
+export function convertToSrxSetCommands(config, interfaceMappings = {}, targetContext = null, options = {}) {
   validateJunosInput(config);
   validateJunosInput(interfaceMappings, 'interfaceMappings');
   for (const [sourceName, mappedName] of Object.entries(interfaceMappings)) {
@@ -114,9 +82,13 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     }
   }
 
+  const identifiers = options.identifierPlan || planJunosIdentifiers(config, { targetContext });
+  const identifierPath = localPath => `${options.pathPrefix || ''}${localPath}`;
+  const targetContextPath = options.targetContextPath || 'targetContext.name';
   const commands = [];
-  const warnings = [];
+  const warnings = [...identifiers.warnings];
   const summary = {
+    identifier_collisions_resolved: identifiers.collisionCount,
     zones_converted: 0,
     addresses_converted: 0,
     address_groups_converted: 0,
@@ -154,36 +126,43 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
 
   // Generate commands in Junos hierarchy order
   convertSystemConfig(config.system_config, commands, warnings, summary);
-  convertZones(config.zones, commands, warnings, summary, interfaceMappings);
+  convertZones(config.zones, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
   convertInterfaceAddresses(config.interfaces, commands, warnings, summary, interfaceMappings);
   ensureZoneInterfaceFamilies(config.zones, config.interfaces, commands, interfaceMappings);
   convertLagInterfaces(config.lag_interfaces, commands, warnings, summary, interfaceMappings);
-  convertAddressObjects(config.address_objects, commands, warnings, summary);
+  convertAddressObjects(config.address_objects, commands, warnings, summary, identifiers, identifierPath);
   // Detect source vendor for 1:1 passthrough (SRX→SRX needs no app mapping)
   const sourceVendor = config.metadata?.source_vendor || '';
 
-  convertAddressGroups(config.address_groups, commands, warnings, summary);
-  convertServiceObjects(config.service_objects, commands, warnings, summary);
-  convertServiceGroups(config.service_groups, commands, warnings, summary, sourceVendor);
-  convertApplications(config.applications, commands, warnings, summary);
+  convertAddressGroups(config.address_groups, commands, warnings, summary, identifiers, identifierPath);
+  convertServiceObjects(config.service_objects, commands, warnings, summary, identifiers, identifierPath);
+  convertServiceGroups(config.service_groups, commands, warnings, summary, sourceVendor, identifiers, identifierPath);
+  convertApplications(config.applications, commands, warnings, summary, identifiers, identifierPath);
 
   // UTM / IDP / SecIntel — must run before security policies to build assignment maps
   const profileDefs = config.security_profile_definitions || {};
-  const { utmCommands, utmPolicyMap } = convertUtmPolicies(config.security_policies, warnings, profileDefs);
-  const { idpCommands, idpPolicyMap } = convertIdpPolicies(config.security_policies, warnings, profileDefs);
-  const { secIntelCommands, secIntelEnabled } = convertSecIntel(config.external_lists, config.security_policies, warnings);
+  const { utmCommands, utmPolicyMap } = convertUtmPolicies(config.security_policies, warnings, profileDefs, identifiers, identifierPath);
+  const { idpCommands, idpPolicyMap } = convertIdpPolicies(config.security_policies, warnings, profileDefs, identifiers, identifierPath);
+  const { secIntelCommands, secIntelEnabled, secIntelPolicyName } = convertSecIntel(config.external_lists, config.security_policies, warnings, identifiers, identifierPath);
 
   commands.push(...utmCommands);
   commands.push(...idpCommands);
   commands.push(...secIntelCommands);
 
-  convertSchedules(config.schedules, commands, warnings);
+  convertSchedules(config.schedules, commands, warnings, identifiers, identifierPath);
+  prepareApplicationGroupApplications(
+    config.application_groups,
+    warnings,
+    sourceVendor,
+    identifiers,
+    identifierPath,
+  );
 
   // Run policy conversion into a temp buffer to populate unmappedApps/concreteCustomApps,
   // then emit application definitions BEFORE emitting the policy commands.
   // This ensures all custom applications are defined before policies reference them.
   const policyCommands = [];
-  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled }, config.application_groups, sourceVendor, config._rule_groups);
+  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath);
 
   // Tier 2 emission: concrete custom applications (known ports from canonical data)
   if (concreteCustomApps.size > 0) {
@@ -191,7 +170,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     commands.push('# Custom Applications (auto-generated from app-mappings canonical data)');
     commands.push('# =============================================');
     for (const [customName, info] of concreteCustomApps) {
-      const { protocol, ports, originalName, canonical } = info;
+      const { protocol, ports, originalName, canonical, subNames } = info;
       if (ports.length === 1) {
         commands.push(`set applications application ${customName} protocol ${protocol}`);
         commands.push(`set applications application ${customName} destination-port ${ports[0]}`);
@@ -200,12 +179,12 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
         // Multi-port: customName becomes an application-set composed of per-port sub-apps
         commands.push(`# ${originalName} (canonical: ${canonical})`);
         for (const port of ports) {
-          const subName = `${customName}-p${port}`;
+          const subName = subNames.get(String(port));
           commands.push(`set applications application ${subName} protocol ${protocol}`);
           commands.push(`set applications application ${subName} destination-port ${port}`);
         }
         for (const port of ports) {
-          const subName = `${customName}-p${port}`;
+          const subName = subNames.get(String(port));
           commands.push(`set applications application-set ${customName} application ${subName}`);
         }
       }
@@ -277,7 +256,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     commands.push('set security policies default-policy permit-all');
   }
 
-  convertNatRules(config.nat_rules, commands, warnings, summary, config.address_objects);
+  convertNatRules(config.nat_rules, commands, warnings, summary, config.address_objects, identifiers, identifierPath);
   convertStaticRoutes(config.static_routes, commands, warnings, summary);
   convertBgpConfig(config.bgp_config, commands, warnings, summary);
   convertOspfConfig(config.ospf_config, commands, warnings, summary, interfaceMappings);
@@ -320,7 +299,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // Logical-system / tenant wrapping
   const ctx = targetContext || config.target_context;
   if (ctx && ctx.type && ctx.type !== 'none' && ctx.name) {
-    const ctxName = sanitizeJunosName(ctx.name);
+    const ctxName = identifiers.nameForDefinition(targetContextPath);
     const prefix = ctx.type === 'logical-system'
       ? `logical-systems ${ctxName}`
       : `tenants ${ctxName}`;
@@ -337,7 +316,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
 
   serializeSetComments(commands);
   validateSetOutput(commands);
-  return { commands, warnings, summary };
+  return { commands, warnings, summary, identifierMappings: identifiers.mapping };
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +380,7 @@ function convertSystemConfig(systemConfig, commands, warnings, summary) {
 // Zone Converter
 // ---------------------------------------------------------------------------
 
-function convertZones(zones, commands, warnings, summary, interfaceMappings = {}) {
+function convertZones(zones, commands, warnings, summary, interfaceMappings = {}, identifiers, identifierPath) {
   if (!zones || zones.length === 0) return;
 
   commands.push('# =============================================');
@@ -411,8 +390,9 @@ function convertZones(zones, commands, warnings, summary, interfaceMappings = {}
   // Track which interfaces are already assigned to a zone (Junos: one zone per interface)
   const assignedInterfaces = new Map(); // srxIface → zoneName
 
-  for (const zone of zones) {
-    const zoneName = sanitizeJunosName(zone.name);
+  for (let zoneIndex = 0; zoneIndex < zones.length; zoneIndex += 1) {
+    const zone = zones[zoneIndex];
+    const zoneName = identifiers.nameForDefinition(identifierPath(`zones[${zoneIndex}].name`));
     commands.push(`set security zones security-zone ${zoneName}`);
 
     // Add interfaces to zone
@@ -949,15 +929,16 @@ function convertLagInterfaces(lagInterfaces, commands, warnings, summary, interf
 // Address Object Converter
 // ---------------------------------------------------------------------------
 
-function convertAddressObjects(objects, commands, warnings, summary) {
+function convertAddressObjects(objects, commands, warnings, summary, identifiers, identifierPath) {
   if (!objects || objects.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# Address Book (Global)');
   commands.push('# =============================================');
 
-  for (const obj of objects) {
-    const name = sanitizeJunosName(obj.name);
+  for (let objectIndex = 0; objectIndex < objects.length; objectIndex += 1) {
+    const obj = objects[objectIndex];
+    const name = identifiers.nameForDefinition(identifierPath(`address_objects[${objectIndex}].name`));
 
     // Fix 6: Check all field variants for IP value (SonicWall uses subnet/network/address)
     const addrValue = obj.value || obj.ip || obj.network || obj.subnet || obj.address;
@@ -1071,7 +1052,7 @@ function convertAddressObjects(objects, commands, warnings, summary) {
 // Address Group Converter
 // ---------------------------------------------------------------------------
 
-function convertAddressGroups(groups, commands, warnings, summary) {
+function convertAddressGroups(groups, commands, warnings, summary, identifiers, identifierPath) {
   if (!groups || groups.length === 0) return;
 
   commands.push('# =============================================');
@@ -1080,16 +1061,20 @@ function convertAddressGroups(groups, commands, warnings, summary) {
 
   const groupNameSet = new Set(groups.map(g => g.name));
 
-  for (const group of groups) {
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex];
+    const groupName = identifiers.nameForDefinition(identifierPath(`address_groups[${groupIndex}].name`));
     if (group._dynamic) {
       commands.push(`# UNSUPPORTED: Dynamic address group "${group.name}" — SRX does not support tag-based dynamic groups`);
       commands.push(`# Define members statically or use SRX address-book with feed servers`);
       continue;
     }
-    const groupName = sanitizeJunosName(group.name);
 
-    for (const member of group.members) {
-      const memberName = sanitizeJunosName(member);
+    for (let memberIndex = 0; memberIndex < group.members.length; memberIndex += 1) {
+      const member = group.members[memberIndex];
+      const memberName = identifiers.nameForReference(
+        identifierPath(`address_groups[${groupIndex}].members[${memberIndex}]`),
+      );
       if (groupNameSet.has(member)) {
         commands.push(`set security address-book global address-set ${groupName} address-set ${memberName}`);
       } else {
@@ -1111,7 +1096,7 @@ function convertAddressGroups(groups, commands, warnings, summary) {
 // Service Object Converter → SRX Applications
 // ---------------------------------------------------------------------------
 
-function convertServiceObjects(services, commands, warnings, summary) {
+function convertServiceObjects(services, commands, warnings, summary, identifiers, identifierPath) {
   if (!services || services.length === 0) return;
 
   predefServiceMap.clear();
@@ -1120,8 +1105,8 @@ function convertServiceObjects(services, commands, warnings, summary) {
   commands.push('# Applications (from Service Objects)');
   commands.push('# =============================================');
 
-  for (const svc of services) {
-    const name = sanitizeJunosName(svc.name);
+  for (let serviceIndex = 0; serviceIndex < services.length; serviceIndex += 1) {
+    const svc = services[serviceIndex];
     const protocol = svc.protocol || 'tcp';
     const port = svc.port_range || '';
 
@@ -1129,11 +1114,25 @@ function convertServiceObjects(services, commands, warnings, summary) {
     const predefApp = isPredefEquivalent(svc.name, protocol, port);
     if (predefApp) {
       predefServiceMap.set(svc.name, predefApp);
-      predefServiceMap.set(name, predefApp);
       commands.push(`# Skipped: "${svc.name}" (${protocol}/${port}) → predefined ${predefApp}`);
       summary.services_converted++;
       continue;
     }
+
+    if (!port && !['icmp', 'icmp6'].includes(protocol)
+        && !(protocol === 'ip' && svc.protocol_number)) {
+      commands.push(`# WARNING: Service "${svc.name}" has no port defined — skipping`);
+      warnings.push(createWarning('warning', `service/${svc.name}`,
+        `Service "${svc.name}" has no port range defined`,
+        'Define the port range for this service'));
+      continue;
+    }
+
+    const ownerPath = identifierPath(`service_objects[${serviceIndex}]`);
+    const multiPort = port.includes(',');
+    const name = multiPort
+      ? identifiers.nameForGenerated(ownerPath, 'service-multi-port-set')
+      : identifiers.nameForDefinition(identifierPath(`service_objects[${serviceIndex}].name`));
 
     if (protocol === 'icmp' || protocol === 'icmp6') {
       // ICMP services use icmp-type/icmp-code instead of destination-port
@@ -1149,30 +1148,20 @@ function convertServiceObjects(services, commands, warnings, summary) {
       commands.push(`set applications application ${name} protocol ${svc.protocol_number}`);
     } else {
       // TCP/UDP/SCTP — require port
-      if (!port) {
-        commands.push(`# WARNING: Service "${svc.name}" has no port defined — skipping`);
-        warnings.push(createWarning('warning', `service/${name}`,
-          `Service "${svc.name}" has no port range defined`,
-          'Define the port range for this service'));
-        continue;
-      }
-
       // Bug 2 fix: Junos destination-port does not accept comma-separated discrete
       // ports (e.g., "443,8443"). Split into individual applications and wrap in an
       // application-set so policies can reference the set by the original name.
       if (port.includes(',')) {
-        // Fix 2: Append -set suffix to application-set name to avoid name conflict
-        const setName = `${name}-set`;
+        const setName = name;
         commaPortSetMap.set(svc.name, setName);
-        commaPortSetMap.set(name, setName);
-        const portParts = port.split(',').map(p => p.trim());
+        const portParts = [...new Set(port.split(',').map(p => p.trim()))].sort();
         for (const part of portParts) {
-          const subName = `${name}-${part.replace('-', 'to')}`;
+          const subName = identifiers.nameForGenerated(ownerPath, `service-port:${part}`);
           commands.push(`set applications application ${subName} protocol ${protocol}`);
           commands.push(`set applications application ${subName} destination-port ${part}`);
         }
         for (const part of portParts) {
-          const subName = `${name}-${part.replace('-', 'to')}`;
+          const subName = identifiers.nameForGenerated(ownerPath, `service-port:${part}`);
           commands.push(`set applications application-set ${setName} application ${subName}`);
         }
       } else {
@@ -1186,7 +1175,8 @@ function convertServiceObjects(services, commands, warnings, summary) {
     }
 
     if (svc.description) {
-      commands.push(`set applications application ${name} description ${setQuoted(svc.description, 'service_objects.description')}`);
+      const hierarchy = multiPort ? 'application-set' : 'application';
+      commands.push(`set applications ${hierarchy} ${name} description ${setQuoted(svc.description, 'service_objects.description')}`);
     }
 
     summary.services_converted++;
@@ -1199,7 +1189,7 @@ function convertServiceObjects(services, commands, warnings, summary) {
 // Service Group Converter → SRX Application Sets
 // ---------------------------------------------------------------------------
 
-function convertServiceGroups(groups, commands, warnings, summary, sourceVendor = '') {
+function convertServiceGroups(groups, commands, warnings, summary, sourceVendor = '', identifiers, identifierPath) {
   if (!groups || groups.length === 0) return;
 
   commands.push('# =============================================');
@@ -1208,20 +1198,19 @@ function convertServiceGroups(groups, commands, warnings, summary, sourceVendor 
 
   const groupNameSet = new Set(groups.map(g => g.name));
 
-  for (const group of groups) {
-    const groupName = sanitizeJunosName(group.name);
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex];
+    const groupName = identifiers.nameForDefinition(identifierPath(`service_groups[${groupIndex}].name`));
 
-    for (const member of group.members) {
-      // Check if member maps to a predefined Junos app
-      const predefName = predefServiceMap.get(member);
-      // Also try mapAppToJunos for uppercase names (HTTP→junos-http)
-      const mappedName = predefName || mapAppToJunos(member, sourceVendor);
-      if (mappedName) {
-        commands.push(`set applications application-set ${groupName} application ${mappedName}`);
-      } else if (groupNameSet.has(member)) {
-        commands.push(`set applications application-set ${groupName} application-set ${sanitizeJunosName(member)}`);
+    for (let memberIndex = 0; memberIndex < group.members.length; memberIndex += 1) {
+      const member = group.members[memberIndex];
+      const memberName = identifiers.nameForReference(
+        identifierPath(`service_groups[${groupIndex}].members[${memberIndex}]`),
+      );
+      if (groupNameSet.has(member)) {
+        commands.push(`set applications application-set ${groupName} application-set ${memberName}`);
       } else {
-        commands.push(`set applications application-set ${groupName} application ${sanitizeJunosName(member)}`);
+        commands.push(`set applications application-set ${groupName} application ${memberName}`);
       }
     }
 
@@ -1235,35 +1224,38 @@ function convertServiceGroups(groups, commands, warnings, summary, sourceVendor 
 // Custom Application Converter
 // ---------------------------------------------------------------------------
 
-function convertApplications(apps, commands, warnings, summary) {
+function convertApplications(apps, commands, warnings, summary, identifiers, identifierPath) {
   if (!apps || apps.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# Custom Applications');
   commands.push('# =============================================');
 
-  for (const app of apps) {
-    const name = sanitizeJunosName(app.name);
-
+  for (let applicationIndex = 0; applicationIndex < apps.length; applicationIndex += 1) {
+    const app = apps[applicationIndex];
     if (!app.protocol || !app.port) {
       commands.push(`# INTERVIEW REQUIRED: Custom application "${app.name}" needs protocol/port definition`);
       continue;
     }
 
+    const ownerPath = identifierPath(`applications[${applicationIndex}]`);
+    const multiPort = app.port.includes(',');
+    const name = multiPort
+      ? identifiers.nameForGenerated(ownerPath, 'application-multi-port-set')
+      : identifiers.nameForDefinition(identifierPath(`applications[${applicationIndex}].name`));
+
     // Bug 2 fix: handle comma-separated discrete ports in custom apps too
     if (app.port.includes(',')) {
-      // Fix 2: Append -set suffix to application-set name to avoid name conflict
-      const setName = `${name}-set`;
+      const setName = name;
       commaPortSetMap.set(app.name, setName);
-      commaPortSetMap.set(name, setName);
-      const portParts = app.port.split(',').map(p => p.trim());
+      const portParts = [...new Set(app.port.split(',').map(p => p.trim()))].sort();
       for (const part of portParts) {
-        const subName = `${name}-${part.replace('-', 'to')}`;
+        const subName = identifiers.nameForGenerated(ownerPath, `application-port:${part}`);
         commands.push(`set applications application ${subName} protocol ${app.protocol}`);
         commands.push(`set applications application ${subName} destination-port ${part}`);
       }
       for (const part of portParts) {
-        const subName = `${name}-${part.replace('-', 'to')}`;
+        const subName = identifiers.nameForGenerated(ownerPath, `application-port:${part}`);
         commands.push(`set applications application-set ${setName} application ${subName}`);
       }
     } else {
@@ -1272,7 +1264,8 @@ function convertApplications(apps, commands, warnings, summary) {
     }
 
     if (app.description) {
-      commands.push(`set applications application ${name} description ${setQuoted(app.description, 'applications.description')}`);
+      const hierarchy = multiPort ? 'application-set' : 'application';
+      commands.push(`set applications ${hierarchy} ${name} description ${setQuoted(app.description, 'applications.description')}`);
     }
   }
 
@@ -1291,7 +1284,7 @@ function convertApplications(apps, commands, warnings, summary) {
  * Returns { utmCommands, utmPolicyMap } where utmPolicyMap maps
  * rule name → utm-policy name for attachment in convertSecurityPolicies.
  */
-function convertUtmPolicies(policies, warnings, profileDefs = {}) {
+function convertUtmPolicies(policies, warnings, profileDefs = {}, identifiers, identifierPath) {
   const utmCommands = [];
   const utmPolicyMap = {};
   if (!policies || policies.length === 0) return { utmCommands, utmPolicyMap };
@@ -1301,9 +1294,8 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
 
   // Collect unique UTM profile combinations per rule
   const comboMap = new Map(); // serialized combo → { profiles, policyName, rules[] }
-  let comboIndex = 0;
-
-  for (const policy of policies) {
+  for (let policyIndex = 0; policyIndex < policies.length; policyIndex += 1) {
+    const policy = policies[policyIndex];
     const sp = policy.security_profiles || {};
     const utmProfiles = {};
     for (const t of utmTypes) {
@@ -1313,11 +1305,9 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
 
     const key = JSON.stringify(utmProfiles);
     if (!comboMap.has(key)) {
-      comboIndex++;
-      comboMap.set(key, { profiles: utmProfiles, policyName: `utm-policy-${comboIndex}`, rules: [] });
+      comboMap.set(key, { profiles: utmProfiles, policyIndexes: [] });
     }
-    comboMap.get(key).rules.push(policy.name);
-    utmPolicyMap[policy.name] = comboMap.get(key).policyName;
+    comboMap.get(key).policyIndexes.push(policyIndex);
   }
 
   if (comboMap.size === 0) return { utmCommands, utmPolicyMap };
@@ -1330,11 +1320,22 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
   // Collect all unique feature profiles
   const emittedProfiles = new Set();
 
-  for (const [, combo] of comboMap) {
-    const pName = combo.policyName;
+  const orderedCombos = [...comboMap.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [, combo] of orderedCombos) {
+    const ownerIndex = combo.policyIndexes[0];
+    const pName = identifiers.nameForGenerated(
+      identifierPath(`security_policies[${ownerIndex}]`),
+      'utm-policy',
+    );
+    for (const policyIndex of combo.policyIndexes) utmPolicyMap[policyIndex] = pName;
 
     for (const [pType, pValue] of Object.entries(combo.profiles)) {
       const mapped = mapProfileToSrx(pType, pValue);
+      const profileName = ['utm', 'appfw'].includes(mapped.srxFeature)
+        ? identifiers.nameForReference(
+          identifierPath(`security_policies[${ownerIndex}].security_profiles.${pType}`),
+        )
+        : mapped.srxProfile;
 
       const defKey = `${pType}:${pValue}`;
       const profileDef = profileDefs[defKey];
@@ -1342,15 +1343,20 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
       // AppFW: generate actual rule-set if we have category data
       if (mapped.srxFeature === 'appfw') {
         if (profileDef && profileDef.categories && Object.keys(profileDef.categories).length > 0) {
-          const rsName = sanitizeJunosName(`appfw-${pValue}`);
+          const rsName = profileName;
           utmCommands.push(`# Application Firewall rule-set from application-control "${pValue}"`);
           let ruleNum = 0;
-          for (const [category, action] of Object.entries(profileDef.categories)) {
-            if (action === 'block' || action === 'block-all' || action === 'reset') {
-              ruleNum++;
-              utmCommands.push(`set security application-firewall rule-sets ${rsName} rule appfw-r${ruleNum} match dynamic-application-group junos:${sanitizeJunosName(category)}`);
-              utmCommands.push(`set security application-firewall rule-sets ${rsName} rule appfw-r${ruleNum} then deny`);
-            }
+          const blockedCategories = Object.entries(profileDef.categories)
+            .filter(([, action]) => action === 'block' || action === 'block-all' || action === 'reset')
+            .sort(([left], [right]) => left.localeCompare(right));
+          for (const [category] of blockedCategories) {
+            ruleNum++;
+            const ruleName = identifiers.nameForGenerated(
+              identifierPath(`security_policies[${ownerIndex}]`),
+              `application-firewall-rule-${ruleNum}`,
+            );
+            utmCommands.push(`set security application-firewall rule-sets ${rsName} rule ${ruleName} match dynamic-application-group junos:${sanitizeJunosName(category)}`);
+            utmCommands.push(`set security application-firewall rule-sets ${rsName} rule ${ruleName} then deny`);
           }
           if (ruleNum > 0) {
             utmCommands.push(`set security application-firewall rule-sets ${rsName} default-rule permit`);
@@ -1392,12 +1398,12 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
       if (mapped.srxFeature !== 'utm') continue;
 
       // Emit feature profile definition once (uses source-derived params when available)
-      if (!emittedProfiles.has(mapped.srxProfile)) {
-        emittedProfiles.add(mapped.srxProfile);
+      if (!emittedProfiles.has(profileName)) {
+        emittedProfiles.add(profileName);
         if (mapped.srxType === 'anti-virus') {
           const sizeLimit = (profileDef && profileDef.scanMode === 'full') ? 40000 : 20000;
-          utmCommands.push(`set security utm feature-profile anti-virus profile ${mapped.srxProfile} fallback-options default log-and-permit`);
-          utmCommands.push(`set security utm feature-profile anti-virus profile ${mapped.srxProfile} fallback-options content-size log-and-permit`);
+          utmCommands.push(`set security utm feature-profile anti-virus profile ${profileName} fallback-options default log-and-permit`);
+          utmCommands.push(`set security utm feature-profile anti-virus profile ${profileName} fallback-options content-size log-and-permit`);
           // content-size-limit and timeout are not valid under AV profile in modern Junos — skip
         } else if (mapped.srxType === 'web-filtering') {
           // Fix 3: Junos requires the web-filtering type to be set before
@@ -1406,45 +1412,45 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
           utmCommands.push(`set security utm feature-profile web-filtering type juniper-enhanced`);
           if (profileDef && profileDef.blockCategories && profileDef.blockCategories.length > 0) {
             utmCommands.push(`# Block categories from source: ${profileDef.blockCategories.join(', ')}`);
-            utmCommands.push(`set security utm feature-profile web-filtering juniper-enhanced profile ${mapped.srxProfile} default block`);
+            utmCommands.push(`set security utm feature-profile web-filtering juniper-enhanced profile ${profileName} default block`);
           } else {
-            utmCommands.push(`set security utm feature-profile web-filtering juniper-enhanced profile ${mapped.srxProfile} default log-and-permit`);
+            utmCommands.push(`set security utm feature-profile web-filtering juniper-enhanced profile ${profileName} default log-and-permit`);
           }
         } else if (mapped.srxType === 'content-filtering') {
           if (profileDef && profileDef.blockedExtensions && profileDef.blockedExtensions.length > 0) {
             for (const ext of profileDef.blockedExtensions) {
-              utmCommands.push(`set security utm feature-profile content-filtering profile ${mapped.srxProfile} block-extension ${sanitizeJunosName(ext)}`);
+              utmCommands.push(`set security utm feature-profile content-filtering profile ${profileName} block-extension ${sanitizeJunosName(ext)}`);
             }
           } else {
-            utmCommands.push(`set security utm feature-profile content-filtering profile ${mapped.srxProfile} permit-command file-extension exe`);
-            utmCommands.push(`set security utm feature-profile content-filtering profile ${mapped.srxProfile} permit-command file-extension zip`);
+            utmCommands.push(`set security utm feature-profile content-filtering profile ${profileName} permit-command file-extension exe`);
+            utmCommands.push(`set security utm feature-profile content-filtering profile ${profileName} permit-command file-extension zip`);
           }
         } else if (mapped.srxType === 'dns-security') {
           utmCommands.push(`# DNS Security from "${pValue}" — requires ATP Cloud license`);
           if (profileDef && profileDef.blockedDomains && profileDef.blockedDomains.length > 0) {
             for (const domain of profileDef.blockedDomains) {
-              utmCommands.push(`set services dns-filtering dns-filtering-rule ${sanitizeJunosName(pValue)} match-name ${domain}`);
-              utmCommands.push(`set services dns-filtering dns-filtering-rule ${sanitizeJunosName(pValue)} then action block`);
+              utmCommands.push(`set services dns-filtering dns-filtering-rule ${profileName} match-name ${domain}`);
+              utmCommands.push(`set services dns-filtering dns-filtering-rule ${profileName} then action block`);
             }
           }
           utmCommands.push(`set services dns-filtering default-action allow`);
         } else if (mapped.srxType === 'anti-spam') {
-          utmCommands.push(`set security utm feature-profile anti-spam profile ${mapped.srxProfile} sbl-default-server`);
+          utmCommands.push(`set security utm feature-profile anti-spam profile ${profileName} sbl-default-server`);
         } else {
-          utmCommands.push(`set security utm feature-profile ${mapped.srxType} profile ${mapped.srxProfile}`);
+          utmCommands.push(`set security utm feature-profile ${mapped.srxType} profile ${profileName}`);
         }
       }
 
       // Attach to utm-policy
       if (mapped.srxType === 'anti-virus') {
-        utmCommands.push(`set security utm utm-policy ${pName} anti-virus http-profile ${mapped.srxProfile}`);
-        utmCommands.push(`set security utm utm-policy ${pName} anti-virus smtp-profile ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} anti-virus http-profile ${profileName}`);
+        utmCommands.push(`set security utm utm-policy ${pName} anti-virus smtp-profile ${profileName}`);
       } else if (mapped.srxType === 'web-filtering') {
-        utmCommands.push(`set security utm utm-policy ${pName} web-filtering http-profile ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} web-filtering http-profile ${profileName}`);
       } else if (mapped.srxType === 'content-filtering') {
-        utmCommands.push(`set security utm utm-policy ${pName} content-filtering rule-set ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} content-filtering rule-set ${profileName}`);
       } else if (mapped.srxType === 'anti-spam') {
-        utmCommands.push(`set security utm utm-policy ${pName} anti-spam smtp-profile ${mapped.srxProfile}`);
+        utmCommands.push(`set security utm utm-policy ${pName} anti-spam smtp-profile ${profileName}`);
       }
     }
   }
@@ -1461,16 +1467,16 @@ function convertUtmPolicies(policies, warnings, profileDefs = {}) {
  * Scans policies for IDP-relevant profiles (spyware, vulnerability) and
  * generates SRX IDP policy definitions.
  */
-function convertIdpPolicies(policies, warnings, profileDefs = {}) {
+function convertIdpPolicies(policies, warnings, profileDefs = {}, identifiers, identifierPath) {
   const idpCommands = [];
   const idpPolicyMap = {};
   if (!policies || policies.length === 0) return { idpCommands, idpPolicyMap };
 
   const idpTypes = ['spyware', 'vulnerability'];
-  let policyIndex = 0;
   const comboMap = new Map();
 
-  for (const policy of policies) {
+  for (let sourcePolicyIndex = 0; sourcePolicyIndex < policies.length; sourcePolicyIndex += 1) {
+    const policy = policies[sourcePolicyIndex];
     const sp = policy.security_profiles || {};
     const hasIdp = idpTypes.some(t => sp[t]);
     if (!hasIdp) continue;
@@ -1482,11 +1488,9 @@ function convertIdpPolicies(policies, warnings, profileDefs = {}) {
 
     const key = JSON.stringify(idpProfiles);
     if (!comboMap.has(key)) {
-      policyIndex++;
-      comboMap.set(key, { profiles: idpProfiles, policyName: `idp-policy-${policyIndex}`, rules: [] });
+      comboMap.set(key, { profiles: idpProfiles, policyIndexes: [] });
     }
-    comboMap.get(key).rules.push(policy.name);
-    idpPolicyMap[policy.name] = comboMap.get(key).policyName;
+    comboMap.get(key).policyIndexes.push(sourcePolicyIndex);
   }
 
   if (comboMap.size === 0) return { idpCommands, idpPolicyMap };
@@ -1504,8 +1508,16 @@ function convertIdpPolicies(policies, warnings, profileDefs = {}) {
     'pass': 'no-action', 'default': 'recommended',
   };
 
-  for (const [, combo] of comboMap) {
-    const pName = combo.policyName;
+  const orderedCombos = [...comboMap.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [, combo] of orderedCombos) {
+    const ownerIndex = combo.policyIndexes[0];
+    const pName = identifiers.nameForGenerated(
+      identifierPath(`security_policies[${ownerIndex}]`),
+      'idp-policy',
+    );
+    for (const sourcePolicyIndex of combo.policyIndexes) {
+      idpPolicyMap[sourcePolicyIndex] = pName;
+    }
     let ruleIdx = 0;
 
     for (const [pType, pValue] of Object.entries(combo.profiles)) {
@@ -1520,7 +1532,10 @@ function convertIdpPolicies(policies, warnings, profileDefs = {}) {
           if (!sourceAction) continue;
 
           ruleIdx++;
-          const ruleName = `${pType}-${severity}-r${ruleIdx}`;
+          const ruleName = identifiers.nameForGenerated(
+            identifierPath(`security_policies[${ownerIndex}]`),
+            `idp-rule-${ruleIdx}`,
+          );
           const base = `security idp idp-policy ${pName} rulebase-ips rule ${ruleName}`;
           const idpAction = idpActionMap[sourceAction] || 'recommended';
           const attackGroup = severity.charAt(0).toUpperCase() + severity.slice(1);
@@ -1533,7 +1548,10 @@ function convertIdpPolicies(policies, warnings, profileDefs = {}) {
       } else {
         // Fallback: name-based heuristics when no profile definitions available
         ruleIdx++;
-        const ruleName = `${pType}-rule-${ruleIdx}`;
+        const ruleName = identifiers.nameForGenerated(
+          identifierPath(`security_policies[${ownerIndex}]`),
+          `idp-rule-${ruleIdx}`,
+        );
         const base = `security idp idp-policy ${pName} rulebase-ips rule ${ruleName}`;
 
         const nameLower = pValue.toLowerCase();
@@ -1563,13 +1581,17 @@ function convertIdpPolicies(policies, warnings, profileDefs = {}) {
 /**
  * Generates SRX Security Intelligence configuration from detected EDL block lists.
  */
-function convertSecIntel(externalLists, policies, warnings) {
+function convertSecIntel(externalLists, policies, warnings, identifiers, identifierPath) {
   const secIntelCommands = [];
   let secIntelEnabled = false;
-  if (!externalLists || externalLists.length === 0) return { secIntelCommands, secIntelEnabled };
+  let secIntelPolicyName = 'secIntel-policy';
+  if (!externalLists || externalLists.length === 0) return { secIntelCommands, secIntelEnabled, secIntelPolicyName };
 
-  const blockLists = externalLists.filter(e => e.isBlockList);
-  if (blockLists.length === 0) return { secIntelCommands, secIntelEnabled };
+  const blockLists = externalLists
+    .map((list, index) => ({ list, index }))
+    .filter(({ list }) => list.isBlockList)
+    .sort((left, right) => String(left.list.name).localeCompare(String(right.list.name)));
+  if (blockLists.length === 0) return { secIntelCommands, secIntelEnabled, secIntelPolicyName };
 
   secIntelEnabled = true;
 
@@ -1578,13 +1600,23 @@ function convertSecIntel(externalLists, policies, warnings) {
   secIntelCommands.push('# =============================================');
 
   // Create a SecIntel profile with rules for each block list
-  const profileName = 'secIntel-profile';
+  const firstOwnerPath = identifierPath(`external_lists[${blockLists[0].index}]`);
+  const profileName = identifiers.nameForGenerated(
+    firstOwnerPath,
+    'security-intelligence-profile',
+  );
+  secIntelPolicyName = identifiers.nameForGenerated(
+    firstOwnerPath,
+    'security-intelligence-policy',
+  );
   let ruleIdx = 0;
 
-  for (const bl of blockLists) {
+  for (const { list: bl, index: blockListIndex } of blockLists) {
     ruleIdx++;
-    const ruleName = `secIntel-rule-${ruleIdx}`;
-    const safeName = sanitizeJunosName(bl.name);
+    const ruleName = identifiers.nameForGenerated(
+      identifierPath(`external_lists[${blockListIndex}].name`),
+      'security-intelligence-rule',
+    );
 
     secIntelCommands.push(`# EDL: "${bl.name}" (${bl.isPredefined ? 'predefined' : 'custom'}, type: ${bl.listType})`);
     secIntelCommands.push(`set services security-intelligence profile ${profileName} category BlockList`);
@@ -1593,17 +1625,17 @@ function convertSecIntel(externalLists, policies, warnings) {
     secIntelCommands.push(`set services security-intelligence profile ${profileName} rule ${ruleName} then log`);
   }
 
-  secIntelCommands.push(`set services security-intelligence policy secIntel-policy ${profileName}`);
+  secIntelCommands.push(`set services security-intelligence policy ${secIntelPolicyName} ${profileName}`);
 
   warnings.push(createWarning(
     'warning',
     'security-intelligence',
-    `${blockLists.length} EDL block list(s) mapped to SRX SecIntel: [${blockLists.map(b => b.name).join(', ')}]`,
+    `${blockLists.length} EDL block list(s) mapped to SRX SecIntel: [${blockLists.map(({ list }) => list.name).join(', ')}]`,
     'Verify SRX platform supports Security Intelligence and configure feed servers'
   ));
 
   secIntelCommands.push('');
-  return { secIntelCommands, secIntelEnabled };
+  return { secIntelCommands, secIntelEnabled, secIntelPolicyName };
 }
 
 // ---------------------------------------------------------------------------
@@ -1617,15 +1649,16 @@ const DAY_NAME_MAP = {
   thursday: 'thursday', friday: 'friday', saturday: 'saturday',
 };
 
-function convertSchedules(schedules, commands, warnings) {
+function convertSchedules(schedules, commands, warnings, identifiers, identifierPath) {
   if (!schedules || schedules.length === 0) return;
 
   commands.push('# =============================================');
   commands.push('# Schedulers');
   commands.push('# =============================================');
 
-  for (const sched of schedules) {
-    const name = sanitizeJunosName(sched.name);
+  for (let scheduleIndex = 0; scheduleIndex < schedules.length; scheduleIndex += 1) {
+    const sched = schedules[scheduleIndex];
+    const name = identifiers.nameForDefinition(identifierPath(`schedules[${scheduleIndex}].name`));
     if (sched.type === 'recurring' && sched.days && sched.days.length > 0) {
       for (const day of sched.days) {
         const junosDay = DAY_NAME_MAP[day.toLowerCase()] || day.toLowerCase();
@@ -1685,10 +1718,13 @@ function convertUserIdentification(policies, commands, warnings) {
 // Security Policy Converter
 // ---------------------------------------------------------------------------
 
-function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = []) {
+function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath) {
   if (!policies || policies.length === 0) return;
 
-  const { utmPolicyMap = {}, idpPolicyMap = {}, secIntelEnabled = false } = profileMaps;
+  const {
+    utmPolicyMap = {}, idpPolicyMap = {}, secIntelEnabled = false,
+    secIntelPolicyName = 'secIntel-policy',
+  } = profileMaps;
 
   commands.push('# =============================================');
   commands.push('# Security Policies');
@@ -1710,7 +1746,6 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 
   for (let pIdx = 0; pIdx < policies.length; pIdx++) {
     const policy = policies[pIdx];
-    const policyName = generateDescriptiveName(policy, pIdx);
 
     // Emit group comment when entering a new group (JUNOS preserves /* */ comments)
     const ruleGroup = groupByIndex[pIdx] || policy._group || null;
@@ -1726,24 +1761,61 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 
     // Clean up EDL block list addresses from match criteria
     const secIntelAddrs = new Set(policy._secIntelAddresses || []);
-    let srcAddrs = policy.src_addresses.filter(a => !secIntelAddrs.has(a));
-    let dstAddrs = policy.dst_addresses.filter(a => !secIntelAddrs.has(a));
-    if (srcAddrs.length === 0 && policy.src_addresses.length > 0) srcAddrs = ['any'];
-    if (dstAddrs.length === 0 && policy.dst_addresses.length > 0) dstAddrs = ['any'];
+    let srcAddrs = policy.src_addresses
+      .map((value, index) => ({ value, index }))
+      .filter(({ value }) => !secIntelAddrs.has(value));
+    let dstAddrs = policy.dst_addresses
+      .map((value, index) => ({ value, index }))
+      .filter(({ value }) => !secIntelAddrs.has(value));
+    if (srcAddrs.length === 0 && policy.src_addresses.length > 0) srcAddrs = [{ value: 'any', index: null }];
+    if (dstAddrs.length === 0 && policy.dst_addresses.length > 0) dstAddrs = [{ value: 'any', index: null }];
 
     // SRX policies are organized by from-zone/to-zone pair.
-    const srcZones = policy.src_zones.length > 0 ? policy.src_zones : ['any'];
-    const dstZones = policy.dst_zones.length > 0 ? policy.dst_zones : ['any'];
+    const sourceZoneField = policy.src_zones !== undefined ? 'src_zones' : 'source_zones';
+    const destinationZoneField = policy.dst_zones !== undefined ? 'dst_zones' : 'destination_zones';
+    const srcZones = policy[sourceZoneField]?.length > 0 ? policy[sourceZoneField] : ['any'];
+    const dstZones = policy[destinationZoneField]?.length > 0 ? policy[destinationZoneField] : ['any'];
 
     const hasIndividualProfiles = Object.keys(policy.security_profiles || {}).length > 0;
 
     // Handle zone-based policy paths
-    for (const srcZone of srcZones) {
-      for (const dstZone of dstZones) {
-        const fromZone = sanitizeJunosName(srcZone);
-        const toZone = sanitizeJunosName(dstZone);
+    let definitionIndex = 0;
+    const policyNamesByContext = new Map();
+    for (let sourceIndex = 0; sourceIndex < srcZones.length; sourceIndex += 1) {
+      const srcZone = srcZones[sourceIndex];
+      const sourcePath = policy[sourceZoneField]?.length > 0
+        ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
+        : `security_policies[${pIdx}]#effective-source-zone`;
+      const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+      for (let destinationIndex = 0; destinationIndex < dstZones.length; destinationIndex += 1) {
+        const dstZone = dstZones[destinationIndex];
+        const destinationPath = policy[destinationZoneField]?.length > 0
+          ? `security_policies[${pIdx}].${destinationZoneField}[${destinationIndex}]`
+          : `security_policies[${pIdx}]#effective-destination-zone`;
+        const toZone = identifiers.nameForReference(identifierPath(destinationPath));
         // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
         const isGlobal = fromZone === 'any' || toZone === 'any';
+        const policyContext = isGlobal ? 'global' : `${srcZone}\0${dstZone}`;
+        let policyName;
+        if (policyNamesByContext.has(policyContext)) {
+          policyName = policyNamesByContext.get(policyContext);
+        } else {
+          definitionIndex += 1;
+          const genericName = !policy.name
+            || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
+            || /^\d+$/.test(policy.name);
+          policyName = genericName
+            ? identifiers.nameForGenerated(
+              identifierPath(`security_policies[${pIdx}]`),
+              `security-policy-${definitionIndex}`,
+            )
+            : identifiers.nameForDefinition(identifierPath(
+              definitionIndex === 1
+                ? `security_policies[${pIdx}].name`
+                : `security_policies[${pIdx}].name#zone-pair:${srcZone}->${dstZone}`,
+            ));
+          policyNamesByContext.set(policyContext, policyName);
+        }
         const policyPath = isGlobal
           ? `security policies global policy ${policyName}`
           : `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
@@ -1759,19 +1831,25 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         }
 
         // Match criteria: source addresses
-        const effectiveSrcAddrs = srcAddrs.length > 0 ? srcAddrs : ['any'];
-        for (const addr of effectiveSrcAddrs) {
-          commands.push(`set ${policyPath} match source-address ${sanitizeJunosName(addr)}`);
+        const effectiveSrcAddrs = srcAddrs.length > 0 ? srcAddrs : [{ value: 'any', index: null }];
+        for (const { value: addr, index: addressIndex } of effectiveSrcAddrs) {
+          const addressName = addressIndex === null
+            ? 'any'
+            : identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].src_addresses[${addressIndex}]`));
+          commands.push(`set ${policyPath} match source-address ${addressName}`);
         }
 
         // Match criteria: destination addresses
-        const effectiveDstAddrs = dstAddrs.length > 0 ? dstAddrs : ['any'];
-        for (const addr of effectiveDstAddrs) {
-          commands.push(`set ${policyPath} match destination-address ${sanitizeJunosName(addr)}`);
+        const effectiveDstAddrs = dstAddrs.length > 0 ? dstAddrs : [{ value: 'any', index: null }];
+        for (const { value: addr, index: addressIndex } of effectiveDstAddrs) {
+          const addressName = addressIndex === null
+            ? 'any'
+            : identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].dst_addresses[${addressIndex}]`));
+          commands.push(`set ${policyPath} match destination-address ${addressName}`);
         }
 
         // Match criteria: applications
-        let apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor);
+        let apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor, pIdx, identifiers, identifierPath);
         // Junos: if 'any' is present, it must be the only application entry
         if (apps.includes('any')) {
           apps = ['any'];
@@ -1805,18 +1883,24 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
         }
 
         // UTM policy attachment
-        if (utmPolicyMap[policy.name]) {
-          commands.push(`set ${policyPath} then permit application-services utm-policy ${utmPolicyMap[policy.name]}`);
+        if (utmPolicyMap[pIdx]) {
+          const utmPolicyName = identifiers.nameForReference(
+            identifierPath(`security_policies[${pIdx}]#utm-policy`),
+          );
+          commands.push(`set ${policyPath} then permit application-services utm-policy ${utmPolicyName}`);
         }
 
         // IDP policy attachment
-        if (idpPolicyMap[policy.name]) {
-          commands.push(`set ${policyPath} then permit application-services idp-policy ${idpPolicyMap[policy.name]}`);
+        if (idpPolicyMap[pIdx]) {
+          const idpPolicyName = identifiers.nameForReference(
+            identifierPath(`security_policies[${pIdx}]#idp-policy`),
+          );
+          commands.push(`set ${policyPath} then permit application-services idp-policy ${idpPolicyName}`);
         }
 
         // SecIntel attachment (on permit rules to untrust)
         if (secIntelEnabled && policy.action === 'allow' && dstZones.some(z => z.toLowerCase() === 'untrust')) {
-          commands.push(`set ${policyPath} then permit application-services security-intelligence-policy secIntel-policy`);
+          commands.push(`set ${policyPath} then permit application-services security-intelligence-policy ${secIntelPolicyName}`);
         }
 
         // Fix 8: SSL Proxy profiles require PKI certificates that can't be auto-generated.
@@ -1837,7 +1921,8 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 
         // Schedule reference
         if (policy.schedule) {
-          commands.push(`set ${policyPath} scheduler-name ${sanitizeJunosName(policy.schedule)}`);
+          const scheduleName = identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].schedule`));
+          commands.push(`set ${policyPath} scheduler-name ${scheduleName}`);
         }
 
         // Disabled rules → deactivate command
@@ -1899,6 +1984,68 @@ const commaPortSetMap = new Map();
  */
 const predefServiceMap = new Map();
 
+function planApplicationUse(appName, referencePath, warnings, warningElement, sourceVendor, identifiers) {
+  const plannedName = identifiers.nameForReference(referencePath);
+  const mappingEntry = identifiers.mapping.entries.find(entry => (
+    entry.referencePaths.includes(referencePath)
+  ));
+  if (!mappingEntry) return plannedName;
+  if (!mappingEntry.resolution.startsWith('generated')
+      && !mappingEntry.resolution.startsWith('unresolved')) return plannedName;
+
+  const isSrxSource = ['srx', 'greenfield', 'srx_healthcheck'].includes(sourceVendor);
+  if (isSrxSource || mapAppToJunos(appName, sourceVendor)) return plannedName;
+
+  const emission = getJunosEmission(appName, sourceVendor);
+  if (emission?.kind === 'custom') {
+    concreteCustomApps.set(plannedName, {
+      protocol: emission.protocol,
+      ports: emission.ports,
+      originalName: appName,
+      canonical: emission.canonical,
+      subNames: new Map(emission.ports.map(port => [
+        String(port),
+        emission.ports.length > 1
+          ? identifiers.mapping.entries.find(entry => (
+            entry.sourceName === `${appName}:port:${port}`
+            && entry.kind === 'application'
+            && entry.resolution.startsWith('generated')
+          ))?.outputName
+            ?? identifiers.nameForGenerated(referencePath, `custom-application-port:${port}`)
+          : plannedName,
+      ])),
+    });
+    return plannedName;
+  }
+
+  unmappedApps.set(plannedName, appName);
+  warnings.push(createWarning(
+    'warning',
+    warningElement,
+    `Application "${appName}" has no known Junos equivalent — listed in INTERVIEW REQUIRED block`,
+    'Provide the correct protocol/port(s) for this application and replace the <name>-UNMAPPED placeholder.',
+  ));
+  return plannedName;
+}
+
+function prepareApplicationGroupApplications(groups, warnings, sourceVendor, identifiers, identifierPath) {
+  for (let groupIndex = 0; groupIndex < (groups || []).length; groupIndex += 1) {
+    const group = groups[groupIndex];
+    for (let memberIndex = 0; memberIndex < (group.members || []).length; memberIndex += 1) {
+      const member = group.members[memberIndex];
+      if (member === 'service-set') continue;
+      planApplicationUse(
+        member,
+        identifierPath(`application_groups[${groupIndex}].members[${memberIndex}]`),
+        warnings,
+        `application-group/${group.name}`,
+        sourceVendor,
+        identifiers,
+      );
+    }
+  }
+}
+
 /**
  * Resolves application/service fields from any vendor to SRX application names.
  *
@@ -1909,57 +2056,30 @@ const predefServiceMap = new Map();
  *
  * SRX only has "application" in policy match — we unify both fields.
  */
-function resolveApplications(applications, services, warnings, policyName, appGroups = [], sourceVendor = '') {
+function resolveApplications(applications, services, warnings, policyName, appGroups = [], sourceVendor = '', policyIndex, identifiers, identifierPath) {
   const resolved = [];
-  const isSrxSource = sourceVendor === 'srx' || sourceVendor === 'greenfield' || sourceVendor === 'srx_healthcheck';
 
   // Helper to map a single app name to Junos using three-tier emission logic
-  const mapSingleApp = (appName) => {
-    if (isSrxSource) {
-      resolved.push(appName);
-      return;
-    }
-
-    // Tier 1: junos-* passthrough + APP_MAP + confident mapping
-    const junosApp = mapAppToJunos(appName, sourceVendor);
-    if (junosApp) {
-      resolved.push(junosApp);
-      return;
-    }
-
-    // Tier 2: canonical with known ports but no junos predefined → concrete custom app
-    const emission = getJunosEmission(appName, sourceVendor);
-    if (emission?.kind === 'custom') {
-      let customName = sanitizeJunosName(appName).replace(/\./g, '-');
-      if (/^\d/.test(customName)) customName = `app-${customName}`;
-      resolved.push(customName);
-      concreteCustomApps.set(customName, {
-        protocol: emission.protocol,
-        ports: emission.ports,
-        originalName: appName,
-        canonical: emission.canonical,
-      });
-      return;
-    }
-
-    // Tier 3: truly unknown — emit -UNMAPPED reference + add to INTERVIEW block
-    let unmappedName = sanitizeJunosName(appName).replace(/\./g, '-') + '-UNMAPPED';
-    if (/^\d/.test(unmappedName)) unmappedName = `app-${unmappedName}`;
-    resolved.push(unmappedName);
-    unmappedApps.set(unmappedName, appName);
-    warnings.push(createWarning(
-      'warning',
+  const mapSingleApp = (appName, localReferencePath) => {
+    const referencePath = identifierPath(localReferencePath);
+    resolved.push(planApplicationUse(
+      appName,
+      referencePath,
+      warnings,
       `policy/${policyName}`,
-      `Application "${appName}" has no known Junos equivalent — listed in INTERVIEW REQUIRED block`,
-      'Provide the correct protocol/port(s) for this application and replace the <name>-UNMAPPED placeholder.'
+      sourceVendor,
+      identifiers,
     ));
   };
 
   // Map applications to Junos equivalents
   if (applications && applications.length > 0) {
-    for (const app of applications) {
+    for (let appIndex = 0; appIndex < applications.length; appIndex += 1) {
+      const app = applications[appIndex];
       if (app === 'any') {
-        resolved.push('any');
+        resolved.push(identifiers.nameForReference(
+          identifierPath(`security_policies[${policyIndex}].applications[${appIndex}]`),
+        ));
         continue;
       }
 
@@ -1969,46 +2089,37 @@ function resolveApplications(applications, services, warnings, policyName, appGr
       // Check if this is an application group reference — expand to members
       const group = appGroups.find(g => g.name === app);
       if (group && group.members.length > 0) {
-        for (const member of group.members) {
-          mapSingleApp(member);
+        for (let memberIndex = 0; memberIndex < group.members.length; memberIndex += 1) {
+          if (group.members[memberIndex] === 'service-set') continue;
+          mapSingleApp(
+            group.members[memberIndex],
+            `security_policies[${policyIndex}].applications[${appIndex}]#member:${memberIndex}`,
+          );
         }
         continue;
       }
 
-      mapSingleApp(app);
+      mapSingleApp(app, `security_policies[${policyIndex}].applications[${appIndex}]`);
     }
   }
 
   // Handle explicit service references (not "application-default")
   if (services && services.length > 0) {
-    for (const svc of services) {
+    for (let serviceIndex = 0; serviceIndex < services.length; serviceIndex += 1) {
+      const svc = services[serviceIndex];
       if (svc === 'application-default' || svc === 'any') continue;
       // Bug 10 fix: Filter Huawei "service-set" keyword from services too.
       // This is a Huawei config keyword meaning "use the service objects", not an app name.
       if (svc === 'service-set') continue;
-      // Check if this service was mapped to a predefined app during convertServiceObjects
-      const predefName = predefServiceMap.get(svc);
-      if (predefName) {
-        resolved.push(predefName);
-        continue;
-      }
-      // Fix 2: Check if this service was split into comma-port application-set
-      const commaSetName = commaPortSetMap.get(svc);
-      if (commaSetName) {
-        resolved.push(commaSetName);
-        continue;
-      }
-      // Try mapping service name (catches FortiGate "HTTP", "HTTPS", etc.)
-      const junosApp = mapAppToJunos(svc, sourceVendor);
-      if (junosApp) {
-        resolved.push(junosApp);
-      } else {
-        // Service objects already converted to SRX applications — reference by name
-        const safeSvcName = sanitizeJunosName(svc);
-        resolved.push(safeSvcName);
-        // Fix 4: Track service references that may not have been defined
-        // so we can emit application definitions before policies
-        unresolvedServiceApps.set(safeSvcName, svc);
+      const referencePath = identifierPath(`security_policies[${policyIndex}].services[${serviceIndex}]`);
+      const serviceName = identifiers.nameForReference(referencePath);
+      resolved.push(serviceName);
+      const mappingEntry = identifiers.mapping.entries.find(entry => (
+        entry.referencePaths.includes(referencePath)
+      ));
+      if (mappingEntry?.resolution.startsWith('generated')
+          || mappingEntry?.resolution.startsWith('unresolved')) {
+        unresolvedServiceApps.set(serviceName, svc);
       }
     }
   }
@@ -2075,18 +2186,84 @@ function resolveNatAddress(addr, addrLookup, warnings) {
   return resolved;
 }
 
-function convertNatRules(natRules, commands, warnings, summary, addressObjects) {
+function convertNatRules(natRules, commands, warnings, summary, addressObjects, identifiers, identifierPath) {
   if (!natRules || natRules.length === 0) return;
 
   // Build lookup map: address-object name → IP/subnet value
   const addrLookup = {};
-  for (const obj of (addressObjects || [])) {
-    if (obj.value) addrLookup[obj.name] = obj.value;
-    else if (obj.ip) addrLookup[obj.name] = obj.ip;
-    else if (obj.network) addrLookup[obj.name] = obj.network;
-    else if (obj.subnet) addrLookup[obj.name] = obj.subnet;
-    else if (obj.address) addrLookup[obj.name] = obj.address;
+  const rawAddressNames = new Map();
+  for (let objectIndex = 0; objectIndex < (addressObjects || []).length; objectIndex += 1) {
+    const obj = addressObjects[objectIndex];
+    const plannedName = identifiers.nameForDefinition(identifierPath(`address_objects[${objectIndex}].name`));
+    rawAddressNames.set(obj.name, plannedName);
+    if (obj.value) addrLookup[plannedName] = obj.value;
+    else if (obj.ip) addrLookup[plannedName] = obj.ip;
+    else if (obj.network) addrLookup[plannedName] = obj.network;
+    else if (obj.subnet) addrLookup[plannedName] = obj.subnet;
+    else if (obj.address) addrLookup[plannedName] = obj.address;
   }
+
+  const natRuleIndex = new Map(natRules.map((rule, index) => [rule, index]));
+  const sourceZonesFor = rule => (rule.src_zones?.length > 0 ? rule.src_zones : ['any']);
+  const destinationZonesFor = rule => (rule.dst_zones?.length > 0 ? rule.dst_zones : ['any']);
+  const typesFor = rule => (rule.type === 'source-and-destination'
+    ? ['source', 'destination'] : [rule.type || 'source']);
+  const zoneReference = (ruleIndex, rule, direction, zone) => {
+    const field = direction === 'source' ? 'src_zones' : 'dst_zones';
+    const values = direction === 'source' ? sourceZonesFor(rule) : destinationZonesFor(rule);
+    const index = values.indexOf(zone);
+    const localPath = rule[field]?.length > 0
+      ? `nat_rules[${ruleIndex}].${field}[${index}]`
+      : `nat_rules[${ruleIndex}]#effective-${direction}-zone`;
+    return identifiers.nameForReference(identifierPath(localPath));
+  };
+  const ruleSetInfo = (type, fromZone, toZone) => {
+    const ownerIndex = natRules.findIndex(rule => (
+      typesFor(rule).includes(type)
+      && sourceZonesFor(rule).includes(fromZone)
+      && destinationZonesFor(rule).includes(toZone)
+    ));
+    const role = type === 'static'
+      ? 'static-nat-rule-set'
+      : `${type}-nat-rule-set:${fromZone}->${toZone}`;
+    return {
+      ownerIndex,
+      name: identifiers.nameForGenerated(identifierPath(`nat_rules[${ownerIndex}]`), role),
+    };
+  };
+  const ruleNameFor = (ruleIndex, rule, type, fromZone, toZone) => {
+    let occurrence = 0;
+    for (const candidateType of typesFor(rule)) {
+      const pairs = candidateType === 'static'
+        ? [['STATIC-NAT', '*']]
+        : sourceZonesFor(rule).flatMap(source => (
+          destinationZonesFor(rule).map(destination => [source, destination])
+        ));
+      for (const [candidateFrom, candidateTo] of pairs) {
+        occurrence += 1;
+        if (candidateType === type && candidateFrom === fromZone && candidateTo === toZone) {
+          const suffix = occurrence === 1 ? '' : `#${type}:${fromZone}->${toZone}`;
+          return identifiers.nameForDefinition(
+            identifierPath(`nat_rules[${ruleIndex}].name${suffix}`),
+          );
+        }
+      }
+    }
+    return identifiers.nameForDefinition(identifierPath(`nat_rules[${ruleIndex}].name`));
+  };
+  const matchAddress = (ruleIndex, field, addressIndex, rawAddress) => {
+    const plannedName = identifiers.nameForReference(
+      identifierPath(`nat_rules[${ruleIndex}].${field}[${addressIndex}]`),
+    );
+    const value = /^\d+\.\d+\.\d+\.\d+(\/\d+)?$/.test(rawAddress)
+      || /^[0-9a-fA-F:]+\/\d+$/.test(rawAddress)
+      ? rawAddress : plannedName;
+    return resolveNatAddress(value, addrLookup, warnings);
+  };
+  const translatedAddress = rawAddress => {
+    const plannedName = rawAddressNames.get(rawAddress);
+    return resolveNatAddress(plannedName || rawAddress, addrLookup, warnings);
+  };
 
   commands.push('# =============================================');
   commands.push('# NAT Rules');
@@ -2099,14 +2276,19 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
     const zoneMatch = cmd.match(/^set security zones security-zone (\S+)/);
     if (zoneMatch) definedZones.add(zoneMatch[1]);
   }
-  for (const rule of natRules) {
-    const allZones = [...(rule.src_zones || []), ...(rule.dst_zones || [])];
-    for (const zone of allZones) {
-      if (zone === 'any') continue;
-      const safeName = sanitizeJunosName(zone);
-      if (!definedZones.has(safeName)) {
-        commands.push(`set security zones security-zone ${safeName}`);
-        definedZones.add(safeName);
+  for (let ruleIndex = 0; ruleIndex < natRules.length; ruleIndex += 1) {
+    const rule = natRules[ruleIndex];
+    for (const [direction, zones] of [
+      ['source', sourceZonesFor(rule)],
+      ['destination', destinationZonesFor(rule)],
+    ]) {
+      for (const zone of zones) {
+        const safeName = zoneReference(ruleIndex, rule, direction, zone);
+        if (safeName === 'any') continue;
+        if (!definedZones.has(safeName)) {
+          commands.push(`set security zones security-zone ${safeName}`);
+          definedZones.add(safeName);
+        }
       }
     }
   }
@@ -2124,8 +2306,10 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
     for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
       const [fromZone, toZone] = zonePair.split('->');
       // Fix 5: NAT rule-sets cannot use 'any' as zone — replace with actual zones
-      const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
+      const { name: ruleSetName } = ruleSetInfo('source', fromZone, toZone);
       const ruleSetPath = `security nat source rule-set ${ruleSetName}`;
+      const zoneRule = rules[0];
+      const zoneRuleIndex = natRuleIndex.get(zoneRule);
       if (fromZone === 'any' || toZone === 'any') {
         const actualZones = [...definedZones].filter(z => z !== 'any');
         if (actualZones.length === 0) {
@@ -2135,8 +2319,10 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
             'Define security zones before NAT rules'));
           continue;
         }
-        const resolvedFromZones = fromZone === 'any' ? actualZones : [sanitizeJunosName(fromZone)];
-        const resolvedToZones = toZone === 'any' ? actualZones : [sanitizeJunosName(toZone)];
+        const resolvedFromZones = fromZone === 'any'
+          ? actualZones : [zoneReference(zoneRuleIndex, zoneRule, 'source', fromZone)];
+        const resolvedToZones = toZone === 'any'
+          ? actualZones : [zoneReference(zoneRuleIndex, zoneRule, 'destination', toZone)];
         for (const fz of resolvedFromZones) {
           commands.push(`set ${ruleSetPath} from zone ${fz}`);
         }
@@ -2144,31 +2330,52 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
           commands.push(`set ${ruleSetPath} to zone ${tz}`);
         }
       } else {
-        commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
-        commands.push(`set ${ruleSetPath} to zone ${sanitizeJunosName(toZone)}`);
+        commands.push(`set ${ruleSetPath} from zone ${zoneReference(zoneRuleIndex, zoneRule, 'source', fromZone)}`);
+        commands.push(`set ${ruleSetPath} to zone ${zoneReference(zoneRuleIndex, zoneRule, 'destination', toZone)}`);
       }
 
       for (const rule of rules) {
-        const ruleName = sanitizeJunosName(rule.name);
+        const ruleIndex = natRuleIndex.get(rule);
+        const ruleName = ruleNameFor(ruleIndex, rule, 'source', fromZone, toZone);
         const rulePath = `${ruleSetPath} rule ${ruleName}`;
 
         // Match criteria
         const anyAddr = natAnyAddress(rule);
-        for (const addr of (rule.src_addresses || [anyAddr])) {
+        const hasSourceAddresses = Array.isArray(rule.src_addresses);
+        const sourceAddresses = hasSourceAddresses ? rule.src_addresses : [anyAddr];
+        for (let addressIndex = 0; addressIndex < sourceAddresses.length; addressIndex += 1) {
+          const addr = sourceAddresses[addressIndex];
           if (addr === 'any') {
+            if (hasSourceAddresses) {
+              identifiers.nameForReference(
+                identifierPath(`nat_rules[${ruleIndex}].src_addresses[${addressIndex}]`),
+              );
+            }
             commands.push(`set ${rulePath} match source-address ${anyAddr}`);
           } else {
-            const resolved = resolveNatAddress(addr, addrLookup, warnings);
+            const resolved = hasSourceAddresses
+              ? matchAddress(ruleIndex, 'src_addresses', addressIndex, addr)
+              : addr;
             if (resolved) {
               commands.push(`set ${rulePath} match source-address ${resolved}`);
             }
           }
         }
-        for (const addr of (rule.dst_addresses || [anyAddr])) {
+        const hasDestinationAddresses = Array.isArray(rule.dst_addresses);
+        const destinationAddresses = hasDestinationAddresses ? rule.dst_addresses : [anyAddr];
+        for (let addressIndex = 0; addressIndex < destinationAddresses.length; addressIndex += 1) {
+          const addr = destinationAddresses[addressIndex];
           if (addr === 'any') {
+            if (hasDestinationAddresses) {
+              identifiers.nameForReference(
+                identifierPath(`nat_rules[${ruleIndex}].dst_addresses[${addressIndex}]`),
+              );
+            }
             commands.push(`set ${rulePath} match destination-address ${anyAddr}`);
           } else {
-            const resolved = resolveNatAddress(addr, addrLookup, warnings);
+            const resolved = hasDestinationAddresses
+              ? matchAddress(ruleIndex, 'dst_addresses', addressIndex, addr)
+              : addr;
             if (resolved) {
               commands.push(`set ${rulePath} match destination-address ${resolved}`);
             }
@@ -2181,11 +2388,14 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
             commands.push(`set ${rulePath} then source-nat interface`);
           } else if (rule.translated_src.type === 'dynamic-ip-pool') {
             // Create a source NAT pool
-            const poolName = sanitizeJunosName(`pool-${rule.name}`);
+            const poolName = identifiers.nameForGenerated(
+              identifierPath(`nat_rules[${ruleIndex}]`),
+              'source-nat-pool',
+            );
             let allResolved = true;
             const poolCmds = [];
             for (const addr of rule.translated_src.addresses) {
-              const resolvedPoolAddr = resolveNatAddress(addr, addrLookup, warnings);
+              const resolvedPoolAddr = translatedAddress(addr);
               if (resolvedPoolAddr) {
                 poolCmds.push(`set security nat source pool ${poolName} address ${resolvedPoolAddr}`);
               } else {
@@ -2202,9 +2412,12 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
               commands.push(`set ${rulePath} then source-nat interface`);
             }
           } else if (rule.translated_src.type === 'static') {
-            const staticPoolName = `${sanitizeJunosName(rule.name)}-static`;
+            const staticPoolName = identifiers.nameForGenerated(
+              identifierPath(`nat_rules[${ruleIndex}]`),
+              'static-source-nat-pool',
+            );
             // NAT pool address must be an IP, not a named object — resolve it
-            const resolvedStaticAddr = resolveNatAddress(rule.translated_src.address, addrLookup, warnings);
+            const resolvedStaticAddr = translatedAddress(rule.translated_src.address);
             const staticAddr = resolvedStaticAddr || rule.translated_src.address;
             commands.push(`set ${rulePath} then source-nat pool ${staticPoolName}`);
             commands.push(`set security nat source pool ${staticPoolName} address ${staticAddr}`);
@@ -2233,8 +2446,10 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
 
     for (const [zonePair, rules] of Object.entries(ruleSetGroups)) {
       const [fromZone, toZone] = zonePair.split('->');
-      const ruleSetName = sanitizeJunosName(`${fromZone}-to-${toZone}`);
+      const { name: ruleSetName } = ruleSetInfo('destination', fromZone, toZone);
       const ruleSetPath = `security nat destination rule-set ${ruleSetName}`;
+      const zoneRule = rules[0];
+      const zoneRuleIndex = natRuleIndex.get(zoneRule);
 
       // Fix 5: NAT rule-sets cannot use 'any' as zone — replace with actual zones
       if (fromZone === 'any') {
@@ -2250,20 +2465,31 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
           commands.push(`set ${ruleSetPath} from zone ${fz}`);
         }
       } else {
-        commands.push(`set ${ruleSetPath} from zone ${sanitizeJunosName(fromZone)}`);
+        commands.push(`set ${ruleSetPath} from zone ${zoneReference(zoneRuleIndex, zoneRule, 'source', fromZone)}`);
       }
 
       for (const rule of rules) {
-        const ruleName = sanitizeJunosName(rule.name);
+        const ruleIndex = natRuleIndex.get(rule);
+        const ruleName = ruleNameFor(ruleIndex, rule, 'destination', fromZone, toZone);
         const rulePath = `${ruleSetPath} rule ${ruleName}`;
 
         // Match
         const dnatAny = natAnyAddress(rule);
-        for (const addr of (rule.dst_addresses || [dnatAny])) {
+        const hasDestinationAddresses = Array.isArray(rule.dst_addresses);
+        const destinationAddresses = hasDestinationAddresses ? rule.dst_addresses : [dnatAny];
+        for (let addressIndex = 0; addressIndex < destinationAddresses.length; addressIndex += 1) {
+          const addr = destinationAddresses[addressIndex];
           if (addr === 'any') {
+            if (hasDestinationAddresses) {
+              identifiers.nameForReference(
+                identifierPath(`nat_rules[${ruleIndex}].dst_addresses[${addressIndex}]`),
+              );
+            }
             commands.push(`set ${rulePath} match destination-address ${dnatAny}`);
           } else {
-            const resolved = resolveNatAddress(addr, addrLookup, warnings);
+            const resolved = hasDestinationAddresses
+              ? matchAddress(ruleIndex, 'dst_addresses', addressIndex, addr)
+              : addr;
             if (resolved) {
               commands.push(`set ${rulePath} match destination-address ${resolved}`);
             }
@@ -2286,7 +2512,7 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
           if (dstAddr) {
             // Bug 5 fix: NAT destination pool address must be IP/prefix format.
             // Resolve named objects and ensure bare IPs get /32 suffix.
-            const resolvedDst = resolveNatAddress(dstAddr, addrLookup, warnings);
+            const resolvedDst = translatedAddress(dstAddr);
             if (resolvedDst) {
               dstAddr = resolvedDst;
             }
@@ -2294,7 +2520,10 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
             if (/^\d+\.\d+\.\d+\.\d+$/.test(dstAddr)) {
               dstAddr = `${dstAddr}/32`;
             }
-            const poolName = sanitizeJunosName(`dnat-pool-${rule.name}`);
+            const poolName = identifiers.nameForGenerated(
+              identifierPath(`nat_rules[${ruleIndex}]`),
+              'destination-nat-pool',
+            );
             commands.push(`set security nat destination pool ${poolName} address ${dstAddr}`);
             if (rule.translated_port) {
               commands.push(`set security nat destination pool ${poolName} address port ${rule.translated_port}`);
@@ -2312,15 +2541,25 @@ function convertNatRules(natRules, commands, warnings, summary, addressObjects) 
   if (staticNatRules.length > 0) {
     commands.push('# Static NAT Rules');
     for (const rule of staticNatRules) {
-      const ruleName = sanitizeJunosName(rule.name);
-      const ruleSetPath = `security nat static rule-set STATIC-NAT rule ${ruleName}`;
+      const ruleIndex = natRuleIndex.get(rule);
+      const ruleSetName = identifiers.nameForGenerated(
+        identifierPath(`nat_rules[${natRuleIndex.get(staticNatRules[0])}]`),
+        'static-nat-rule-set',
+      );
+      const ruleName = ruleNameFor(ruleIndex, rule, 'static', 'STATIC-NAT', '*');
+      const ruleSetPath = `security nat static rule-set ${ruleSetName} rule ${ruleName}`;
 
-      for (const addr of (rule.dst_addresses || [])) {
+      for (let addressIndex = 0; addressIndex < (rule.dst_addresses || []).length; addressIndex += 1) {
+        const addr = rule.dst_addresses[addressIndex];
         if (addr !== 'any') {
-          const resolved = resolveNatAddress(addr, addrLookup, warnings);
+          const resolved = matchAddress(ruleIndex, 'dst_addresses', addressIndex, addr);
           if (resolved) {
             commands.push(`set ${ruleSetPath} match destination-address ${resolved}`);
           }
+        } else {
+          identifiers.nameForReference(
+            identifierPath(`nat_rules[${ruleIndex}].dst_addresses[${addressIndex}]`),
+          );
         }
       }
 
