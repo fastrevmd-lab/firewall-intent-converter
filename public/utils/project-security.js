@@ -23,6 +23,16 @@ const RESTORATION_KEYS = new Set(['type', 'placeholder', 'original', 'restore'])
 const NON_RESTORABLE_TYPES = new Set([
   'password', 'hash', 'key', 'community', 'certificate', 'cert',
 ]);
+const BARE_KEY_SECRET_CONTEXTS = new Set([
+  'aaaconfig', 'aaaserver', 'aaaservers',
+  'radiusserver', 'radiusservers',
+  'tacacsserver', 'tacacsservers',
+  'tacplusserver', 'tacplusservers',
+  'vpntunnel', 'vpntunnels',
+  'ike', 'ikegateway', 'ikegateways', 'ikepolicy', 'ikepolicies',
+  'ikeproposal', 'ikeproposals',
+  'certificate', 'certificates', 'certificatecontainer', 'certificatecontainers',
+]);
 const TEXT_ENCODER = new TextEncoder();
 
 const ERROR_MESSAGES = Object.freeze({
@@ -378,7 +388,17 @@ function isSnmpCommunityName(path, parent) {
 function isStructuredSecretPath(path, parent) {
   const key = path.at(-1) || '';
   if (isSecretBearingKey(key) || path.slice(0, -1).some(isSecretBearingKey)) return true;
+  if (normalizedType(key) === 'key'
+      && path.slice(0, -1).some(segment => BARE_KEY_SECRET_CONTEXTS.has(normalizedType(segment)))) {
+    return true;
+  }
   return isSnmpCommunityName(path, parent);
+}
+
+function isNonEmptyScalar(value) {
+  return value !== null
+    && typeof value !== 'object'
+    && (typeof value !== 'string' || value.length > 0);
 }
 
 function assertPlainRoot(value) {
@@ -393,13 +413,13 @@ export function assertSanitizedProjectSafe(project, originals) {
       if (path.includes('sanitizationTable')) {
         throw new ProjectSecurityError('original_leak');
       }
-      if (typeof value !== 'string') return;
-      if (findSecretsInText(value).length > 0) {
+      if (isStructuredSecretPath(path, parent)
+          && isNonEmptyScalar(value)
+          && (typeof value !== 'string' || !isSanitizedSecretValue(value))) {
         throw new ProjectSecurityError('secret_leak');
       }
-      if (isStructuredSecretPath(path, parent)
-          && value
-          && !isSanitizedSecretValue(value)) {
+      if (typeof value !== 'string') return;
+      if (findSecretsInText(value).length > 0) {
         throw new ProjectSecurityError('secret_leak');
       }
       if (validatedOriginals.some(original => value.includes(original))) {

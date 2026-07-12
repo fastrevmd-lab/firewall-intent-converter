@@ -371,8 +371,11 @@ describe('project security boundary', () => {
   it.each([
     ['SNMP community name', { snmp_config: [{ type: 'community', name: 'RAW-COMMUNITY' }] }],
     ['AAA server secret', { aaa_config: [{ type: 'radius', server: '192.0.2.1', secret: 'RAW-AAA' }] }],
+    ['AAA server bare key', { aaa_config: [{ type: 'radius', key: 'RAW-AAA' }] }],
     ['VPN pre-shared key', { vpn_tunnels: [{ ike_gateway: { pre_shared_key: 'RAW-PSK' } }] }],
+    ['VPN/IKE bare key', { vpn_tunnels: [{ ike_gateway: { key: 'RAW-VPN' } }] }],
     ['certificate private value', { certificates: [{ private_key: { value: 'RAW-PRIVATE' } }] }],
+    ['certificate bare key', { certificates: [{ key: 'RAW-CERT' }] }],
   ])('rejects path-aware structured secret: %s', (_label, intermediateConfig) => {
     expectSecurityError(
       () => assertSanitizedProjectSafe(projectFrom({ intermediateConfig }), []),
@@ -381,16 +384,36 @@ describe('project security boundary', () => {
     );
   });
 
+  it.each([123456, 0, true, false])
+    ('rejects non-string scalar %s under a secret-bearing path', value => {
+      expectSecurityError(
+        () => assertSanitizedProjectSafe(projectFrom({ password: value }), []),
+        'secret_leak',
+        'Sanitized export was blocked because secret-bearing content remains.',
+      );
+    });
+
+  it.each(['', null])('allows empty secret field value %s', value => {
+    const project = projectFrom({ password: value });
+    expect(assertSanitizedProjectSafe(project, [])).toBe(JSON.stringify(project, null, 2));
+  });
+
   it('accepts placeholders in secret fields and algorithm descriptors', () => {
     const project = projectFrom({
       intermediateConfig: {
         snmp_config: [{ type: 'community', name: 'SANITIZED_COMMUNITY_0' }],
-        aaa_config: [{ type: 'radius', secret: 'SANITIZED_KEY_0' }],
+        aaa_config: [{
+          type: 'radius', secret: 'SANITIZED_KEY_0', key: 'SANITIZED_KEY_1',
+        }],
         vpn_tunnels: [{
-          ike_gateway: { pre_shared_key: 'SANITIZED_KEY_1' },
+          ike_gateway: {
+            pre_shared_key: 'SANITIZED_KEY_2', key: 'SANITIZED_KEY_3',
+          },
           ike_proposal: { auth_method: 'pre-shared-keys' },
         }],
-        certificates: [{ private_key: { value: 'SANITIZED_CERT_0' } }],
+        certificates: [{
+          private_key: { value: 'SANITIZED_CERT_0' }, key: 'SANITIZED_CERT_1',
+        }],
       },
     });
     expect(assertSanitizedProjectSafe(project, [])).toBe(JSON.stringify(project, null, 2));
