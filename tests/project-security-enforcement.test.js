@@ -102,42 +102,51 @@ function mappedLine(node, decodedMap) {
   return (closest || entries[0])?.originalLine + 1 || node.loc.start.line;
 }
 
-function staticPropertyName(member, strings) {
+function staticPropertyName(member, model) {
   const property = member.type === 'Property' ? member.key : member.property;
   if (!member.computed && property.type === 'Identifier') {
     return property.name;
   }
-  return constantString(property, strings);
+  return constantString(property, model);
 }
 
-function constantString(node, strings) {
+function resolveBinding(model, node, name) {
+  let scope = model.nodeScopes.get(node) || model.rootScope;
+  while (scope) {
+    if (scope.bindings.has(name)) return scope.bindings.get(name);
+    scope = scope.parent;
+  }
+  return undefined;
+}
+
+function constantString(node, model) {
   if (!node) return undefined;
   if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'Identifier') return strings.get(node.name);
+  if (node.type === 'Identifier') return resolveBinding(model, node, node.name)?.stringValue;
   if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
     return node.quasis[0].value.cooked;
   }
   if (node.type === 'BinaryExpression' && node.operator === '+') {
-    const left = constantString(node.left, strings);
-    const right = constantString(node.right, strings);
+    const left = constantString(node.left, model);
+    const right = constantString(node.right, model);
     return left === undefined || right === undefined ? undefined : left + right;
   }
   return undefined;
 }
 
-function objectProperty(object, name, strings) {
+function objectProperty(object, name, model) {
   if (object?.type !== 'ObjectExpression') return undefined;
   return object.properties.find(property => (
     property.type === 'Property'
       && property.kind === 'init'
-      && staticPropertyName(property, strings) === name
+      && staticPropertyName(property, model) === name
   ));
 }
 
-function containsProperty(node, name, strings) {
+function containsProperty(node, name, model) {
   let found = false;
   walkAst(node, child => {
-    if (child.type === 'Property' && staticPropertyName(child, strings) === name) found = true;
+    if (child.type === 'Property' && staticPropertyName(child, model) === name) found = true;
   });
   return found;
 }
@@ -146,36 +155,166 @@ function literalValue(node) {
   return node?.type === 'Literal' ? node.value : undefined;
 }
 
-function isSanitizedV5WithTable(node, strings) {
+function isSanitizedV5WithTable(node, model) {
   if (node?.type !== 'ObjectExpression') return false;
-  const version = objectProperty(node, 'fpic_version', strings);
-  const security = objectProperty(node, 'security', strings);
-  const state = objectProperty(node, 'state', strings);
-  const mode = objectProperty(security?.value, 'mode', strings);
+  const version = objectProperty(node, 'fpic_version', model);
+  const security = objectProperty(node, 'security', model);
+  const state = objectProperty(node, 'state', model);
+  const mode = objectProperty(security?.value, 'mode', model);
   return literalValue(version?.value) === 5
     && literalValue(mode?.value) === 'sanitized'
-    && containsProperty(state?.value, 'sanitizationTable', strings);
+    && containsProperty(state?.value, 'sanitizationTable', model);
 }
 
-function isProjectContext(relativePath, source, ast) {
-  if (/project/i.test(relativePath) || source.includes('.fpic')) return true;
+function isProjectModule(source) {
+  return /project-(?:security|crypto|io)/.test(String(source));
+}
+
+function isProjectContext(source, ast) {
+  if (source.includes('.fpic')) return true;
   let projectImport = false;
   walkAst(ast, node => {
     if (node.type === 'ImportDeclaration'
-        && /project-(?:security|crypto|io)/.test(String(node.source.value))) {
+        && isProjectModule(node.source.value)) {
       projectImport = true;
     }
   });
   return projectImport;
 }
 
-function addKind(bindings, name, ...kinds) {
-  if (!name) return false;
-  const current = bindings.get(name) || new Set();
-  const before = current.size;
-  for (const kind of kinds) current.add(kind);
-  bindings.set(name, current);
-  return current.size !== before;
+function createScope(parent = null) {
+  return { parent, bindings: new Map() };
+}
+
+function declareIdentifier(scope, identifier, role) {
+  const current = scope.bindings.get(identifier.name) || {
+    declarations: [],
+    kinds: new Set(),
+    name: identifier.name,
+    roles: new Set(),
+    stringValue: undefined,
+  };
+  current.declarations.push(identifier);
+  current.roles.add(role);
+  scope.bindings.set(identifier.name, current);
+  return current;
+}
+
+function declarePattern(scope, pattern, role, nodeScopes) {
+  nodeScopes.set(pattern, scope);
+  if (pattern.type === 'Identifier') {
+    return [declareIdentifier(scope, pattern, role)];
+  }
+  if (pattern.type === 'RestElement') {
+    return declarePattern(scope, pattern.argument, role, nodeScopes);
+  }
+  if (pattern.type === 'AssignmentPattern') {
+    return declarePattern(scope, pattern.left, role, nodeScopes);
+  }
+  const bindings = [];
+  if (pattern.type === 'ObjectPattern') {
+    for (const property of pattern.properties) {
+      nodeScopes.set(property, scope);
+      if (property.key) nodeScopes.set(property.key, scope);
+      const child = property.value ?? property.argument;
+      if (child) bindings.push(...declarePattern(scope, child, role, nodeScopes));
+    }
+  } else {
+    for (const child of pattern.elements || []) {
+      if (child) bindings.push(...declarePattern(scope, child, role, nodeScopes));
+    }
+  }
+  return bindings;
+}
+
+function buildScopeModel(ast) {
+  const rootScope = createScope();
+  const scopes = [rootScope];
+  const nodeScopes = new WeakMap();
+  const childScope = parent => {
+    const scope = createScope(parent);
+    scopes.push(scope);
+    return scope;
+  };
+
+  const visitChildren = (node, scope, omitted = new Set()) => {
+    for (const [key, value] of Object.entries(node)) {
+      if (['loc', 'start', 'end', 'type'].includes(key) || omitted.has(key)) continue;
+      if (Array.isArray(value)) {
+        for (const child of value) visit(child, scope);
+      } else {
+        visit(value, scope);
+      }
+    }
+  };
+  const visit = (node, scope) => {
+    if (!node || typeof node !== 'object' || typeof node.type !== 'string') return;
+    nodeScopes.set(node, scope);
+    if (node.type === 'Program') {
+      for (const statement of node.body) visit(statement, scope);
+      return;
+    }
+    if (node.type === 'ImportDeclaration') {
+      for (const specifier of node.specifiers) {
+        nodeScopes.set(specifier, scope);
+        const binding = declareIdentifier(scope, specifier.local, 'import');
+        binding.importSource = String(node.source.value);
+        binding.importedName = specifier.imported?.name;
+        binding.importNamespace = specifier.type === 'ImportNamespaceSpecifier';
+      }
+      return;
+    }
+    if (node.type === 'VariableDeclaration') {
+      for (const declaration of node.declarations) {
+        nodeScopes.set(declaration, scope);
+        declarePattern(scope, declaration.id, 'variable', nodeScopes);
+        visit(declaration.init, scope);
+      }
+      return;
+    }
+    if (node.type === 'FunctionDeclaration') {
+      if (node.id) declareIdentifier(scope, node.id, 'function');
+      const functionScope = childScope(scope);
+      for (const parameter of node.params) {
+        declarePattern(functionScope, parameter, 'parameter', nodeScopes);
+      }
+      visit(node.body, functionScope);
+      return;
+    }
+    if (['FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
+      const functionScope = childScope(scope);
+      if (node.id) declareIdentifier(functionScope, node.id, 'function');
+      for (const parameter of node.params) {
+        declarePattern(functionScope, parameter, 'parameter', nodeScopes);
+      }
+      visit(node.body, functionScope);
+      return;
+    }
+    if (node.type === 'BlockStatement') {
+      const blockScope = childScope(scope);
+      for (const statement of node.body) visit(statement, blockScope);
+      return;
+    }
+    if (node.type === 'CatchClause') {
+      const catchScope = childScope(scope);
+      if (node.param) declarePattern(catchScope, node.param, 'parameter', nodeScopes);
+      visit(node.body, catchScope);
+      return;
+    }
+    if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) {
+      declareIdentifier(scope, node.id, 'class');
+    }
+    visitChildren(node, scope);
+  };
+  visit(ast, rootScope);
+  return { ast, nodeScopes, rootScope, scopes };
+}
+
+function addKinds(binding, kinds) {
+  if (!binding) return false;
+  const before = binding.kinds.size;
+  for (const kind of kinds) binding.kinds.add(kind);
+  return binding.kinds.size !== before;
 }
 
 function propertyKinds(sourceKinds, property) {
@@ -195,6 +334,10 @@ function propertyKinds(sourceKinds, property) {
   if (sourceKinds.has('url-namespace') && property === 'createObjectURL') {
     kinds.add('url-create-object-url');
   }
+  if (sourceKinds.has('project-export-namespace')
+      && PROJECT_EXPORT_FUNCTIONS.has(property)) {
+    kinds.add('project-export-function');
+  }
   if (sourceKinds.has('project')
       && ['serialized', 'security', 'state', 'payload', 'envelope'].includes(property)) {
     kinds.add('project');
@@ -202,98 +345,112 @@ function propertyKinds(sourceKinds, property) {
   return kinds;
 }
 
-function expressionKinds(node, bindings, strings, projectContext) {
+function explicitProjectName(name, projectContext) {
+  if (/^(?:project|stateBag|projectPayload)$/i.test(name)) return true;
+  return projectContext
+    && /^aad(?:Object|Bytes)?$/i.test(name);
+}
+
+function expressionKinds(node, model, projectContext) {
   const kinds = new Set();
   if (!node) return kinds;
   if (['AwaitExpression', 'ChainExpression'].includes(node.type)) {
-    return expressionKinds(node.argument ?? node.expression, bindings, strings, projectContext);
+    return expressionKinds(node.argument ?? node.expression, model, projectContext);
+  }
+  if (node.type === 'SpreadElement') {
+    return expressionKinds(node.argument, model, projectContext);
   }
   if (node.type === 'Identifier') {
-    for (const kind of bindings.get(node.name) || []) kinds.add(kind);
-    if (node.name === 'JSON') kinds.add('json-namespace');
-    if (node.name === 'Blob') kinds.add('blob-constructor');
-    if (node.name === 'URL') kinds.add('url-namespace');
-    if (node.name === 'globalThis') kinds.add('global-namespace');
-    if (projectContext
-        && /^(?:project|stateBag|projectPayload|aad(?:Object|Bytes)?|envelope|candidate|serialized|exportResult|result)$/i.test(node.name)) {
-      kinds.add('project');
+    const binding = resolveBinding(model, node, node.name);
+    if (binding) {
+      for (const kind of binding.kinds) kinds.add(kind);
+    } else {
+      if (node.name === 'JSON') kinds.add('json-namespace');
+      if (node.name === 'Blob') kinds.add('blob-constructor');
+      if (node.name === 'URL') kinds.add('url-namespace');
+      if (node.name === 'globalThis') kinds.add('global-namespace');
     }
+    if (explicitProjectName(node.name, projectContext)) kinds.add('project');
     return kinds;
   }
   if (node.type === 'MemberExpression') {
-    const sourceKinds = expressionKinds(node.object, bindings, strings, projectContext);
-    const property = staticPropertyName(node, strings);
+    const sourceKinds = expressionKinds(node.object, model, projectContext);
+    const property = staticPropertyName(node, model);
     for (const kind of propertyKinds(sourceKinds, property)) kinds.add(kind);
     return kinds;
   }
   if (node.type === 'CallExpression') {
-    const calleeKinds = expressionKinds(node.callee, bindings, strings, projectContext);
+    const calleeKinds = expressionKinds(node.callee, model, projectContext);
     if (calleeKinds.has('project-export-function')) kinds.add('project');
     if (calleeKinds.has('json-stringify')
-        && expressionKinds(node.arguments[0], bindings, strings, projectContext).has('project')) {
+        && expressionKinds(node.arguments[0], model, projectContext).has('project')) {
       kinds.add('project');
     }
     return kinds;
   }
   if (node.type === 'NewExpression') {
-    const calleeKinds = expressionKinds(node.callee, bindings, strings, projectContext);
+    const calleeKinds = expressionKinds(node.callee, model, projectContext);
     const projectData = node.arguments.some(argument => (
-      expressionKinds(argument, bindings, strings, projectContext).has('project')
+      expressionKinds(argument, model, projectContext).has('project')
     ));
     if (calleeKinds.has('blob-constructor') && projectData) kinds.add('project-blob');
     return kinds;
   }
   if (node.type === 'ArrayExpression') {
     if (node.elements.some(element => (
-      expressionKinds(element, bindings, strings, projectContext).has('project')
+      expressionKinds(element, model, projectContext).has('project')
     ))) kinds.add('project');
     return kinds;
   }
   if (node.type === 'ObjectExpression') {
-    if (objectProperty(node, 'fpic_version', strings)
-        && (objectProperty(node, 'state', strings) || objectProperty(node, 'security', strings))) {
+    if (objectProperty(node, 'fpic_version', model)
+        && (objectProperty(node, 'state', model) || objectProperty(node, 'security', model))) {
       kinds.add('project');
     }
     if (node.properties.some(property => (
-      property.type === 'Property'
-        && expressionKinds(property.value, bindings, strings, projectContext).has('project')
+      (property.type === 'Property'
+        && expressionKinds(property.value, model, projectContext).has('project'))
+      || (property.type === 'SpreadElement'
+        && expressionKinds(property.argument, model, projectContext).has('project'))
     ))) kinds.add('project');
   }
   return kinds;
 }
 
-function bindPattern(pattern, sourceKinds, bindings, strings) {
+function bindPattern(pattern, sourceKinds, model) {
   let changed = false;
   if (pattern.type === 'Identifier') {
-    changed = addKind(bindings, pattern.name, ...sourceKinds) || changed;
+    changed = addKinds(resolveBinding(model, pattern, pattern.name), sourceKinds) || changed;
+  } else if (pattern.type === 'RestElement') {
+    changed = bindPattern(pattern.argument, sourceKinds, model) || changed;
   } else if (pattern.type === 'ObjectPattern') {
     for (const property of pattern.properties) {
       if (property.type !== 'Property') continue;
-      const name = staticPropertyName(property, strings);
+      const name = staticPropertyName(property, model);
       changed = bindPattern(
         property.value,
         propertyKinds(sourceKinds, name),
-        bindings,
-        strings,
+        model,
       ) || changed;
     }
   }
   return changed;
 }
 
-function collectBindings(ast, strings, projectContext) {
-  const bindings = new Map();
+function collectBindings(model, projectContext) {
   const declarators = [];
   const assignments = [];
-  walkAst(ast, node => {
-    if (node.type === 'ImportDeclaration') {
-      for (const specifier of node.specifiers) {
-        const imported = specifier.imported?.name;
-        if (PROJECT_EXPORT_FUNCTIONS.has(imported)) {
-          addKind(bindings, specifier.local.name, 'project-export-function');
-        }
+  for (const scope of model.scopes) {
+    for (const binding of scope.bindings.values()) {
+      if (binding.importNamespace && isProjectModule(binding.importSource)) {
+        addKinds(binding, ['project-export-namespace']);
+      } else if (isProjectModule(binding.importSource)
+          && PROJECT_EXPORT_FUNCTIONS.has(binding.importedName)) {
+        addKinds(binding, ['project-export-function']);
       }
     }
+  }
+  walkAst(model.ast, node => {
     if (node.type === 'VariableDeclarator') declarators.push(node);
     if (node.type === 'AssignmentExpression' && node.operator === '=') assignments.push(node);
   });
@@ -304,27 +461,23 @@ function collectBindings(ast, strings, projectContext) {
     for (const declarator of declarators) {
       changed = bindPattern(
         declarator.id,
-        expressionKinds(declarator.init, bindings, strings, projectContext),
-        bindings,
-        strings,
+        expressionKinds(declarator.init, model, projectContext),
+        model,
       ) || changed;
     }
     for (const assignment of assignments) {
       changed = bindPattern(
         assignment.left,
-        expressionKinds(assignment.right, bindings, strings, projectContext),
-        bindings,
-        strings,
+        expressionKinds(assignment.right, model, projectContext),
+        model,
       ) || changed;
     }
   }
-  return bindings;
 }
 
-function collectConstantStrings(ast) {
-  const strings = new Map();
+function collectConstantStrings(model) {
   const declarations = [];
-  walkAst(ast, node => {
+  walkAst(model.ast, node => {
     if (node.type === 'VariableDeclaration' && node.kind === 'const') {
       declarations.push(...node.declarations);
     }
@@ -334,14 +487,14 @@ function collectConstantStrings(ast) {
     changed = false;
     for (const declaration of declarations) {
       if (declaration.id.type !== 'Identifier') continue;
-      const value = constantString(declaration.init, strings);
-      if (value !== undefined && strings.get(declaration.id.name) !== value) {
-        strings.set(declaration.id.name, value);
+      const binding = resolveBinding(model, declaration.id, declaration.id.name);
+      const value = constantString(declaration.init, model);
+      if (value !== undefined && binding?.stringValue !== value) {
+        binding.stringValue = value;
         changed = true;
       }
     }
   }
-  return strings;
 }
 
 async function analyzeSource(source, relativePath) {
@@ -354,9 +507,10 @@ async function analyzeSource(source, relativePath) {
     locations: true,
     allowAwaitOutsideFunction: true,
   });
-  const strings = collectConstantStrings(ast);
-  const projectContext = isProjectContext(relativePath, source, ast);
-  const bindings = collectBindings(ast, strings, projectContext);
+  const model = buildScopeModel(ast);
+  collectConstantStrings(model);
+  const projectContext = isProjectContext(source, ast);
+  collectBindings(model, projectContext);
   const decodedMap = transformed.map ? decodeSourceMap(transformed.map) : null;
   const violations = new Set();
   const report = (node, operation) => {
@@ -364,35 +518,35 @@ async function analyzeSource(source, relativePath) {
   };
 
   walkAst(ast, node => {
-    if (isSanitizedV5WithTable(node, strings)) {
+    if (isSanitizedV5WithTable(node, model)) {
       report(node, 'sanitized v5 payload includes sanitizationTable');
     }
     if (node.type === 'Property'
-        && staticPropertyName(node, strings) === 'mode'
+        && staticPropertyName(node, model) === 'mode'
         && literalValue(node.value) === 'reversible') {
       report(node, 'plaintext reversible project mode');
     }
     if (node.type === 'CallExpression') {
-      const calleeKinds = expressionKinds(node.callee, bindings, strings, projectContext);
+      const calleeKinds = expressionKinds(node.callee, model, projectContext);
       if (!SERIALIZATION_APPROVED.has(relativePath)
           && calleeKinds.has('json-stringify')
-          && expressionKinds(node.arguments[0], bindings, strings, projectContext)
+          && expressionKinds(node.arguments[0], model, projectContext)
             .has('project')) {
         report(node, 'project serialization');
       }
       if (!DOWNLOAD_APPROVED.has(relativePath)
           && calleeKinds.has('url-create-object-url')
-          && expressionKinds(node.arguments[0], bindings, strings, projectContext)
+          && expressionKinds(node.arguments[0], model, projectContext)
             .has('project-blob')) {
         report(node, 'project object URL creation');
       }
     }
     if (node.type === 'NewExpression'
         && !DOWNLOAD_APPROVED.has(relativePath)
-        && expressionKinds(node.callee, bindings, strings, projectContext)
+        && expressionKinds(node.callee, model, projectContext)
           .has('blob-constructor')
         && node.arguments.some(argument => (
-          expressionKinds(argument, bindings, strings, projectContext).has('project')
+          expressionKinds(argument, model, projectContext).has('project')
         ))) {
       report(node, 'project Blob construction');
     }
@@ -441,6 +595,14 @@ JSON[method](project);`,
     expected: ['public/utils/project-computed.js:3: project serialization'],
   },
   {
+    label: 'object-spread project serialization',
+    relativePath: 'public/utils/project-object-spread.js',
+    source: `const project = { fpic_version: 5, state: {} };
+const copy = { ...project };
+JSON.stringify(copy);`,
+    expected: ['public/utils/project-object-spread.js:3: project serialization'],
+  },
+  {
     label: 'JSX project serialization mapped to its original line',
     relativePath: 'public/components/ProjectBypass.jsx',
     source: `const Preview = () => <div>Project</div>;
@@ -477,6 +639,37 @@ new Blob([result.serialized]);`,
     expected: [
       'public/utils/project-export-local-alias.js:4: project Blob construction',
     ],
+  },
+  {
+    label: 'namespace project-export member call',
+    relativePath: 'public/utils/project-namespace.js',
+    source: `import * as security from './project-security.js';
+const output = await security.serializeProjectExport(stateBag, 'name');
+new Blob([output.serialized]);`,
+    expected: ['public/utils/project-namespace.js:3: project Blob construction'],
+  },
+  {
+    label: 'namespace project-export destructuring',
+    relativePath: 'public/utils/project-namespace-destructure.js',
+    source: `import * as security from './project-security.js';
+const { serializeProjectExport: exportProject } = security;
+const output = await exportProject(stateBag, 'name');
+new Blob([output.serialized]);`,
+    expected: [
+      'public/utils/project-namespace-destructure.js:4: project Blob construction',
+    ],
+  },
+  {
+    label: 'project-export and Blob alias chains',
+    relativePath: 'public/utils/project-alias-chain.js',
+    source: `import * as security from './project-security.js';
+const firstExport = security.serializeProjectExport;
+const secondExport = firstExport;
+const FirstBlob = Blob;
+const SecondBlob = FirstBlob;
+const output = await secondExport(stateBag, 'name');
+new SecondBlob([output.serialized]);`,
+    expected: ['public/utils/project-alias-chain.js:7: project Blob construction'],
   },
   {
     label: 'computed constant-property project Blob construction',
@@ -528,6 +721,14 @@ URL[method](projectBlob);`,
     ],
   },
   {
+    label: 'array-spread project Blob construction',
+    relativePath: 'public/utils/project-array-spread.js',
+    source: `import { serializeProjectExport } from './project-security.js';
+const output = await serializeProjectExport(stateBag, 'name');
+new Blob([...output.serialized]);`,
+    expected: ['public/utils/project-array-spread.js:3: project Blob construction'],
+  },
+  {
     label: 'sanitized v5 payload retaining a restoration table',
     relativePath: 'public/utils/project-table.js',
     source: `const candidate = {
@@ -541,12 +742,63 @@ JSON.stringify(candidate);`,
       'public/utils/project-table.js:6: project serialization',
     ],
   },
+  {
+    label: 'plaintext reversible project mode',
+    relativePath: 'public/utils/project-plaintext-reversible.js',
+    source: `const project = {
+  security: { mode: 'reversible' },
+};`,
+    expected: [
+      'public/utils/project-plaintext-reversible.js:2: plaintext reversible project mode',
+    ],
+  },
+];
+
+const SAFE_FIXTURES = [
+  {
+    label: 'shadowed JSON parameter',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `export function renderProject(JSON) {
+  const project = { fpic_version: 5, state: {} };
+  return JSON.stringify(project);
+}`,
+  },
+  {
+    label: 'shadowed local JSON binding',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const JSON = { stringify: value => String(value) };
+const project = { fpic_version: 5, state: {} };
+JSON.stringify(project);`,
+  },
+  {
+    label: 'shadowed Blob and URL parameters',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `export function preview(Blob, URL) {
+  const project = { fpic_version: 5, state: {} };
+  const blob = new Blob([project]);
+  return URL.createObjectURL(blob);
+}`,
+  },
+  {
+    label: 'unrelated report and API payload serialization in project-aware code',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `import { inspectProjectImport } from '../utils/project-security.js';
+const payload = await fetchReport(inspectProjectImport);
+const serialized = JSON.stringify(payload);
+const blob = new Blob([serialized], { type: 'application/json' });
+URL.createObjectURL(blob);`,
+  },
 ];
 
 describe('project export security enforcement analyzer', () => {
   it.each(BYPASS_FIXTURES)('rejects $label', async fixture => {
     await expect(analyzeSource(fixture.source, fixture.relativePath))
       .resolves.toEqual(fixture.expected);
+  });
+
+  it.each(SAFE_FIXTURES)('allows $label', async fixture => {
+    await expect(analyzeSource(fixture.source, fixture.relativePath))
+      .resolves.toEqual([]);
   });
 });
 

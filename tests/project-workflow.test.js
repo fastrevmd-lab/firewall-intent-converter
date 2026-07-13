@@ -123,6 +123,28 @@ function loadEvent(contents, size = new TextEncoder().encode(contents).length) {
   };
 }
 
+function treeContainsString(value, marker, seen = new Set()) {
+  if (typeof value === 'string') return value.includes(marker);
+  if (value === null || typeof value !== 'object' || seen.has(value)) return false;
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (Object.hasOwn(descriptor, 'value')
+        && treeContainsString(descriptor.value, marker, seen)) return true;
+  }
+  return false;
+}
+
+function allDispatchedValues() {
+  return [
+    hookHarness.configDispatch,
+    hookHarness.conversionDispatch,
+    hookHarness.mergeDispatch,
+    hookHarness.uiDispatch,
+    hookHarness.undoDispatch,
+  ].flatMap(dispatch => dispatch.mock.calls.map(([value]) => value));
+}
+
 beforeEach(() => {
   hookHarness.cleanup = null;
   hookHarness.configState = structuredClone(baseConfigState);
@@ -329,6 +351,48 @@ describe('transactional project hook orchestration', () => {
     expect(findUiAction('SET_FIELD', action => action.field === 'error')).toMatchObject({
       value: 'Sanitized export requires every populated source to be sanitized.',
     });
+  });
+
+  it('acceptance: dispatch actions omit export passphrases and stripped originals', async () => {
+    const original = 'DISPATCH-ORIGINAL-SECRET';
+    const passphrase = 'DISPATCH-EXPORT-PASSPHRASE';
+    let serialized;
+    vi.stubGlobal('Blob', vi.fn(function CaptureBlob(parts) {
+      [serialized] = parts;
+    }));
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:sanitized-project'),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({ click: vi.fn() })),
+    });
+    hookHarness.configState = {
+      ...hookHarness.configState,
+      configText: 'set system host-name SANITIZED_HOST_0',
+      isSanitized: true,
+      sanitizationTable: [{
+        type: 'hostname',
+        placeholder: 'SANITIZED_HOST_0',
+        original,
+      }],
+    };
+    const project = useProject();
+
+    await project.handleExportProject({
+      name: 'dispatch-acceptance',
+      mode: PROJECT_SECURITY_MODES.SANITIZED,
+      passphrase,
+    });
+    project.handleLoadProjectFile(loadEvent(serialized));
+    const loadConfirm = findUiAction('SHOW_MODAL', action => action.name === 'loadConfirm');
+    project.applyLoadedProject(loadConfirm.value.project, loadConfirm.value.security);
+
+    const dispatched = allDispatchedValues();
+    expect(dispatched.length).toBeGreaterThan(0);
+    for (const marker of [passphrase, original]) {
+      expect(treeContainsString(dispatched, marker), marker).toBe(false);
+    }
   });
 
   it('rejects an oversized file before FileReader reads it', () => {

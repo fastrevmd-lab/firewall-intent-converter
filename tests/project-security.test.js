@@ -188,12 +188,12 @@ describe('project security boundary', () => {
 
   it.each([
     ['quote', 'ORIGINAL-"QUOTE"-MARKER'],
-    ['forward slash', 'ORIGINAL/SLASH/MARKER'],
     ['backslash', 'ORIGINAL\\SLASH\\MARKER'],
     ['newline', 'ORIGINAL\nNEWLINE\nMARKER'],
     ['tab', 'ORIGINAL\tTAB\tMARKER'],
-    ['Unicode', 'ORIGINAL-秘密-🔐-MARKER'],
-  ])('rejects raw and JSON-escaped %s originals', (_label, marker) => {
+    ['control character', 'ORIGINAL-\u0001-MARKER'],
+    ['lone surrogate', 'ORIGINAL-' + String.fromCharCode(0xD800) + '-MARKER'],
+  ])('rejects raw and canonical JSON-escaped %s originals', (_label, marker) => {
     const prepared = prepareSanitizedProjectState({
       ...structuredClone(sanitizedState),
       sanitizationTable: table(marker),
@@ -206,8 +206,24 @@ describe('project security boundary', () => {
     const escapedCandidate = projectFrom(prepared.state);
     escapedCandidate.state.intermediateConfig.metadata[`prefix:${marker}:suffix`] = 'safe';
     const escaped = JSON.stringify(marker).slice(1, -1);
+    expect(escaped).not.toBe(marker);
     expect(JSON.stringify(escapedCandidate)).toContain(escaped);
     expect(() => assertSanitizedProjectSafe(escapedCandidate, prepared.originals))
+      .toThrow(ProjectSecurityError);
+  });
+
+  it.each([
+    ['forward slash', 'ORIGINAL/SLASH/MARKER'],
+    ['non-ASCII Unicode', 'ORIGINAL-秘密-🔐-MARKER'],
+  ])('rejects raw UTF-8 %s originals without calling them escaped', (_label, marker) => {
+    const prepared = prepareSanitizedProjectState({
+      ...structuredClone(sanitizedState),
+      sanitizationTable: table(marker),
+    });
+    expect(JSON.stringify(marker).slice(1, -1)).toBe(marker);
+    const candidate = projectFrom(prepared.state);
+    candidate.state.intermediateConfig.metadata.raw = `prefix:${marker}:suffix`;
+    expect(() => assertSanitizedProjectSafe(candidate, prepared.originals))
       .toThrow(ProjectSecurityError);
   });
 
