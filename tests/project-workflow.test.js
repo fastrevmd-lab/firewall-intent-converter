@@ -353,9 +353,8 @@ describe('transactional project hook orchestration', () => {
     });
   });
 
-  it('acceptance: dispatch actions omit export passphrases and stripped originals', async () => {
+  it('acceptance: sanitized round-trip dispatch actions omit stripped originals', async () => {
     const original = 'DISPATCH-ORIGINAL-SECRET';
-    const passphrase = 'DISPATCH-EXPORT-PASSPHRASE';
     let serialized;
     vi.stubGlobal('Blob', vi.fn(function CaptureBlob(parts) {
       [serialized] = parts;
@@ -382,12 +381,57 @@ describe('transactional project hook orchestration', () => {
     await project.handleExportProject({
       name: 'dispatch-acceptance',
       mode: PROJECT_SECURITY_MODES.SANITIZED,
-      passphrase,
     });
     project.handleLoadProjectFile(loadEvent(serialized));
     const loadConfirm = findUiAction('SHOW_MODAL', action => action.name === 'loadConfirm');
     project.applyLoadedProject(loadConfirm.value.project, loadConfirm.value.security);
 
+    const dispatched = allDispatchedValues();
+    expect(dispatched.length).toBeGreaterThan(0);
+    expect(treeContainsString(dispatched, original), original).toBe(false);
+  });
+
+  it('acceptance: reversible export and import dispatch no passphrase or original', async () => {
+    const original = 'REVERSIBLE-DISPATCH-ORIGINAL';
+    const passphrase = 'reversible dispatch passphrase';
+    let serialized;
+    vi.stubGlobal('Blob', vi.fn(function CaptureBlob(parts) {
+      [serialized] = parts;
+    }));
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:reversible-project'),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({ click: vi.fn() })),
+    });
+    hookHarness.configState = {
+      ...hookHarness.configState,
+      configText: 'set system host-name SANITIZED_HOST_0',
+      isSanitized: true,
+      sanitizationTable: [{
+        type: 'hostname',
+        placeholder: 'SANITIZED_HOST_0',
+        original,
+      }],
+    };
+    const project = useProject();
+
+    await project.handleExportProject({
+      name: 'reversible-dispatch-acceptance',
+      mode: PROJECT_SECURITY_MODES.REVERSIBLE,
+      passphrase,
+      confirmationPassphrase: passphrase,
+      acknowledgement: true,
+    });
+    project.handleLoadProjectFile(loadEvent(serialized));
+    await project.confirmPendingImport({ passphrase, acknowledgement: true });
+
+    const loadConfirm = findUiAction('SHOW_MODAL', action => action.name === 'loadConfirm');
+    expect(loadConfirm.value).toMatchObject({
+      project: { name: 'Encrypted project', state: {} },
+      security: { mode: PROJECT_SECURITY_MODES.REVERSIBLE },
+    });
     const dispatched = allDispatchedValues();
     expect(dispatched.length).toBeGreaterThan(0);
     for (const marker of [passphrase, original]) {

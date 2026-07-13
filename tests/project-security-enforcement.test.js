@@ -182,8 +182,8 @@ function isProjectContext(source, ast) {
   return projectImport;
 }
 
-function createScope(parent = null) {
-  return { parent, bindings: new Map() };
+function createScope(parent = null, type = 'block') {
+  return { parent, type, bindings: new Map() };
 }
 
 function declareIdentifier(scope, identifier, role) {
@@ -228,13 +228,20 @@ function declarePattern(scope, pattern, role, nodeScopes) {
 }
 
 function buildScopeModel(ast) {
-  const rootScope = createScope();
+  const rootScope = createScope(null, 'program');
   const scopes = [rootScope];
   const nodeScopes = new WeakMap();
-  const childScope = parent => {
-    const scope = createScope(parent);
+  const childScope = (parent, type = 'block') => {
+    const scope = createScope(parent, type);
     scopes.push(scope);
     return scope;
+  };
+  const nearestVarScope = scope => {
+    let current = scope;
+    while (current && !['function', 'program'].includes(current.type)) {
+      current = current.parent;
+    }
+    return current || rootScope;
   };
 
   const visitChildren = (node, scope, omitted = new Set()) => {
@@ -265,16 +272,17 @@ function buildScopeModel(ast) {
       return;
     }
     if (node.type === 'VariableDeclaration') {
+      const declarationScope = node.kind === 'var' ? nearestVarScope(scope) : scope;
       for (const declaration of node.declarations) {
         nodeScopes.set(declaration, scope);
-        declarePattern(scope, declaration.id, 'variable', nodeScopes);
+        declarePattern(declarationScope, declaration.id, 'variable', nodeScopes);
         visit(declaration.init, scope);
       }
       return;
     }
     if (node.type === 'FunctionDeclaration') {
       if (node.id) declareIdentifier(scope, node.id, 'function');
-      const functionScope = childScope(scope);
+      const functionScope = childScope(scope, 'function');
       for (const parameter of node.params) {
         declarePattern(functionScope, parameter, 'parameter', nodeScopes);
       }
@@ -282,7 +290,7 @@ function buildScopeModel(ast) {
       return;
     }
     if (['FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
-      const functionScope = childScope(scope);
+      const functionScope = childScope(scope, 'function');
       if (node.id) declareIdentifier(functionScope, node.id, 'function');
       for (const parameter of node.params) {
         declarePattern(functionScope, parameter, 'parameter', nodeScopes);
@@ -299,6 +307,29 @@ function buildScopeModel(ast) {
       const catchScope = childScope(scope);
       if (node.param) declarePattern(catchScope, node.param, 'parameter', nodeScopes);
       visit(node.body, catchScope);
+      return;
+    }
+    if (['ForStatement', 'ForInStatement', 'ForOfStatement'].includes(node.type)) {
+      const loopScope = childScope(scope);
+      if (node.type === 'ForStatement') {
+        visit(node.init, loopScope);
+        visit(node.test, loopScope);
+        visit(node.update, loopScope);
+      } else {
+        visit(node.left, loopScope);
+        visit(node.right, loopScope);
+      }
+      visit(node.body, loopScope);
+      return;
+    }
+    if (node.type === 'SwitchStatement') {
+      visit(node.discriminant, scope);
+      const switchScope = childScope(scope);
+      for (const switchCase of node.cases) {
+        nodeScopes.set(switchCase, switchScope);
+        visit(switchCase.test, switchScope);
+        for (const consequent of switchCase.consequent) visit(consequent, switchScope);
+      }
       return;
     }
     if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) {
@@ -351,6 +382,14 @@ function explicitProjectName(name, projectContext) {
     && /^aad(?:Object|Bytes)?$/i.test(name);
 }
 
+function combinedKinds(...groups) {
+  const combined = new Set();
+  for (const group of groups) {
+    for (const kind of group) combined.add(kind);
+  }
+  return combined;
+}
+
 function expressionKinds(node, model, projectContext) {
   const kinds = new Set();
   if (!node) return kinds;
@@ -359,6 +398,39 @@ function expressionKinds(node, model, projectContext) {
   }
   if (node.type === 'SpreadElement') {
     return expressionKinds(node.argument, model, projectContext);
+  }
+  if (node.type === 'ConditionalExpression') {
+    return combinedKinds(
+      expressionKinds(node.consequent, model, projectContext),
+      expressionKinds(node.alternate, model, projectContext),
+    );
+  }
+  if (node.type === 'LogicalExpression') {
+    return combinedKinds(
+      expressionKinds(node.left, model, projectContext),
+      expressionKinds(node.right, model, projectContext),
+    );
+  }
+  if (node.type === 'TemplateLiteral') {
+    return combinedKinds(...node.expressions.map(expression => (
+      expressionKinds(expression, model, projectContext)
+    )));
+  }
+  if (node.type === 'SequenceExpression') {
+    return expressionKinds(node.expressions.at(-1), model, projectContext);
+  }
+  if (node.type === 'AssignmentExpression') {
+    if (node.operator === '=') return expressionKinds(node.right, model, projectContext);
+    return combinedKinds(
+      expressionKinds(node.left, model, projectContext),
+      expressionKinds(node.right, model, projectContext),
+    );
+  }
+  if (node.type === 'BinaryExpression' && node.operator === '+') {
+    return combinedKinds(
+      expressionKinds(node.left, model, projectContext),
+      expressionKinds(node.right, model, projectContext),
+    );
   }
   if (node.type === 'Identifier') {
     const binding = resolveBinding(model, node, node.name);
@@ -417,12 +489,20 @@ function expressionKinds(node, model, projectContext) {
   return kinds;
 }
 
-function bindPattern(pattern, sourceKinds, model) {
+function bindPattern(pattern, sourceKinds, model, projectContext) {
   let changed = false;
   if (pattern.type === 'Identifier') {
     changed = addKinds(resolveBinding(model, pattern, pattern.name), sourceKinds) || changed;
   } else if (pattern.type === 'RestElement') {
-    changed = bindPattern(pattern.argument, sourceKinds, model) || changed;
+    changed = bindPattern(pattern.argument, sourceKinds, model, projectContext) || changed;
+  } else if (pattern.type === 'AssignmentPattern') {
+    const defaultKinds = expressionKinds(pattern.right, model, projectContext);
+    changed = bindPattern(
+      pattern.left,
+      combinedKinds(sourceKinds, defaultKinds),
+      model,
+      projectContext,
+    ) || changed;
   } else if (pattern.type === 'ObjectPattern') {
     for (const property of pattern.properties) {
       if (property.type !== 'Property') continue;
@@ -431,6 +511,7 @@ function bindPattern(pattern, sourceKinds, model) {
         property.value,
         propertyKinds(sourceKinds, name),
         model,
+        projectContext,
       ) || changed;
     }
   }
@@ -452,7 +533,7 @@ function collectBindings(model, projectContext) {
   }
   walkAst(model.ast, node => {
     if (node.type === 'VariableDeclarator') declarators.push(node);
-    if (node.type === 'AssignmentExpression' && node.operator === '=') assignments.push(node);
+    if (node.type === 'AssignmentExpression') assignments.push(node);
   });
 
   let changed = true;
@@ -463,6 +544,7 @@ function collectBindings(model, projectContext) {
         declarator.id,
         expressionKinds(declarator.init, model, projectContext),
         model,
+        projectContext,
       ) || changed;
     }
     for (const assignment of assignments) {
@@ -470,6 +552,7 @@ function collectBindings(model, projectContext) {
         assignment.left,
         expressionKinds(assignment.right, model, projectContext),
         model,
+        projectContext,
       ) || changed;
     }
   }
@@ -603,6 +686,37 @@ JSON.stringify(copy);`,
     expected: ['public/utils/project-object-spread.js:3: project serialization'],
   },
   {
+    label: 'conditional project serialization',
+    relativePath: 'public/utils/project-conditional.js',
+    source: `const project = { fpic_version: 5, state: {} };
+JSON.stringify(enabled ? project : {});`,
+    expected: ['public/utils/project-conditional.js:2: project serialization'],
+  },
+  {
+    label: 'nullish project serialization',
+    relativePath: 'public/utils/project-nullish.js',
+    source: `const project = { fpic_version: 5, state: {} };
+JSON.stringify(project ?? {});`,
+    expected: ['public/utils/project-nullish.js:2: project serialization'],
+  },
+  {
+    label: 'sequence project serialization',
+    relativePath: 'public/utils/project-sequence.js',
+    source: `const project = { fpic_version: 5, state: {} };
+JSON.stringify(({}, project));`,
+    expected: ['public/utils/project-sequence.js:2: project serialization'],
+  },
+  {
+    label: 'assignment-expression project serialization',
+    relativePath: 'public/utils/project-assignment-expression.js',
+    source: `const project = { fpic_version: 5, state: {} };
+let candidate;
+JSON.stringify(candidate = project);`,
+    expected: [
+      'public/utils/project-assignment-expression.js:3: project serialization',
+    ],
+  },
+  {
     label: 'JSX project serialization mapped to its original line',
     relativePath: 'public/components/ProjectBypass.jsx',
     source: `const Preview = () => <div>Project</div>;
@@ -657,6 +771,17 @@ const output = await exportProject(stateBag, 'name');
 new Blob([output.serialized]);`,
     expected: [
       'public/utils/project-namespace-destructure.js:4: project Blob construction',
+    ],
+  },
+  {
+    label: 'defaulted namespace project-export destructuring',
+    relativePath: 'public/utils/project-namespace-default.js',
+    source: `import * as security from './project-security.js';
+const { serializeProjectExport: exportProject = fallback } = security;
+const output = await exportProject(stateBag, 'name');
+new Blob([output.serialized]);`,
+    expected: [
+      'public/utils/project-namespace-default.js:4: project Blob construction',
     ],
   },
   {
@@ -729,6 +854,30 @@ new Blob([...output.serialized]);`,
     expected: ['public/utils/project-array-spread.js:3: project Blob construction'],
   },
   {
+    label: 'interpolated-template project Blob construction',
+    relativePath: 'public/utils/project-template.js',
+    source: `import { serializeProjectExport } from './project-security.js';
+const output = await serializeProjectExport(stateBag, 'name');
+new Blob([\`\${output.serialized}\`]);`,
+    expected: ['public/utils/project-template.js:3: project Blob construction'],
+  },
+  {
+    label: 'binary-concatenated project Blob construction',
+    relativePath: 'public/utils/project-binary.js',
+    source: `import { serializeProjectExport } from './project-security.js';
+const output = await serializeProjectExport(stateBag, 'name');
+new Blob(['prefix:' + output.serialized]);`,
+    expected: ['public/utils/project-binary.js:3: project Blob construction'],
+  },
+  {
+    label: 'global JSON after a loop-local shadow',
+    relativePath: 'public/utils/project-loop-scope.js',
+    source: `const project = { fpic_version: 5, state: {} };
+for (let JSON of []) {}
+JSON.stringify(project);`,
+    expected: ['public/utils/project-loop-scope.js:3: project serialization'],
+  },
+  {
     label: 'sanitized v5 payload retaining a restoration table',
     relativePath: 'public/utils/project-table.js',
     source: `const candidate = {
@@ -787,6 +936,53 @@ const payload = await fetchReport(inspectProjectImport);
 const serialized = JSON.stringify(payload);
 const blob = new Blob([serialized], { type: 'application/json' });
 URL.createObjectURL(blob);`,
+  },
+  {
+    label: 'conditional unrelated report serialization',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const report = enabled ? await fetchReport() : {};
+JSON.stringify(report);`,
+  },
+  {
+    label: 'project used only as a conditional test',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const project = { fpic_version: 5, state: {} };
+const report = await fetchReport();
+JSON.stringify(project ? report : {});`,
+  },
+  {
+    label: 'sequence expression that discards project data',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const project = { fpic_version: 5, state: {} };
+JSON.stringify((project, {}));`,
+  },
+  {
+    label: 'unrelated interpolated report download',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const report = await fetchReport();
+new Blob([\`report:\${report}\`]);`,
+  },
+  {
+    label: 'unrelated binary-concatenated report download',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const report = await fetchReport();
+new Blob(['report:' + report]);`,
+  },
+  {
+    label: 'unrelated assignment-expression serialization',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `const report = await fetchReport();
+let candidate;
+JSON.stringify(candidate = report);`,
+  },
+  {
+    label: 'function-hoisted var JSON declared inside a block',
+    relativePath: 'public/components/ProjectDashboard.jsx',
+    source: `export function render(enabled) {
+  const project = { fpic_version: 5, state: {} };
+  if (enabled) { var JSON = customJson; }
+  return JSON.stringify(project);
+}`,
   },
 ];
 

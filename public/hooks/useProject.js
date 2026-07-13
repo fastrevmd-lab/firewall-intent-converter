@@ -164,7 +164,17 @@ export function projectSecurityMessage(error, operation = 'export') {
 function prepareValidatedImportCandidate(project, security, warnings) {
   try {
     const snapshot = structuredClone({ project, security, warnings });
-    const confirmation = structuredClone(snapshot);
+    const confirmation = snapshot.security.mode === PROJECT_SECURITY_MODES.REVERSIBLE
+      ? {
+        project: {
+          name: 'Encrypted project',
+          savedAt: snapshot.project.savedAt,
+          state: {},
+        },
+        security: structuredClone(snapshot.security),
+        warnings: structuredClone(snapshot.warnings),
+      }
+      : structuredClone(snapshot);
     return {
       candidate: {
         snapshot,
