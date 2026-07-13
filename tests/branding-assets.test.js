@@ -61,4 +61,20 @@ describe('Mechub browser identity assets', () => {
       expect(output).not.toContain('Firewall Intent Converter');
     }
   });
+
+  it('uses the canonical identity in maintained documentation and push workflows', () => {
+    const sources = [
+      read('DESIGN.md'),
+      read('tools/pyez-bridge/app.py'),
+      read('tools/pyez-bridge/README.md'),
+      read('public/components/PushModal.jsx'),
+      read('public/hooks/usePush.js'),
+    ];
+
+    for (const source of sources) {
+      expect(source).not.toContain('Firewall Policy Converter');
+      expect(source).not.toContain('Firewall Intent Converter');
+      expect(source).toContain('firewallintentconverter');
+    }
+  });
 });

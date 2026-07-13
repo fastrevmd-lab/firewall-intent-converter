@@ -21,7 +21,7 @@ describe('Mechub color semantics', () => {
     expect(componentAndStyleSource.toLowerCase()).not.toContain(color);
   });
 
-  it.each(['#a78bfa', '#db2777', '#be185d', '#c084fc', '#d8b4fe', '#a5b4fc', '#4c1d95', '#3b0764', '#312e81', '#4a1d6a', '#a855f7', '#6366f1', '#ec4899', '#f472b6'])('removes noncanonical decorative/model color %s', color => {
+  it.each(['#84b135', '#a78bfa', '#db2777', '#be185d', '#c084fc', '#d8b4fe', '#a5b4fc', '#4c1d95', '#3b0764', '#312e81', '#4a1d6a', '#a855f7', '#6366f1', '#ec4899', '#f472b6'])('removes noncanonical decorative/model color %s', color => {
     expect(componentAndStyleSource.toLowerCase()).not.toContain(color);
   });
 
@@ -31,5 +31,11 @@ describe('Mechub color semantics', () => {
     expect(css).toContain('--model-text: #C4B5FD');
     expect(css).toContain('--llm-cloud: var(--model-plum)');
     expect(css).toContain('--llm-local: var(--model-plum)');
+  });
+
+  it('uses semantic tokens for target identity and current-model status', () => {
+    const selector = readFileSync(join(root, 'public/components/ModelSelector.jsx'), 'utf8');
+    expect(selector).toContain("color: 'var(--juniper-green)'");
+    expect(selector).toContain("color: vendor === 'srx' ? 'var(--juniper-green)' : 'var(--success)'");
   });
 });

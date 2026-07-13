@@ -37,4 +37,19 @@ describe('Mechub style contract', () => {
       expect(read(path)).toContain('styles/brand.css');
     }
   });
+
+  it('gives every native and ARIA control the Mechub keyboard focus ring', () => {
+    const brandCss = read('public/styles/brand.css');
+    expect(brandCss).toContain(':focus-visible');
+    expect(brandCss).toContain('outline: 2px solid var(--accent) !important');
+    for (const selector of ['button', '[role="button"]', 'a', 'input', 'select', 'textarea']) {
+      expect(brandCss).toContain(selector);
+    }
+  });
+
+  it('uses branded scrollbars in Firefox as well as WebKit browsers', () => {
+    const css = read('public/styles/main.css');
+    expect(css).toContain('scrollbar-width: thin');
+    expect(css).toContain('scrollbar-color: var(--bg-elevated) var(--bg-secondary)');
+  });
 });

@@ -6,6 +6,11 @@ button,
   font-family: var(--font-mono);
 }
 
+:where(button, [role="button"], a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+}
+
 :where(.btn, .btn-primary, .btn-secondary, .btn-sm, .btn-translate, .risk-btn-accept, .risk-btn-local, .risk-btn-reject) {
   min-height: var(--control-height);
   border-radius: var(--control-radius) !important;
