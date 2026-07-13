@@ -21,6 +21,7 @@ import { parseCiscoAsaConfig } from '../src/parsers/cisco-asa-parser.js';
 import { parseFortigateConfig } from '../src/parsers/fortigate-parser.js';
 import { parsePanosConfig } from '../src/parsers/panos-parser.js';
 import { sanitizeConfig } from '../public/utils/engine.js';
+import { findSecretsInText } from '../public/utils/secret-detection.js';
 import {
   ProjectCryptoError,
   encryptReversiblePayload,
@@ -490,6 +491,57 @@ end`,
 end`,
     },
   ];
+
+  const FORTIGATE_NESTED_SNMP_EXPORT = {
+    markers: ['FIRST-SNMP-EXPORT', 'SECOND-SNMP-EXPORT', 'THIRD-SNMP-EXPORT'],
+    text: `config system snmp community
+ edit 1
+  set name "FIRST-SNMP-EXPORT"
+  config hosts
+   edit 1
+    set ip 192.0.2.1 255.255.255.255
+   next
+  end
+ next
+ edit 2
+  set name SECOND-SNMP-EXPORT
+ next
+ edit 3
+  set name ENC "THIRD-SNMP-EXPORT"
+ next
+end`,
+  };
+
+  it('keeps every nested FortiGate SNMP marker out of sanitized final bytes', async () => {
+    const { text, markers } = FORTIGATE_NESTED_SNMP_EXPORT;
+    expect(findSecretsInText(text)).toHaveLength(3);
+    await expect(serializeProjectExport({
+      ...baseState,
+      configText: text,
+      isSanitized: true,
+      sanitizationTable: null,
+    }, 'unsafe-nested-snmp', { mode: 'sanitized' }))
+      .rejects.toMatchObject({ code: 'secret_leak' });
+
+    const sanitized = sanitizeConfig(text);
+    expect(sanitized.replacements).toHaveLength(3);
+    const parsed = parseFortigateConfig(sanitized.sanitizedText);
+    expect(parsed.intermediateConfig).toBeDefined();
+    const result = await serializeProjectExport({
+      ...baseState,
+      configText: sanitized.sanitizedText,
+      intermediateConfig: parsed.intermediateConfig,
+      isSanitized: true,
+      sanitizationTable: sanitized.replacements,
+    }, 'safe-nested-snmp', { mode: 'sanitized' });
+
+    for (const marker of markers) expect(result.serialized).not.toContain(marker);
+    for (const entry of sanitized.replacements) {
+      expect(result.serialized).toContain(entry.placeholder);
+      expect(entry).not.toHaveProperty('restore');
+    }
+    expect(result.serialized).not.toContain('sanitizationTable');
+  });
 
   it.each(FORTIGATE_MULTI_ENTRY_EXPORT_CASES)(
     'keeps every multi-entry FortiGate $label marker out of sanitized final bytes',

@@ -9,17 +9,18 @@ export function readProjectSecurityDescriptor(getDescriptor) {
 }
 
 export default function ProjectSecurityBadge({ mode, descriptor }) {
-  const safe = descriptor?.mode === 'sanitized'
+  const liveSanitized = descriptor?.mode === 'sanitized'
     && descriptor?.sanitizedEligible === true;
-  const reversible = safe
-    && mode === 'reversible-encrypted'
+  const safe = mode === 'sanitized' && liveSanitized;
+  const reversible = mode === 'reversible-encrypted'
+    && liveSanitized
     && descriptor?.reversibleAvailable === true;
-  const copy = reversible
-    ? 'Encrypted reversible — sensitive'
-    : safe
-      ? 'Sanitized — safe to share'
-      : mode === 'legacy-secret-bearing'
-        ? 'Legacy secret-bearing — sensitive'
+  const copy = mode === 'legacy-secret-bearing'
+    ? 'Legacy secret-bearing — sensitive'
+    : reversible
+      ? 'Encrypted reversible — sensitive'
+      : safe
+        ? 'Sanitized — safe to share'
         : 'Unsanitized or stale — sensitive';
   return (
     <div

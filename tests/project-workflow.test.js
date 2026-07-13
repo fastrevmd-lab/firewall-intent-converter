@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hookHarness = vi.hoisted(() => ({
   cleanup: null,
+  memoCursor: 0,
+  memoSlots: [],
   configState: {},
   configDispatch: null,
   conversionState: {},
@@ -18,8 +20,31 @@ vi.mock('react', () => ({
   useEffect: effect => {
     hookHarness.cleanup = effect();
   },
+  useMemo: (factory, dependencies) => {
+    const index = hookHarness.memoCursor;
+    hookHarness.memoCursor += 1;
+    const previous = hookHarness.memoSlots[index];
+    if (previous
+        && dependencies.length === previous.dependencies.length
+        && dependencies.every((dependency, dependencyIndex) => (
+          Object.is(dependency, previous.dependencies[dependencyIndex])
+        ))) {
+      return previous.value;
+    }
+    const value = factory();
+    hookHarness.memoSlots[index] = { dependencies, value };
+    return value;
+  },
   useRef: initialValue => ({ current: initialValue }),
 }));
+
+vi.mock('../public/utils/project-security.js', async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    classifyProjectSecurity: vi.fn(actual.classifyProjectSecurity),
+  };
+});
 
 vi.mock('../public/contexts/ConfigContext.jsx', () => ({
   useConfigContext: () => ({
@@ -61,6 +86,7 @@ import useProject, {
 import {
   MAX_PROJECT_FILE_BYTES,
   PROJECT_SECURITY_MODES,
+  classifyProjectSecurity,
   serializeProjectExport,
 } from '../public/utils/project-security.js';
 import { encryptReversiblePayload } from '../public/utils/project-crypto.js';
@@ -146,8 +172,15 @@ function allDispatchedValues() {
   ].flatMap(dispatch => dispatch.mock.calls.map(([value]) => value));
 }
 
+function renderProjectHook() {
+  hookHarness.memoCursor = 0;
+  return useProject();
+}
+
 beforeEach(() => {
   hookHarness.cleanup = null;
+  hookHarness.memoCursor = 0;
+  hookHarness.memoSlots = [];
   hookHarness.configState = structuredClone(baseConfigState);
   hookHarness.configDispatch = vi.fn();
   hookHarness.conversionState = structuredClone(baseConversionState);
@@ -157,6 +190,7 @@ beforeEach(() => {
   hookHarness.uiState = structuredClone(baseUiState);
   hookHarness.uiDispatch = vi.fn();
   hookHarness.undoDispatch = vi.fn();
+  classifyProjectSecurity.mockClear();
 
   vi.stubGlobal('FileReader', class FakeFileReader {
     readAsText(file) {
@@ -170,6 +204,46 @@ afterEach(() => {
 });
 
 describe('secure project workflow helpers', () => {
+  it('memoizes live export classification across unrelated UI rerenders', () => {
+    const initial = renderProjectHook().getExportDescriptor();
+    expect(classifyProjectSecurity).toHaveBeenCalledOnce();
+
+    hookHarness.uiState = { ...hookHarness.uiState, bottomTab: 'warnings' };
+    const afterUi = renderProjectHook().getExportDescriptor();
+    expect(afterUi).toBe(initial);
+    expect(classifyProjectSecurity).toHaveBeenCalledOnce();
+
+    hookHarness.configState = structuredClone(hookHarness.configState);
+    const afterConfig = renderProjectHook().getExportDescriptor();
+    expect(afterConfig).not.toBe(afterUi);
+    expect(classifyProjectSecurity).toHaveBeenCalledTimes(2);
+
+    hookHarness.conversionState = structuredClone(hookHarness.conversionState);
+    const afterConversion = renderProjectHook().getExportDescriptor();
+    expect(afterConversion).not.toBe(afterConfig);
+    expect(classifyProjectSecurity).toHaveBeenCalledTimes(3);
+
+    hookHarness.mergeState = structuredClone(hookHarness.mergeState);
+    const afterMerge = renderProjectHook().getExportDescriptor();
+    expect(afterMerge).not.toBe(afterConversion);
+    expect(classifyProjectSecurity).toHaveBeenCalledTimes(4);
+  });
+
+  it('memoizes descriptor failures as a conservative unknown state', () => {
+    hookHarness.configState.configText = () => 'unsupported state';
+
+    let project;
+    expect(() => {
+      project = renderProjectHook();
+    }).not.toThrow();
+    expect(project.getExportDescriptor()).toBeNull();
+    expect(classifyProjectSecurity).toHaveBeenCalledOnce();
+
+    hookHarness.uiState = { ...hookHarness.uiState, editTab: 'objects' };
+    expect(renderProjectHook().getExportDescriptor()).toBeNull();
+    expect(classifyProjectSecurity).toHaveBeenCalledOnce();
+  });
+
   it('includes nested merge restoration tables in the security boundary input', () => {
     const nestedTable = [{
       type: 'hostname',

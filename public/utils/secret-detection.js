@@ -13,7 +13,7 @@ function blockSyntax(
   ruleId,
   category,
   placeholderKind,
-  blockRegex,
+  blockHeader,
   entryRegex,
   valueGroups,
   render,
@@ -22,7 +22,7 @@ function blockSyntax(
     ruleId,
     category,
     placeholderKind,
-    blockRegex,
+    blockHeader,
     entryRegex,
     valueGroups,
     render,
@@ -36,6 +36,55 @@ const fortigateBlockEntry = (groups, placeholder) => (
     ? groups[1] + '"' + placeholder + '"'
     : groups[1] + placeholder
 );
+
+function nextLineEnd(text, start) {
+  const newline = text.indexOf('\n', start);
+  const carriage = text.indexOf('\r', start);
+  if (newline < 0 && carriage < 0) return text.length;
+  if (carriage >= 0 && (newline < 0 || carriage < newline)) {
+    return carriage + (text[carriage + 1] === '\n' ? 2 : 1);
+  }
+  return newline + 1;
+}
+
+function lineWithoutEnding(text, start, end) {
+  let contentEnd = end;
+  if (contentEnd > start && text[contentEnd - 1] === '\n') contentEnd -= 1;
+  if (contentEnd > start && text[contentEnd - 1] === '\r') contentEnd -= 1;
+  return text.slice(start, contentEnd);
+}
+
+function matchesLine(regex, line) {
+  regex.lastIndex = 0;
+  return regex.test(line);
+}
+
+function fortigateBlockRegions(text, targetHeader) {
+  const regions = [];
+  let blockStart = -1;
+  let depth = 0;
+  let lineStart = 0;
+  while (lineStart < text.length) {
+    const lineEnd = nextLineEnd(text, lineStart);
+    const line = lineWithoutEnding(text, lineStart, lineEnd);
+    if (blockStart < 0) {
+      if (matchesLine(targetHeader, line)) {
+        blockStart = lineStart;
+        depth = 1;
+      }
+    } else if (/^[ \t]*config(?:[ \t]+|$)/i.test(line)) {
+      depth += 1;
+    } else if (/^[ \t]*end[ \t]*$/i.test(line)) {
+      depth -= 1;
+      if (depth === 0) {
+        regions.push(Object.freeze({ start: blockStart, end: lineEnd }));
+        blockStart = -1;
+      }
+    }
+    lineStart = lineEnd;
+  }
+  return regions;
+}
 
 const SECRET_SYNTAXES = Object.freeze([
   syntax('xml-nested-key', 'key', 'KEY', /(<(?:pre-shared-key|api-key|auth-key|secret|key)>\s*<key>)([^<]+)(<\/key>)/gi, 2,
@@ -62,7 +111,7 @@ const SECRET_SYNTAXES = Object.freeze([
     'fortigate-tacacs-block-key',
     'key',
     'KEY',
-    /^[ \t]*config[ \t]+user[ \t]+tacacs\+[ \t]*\r?\n[\s\S]*?^[ \t]*end[ \t]*\r?$/gim,
+    /^[ \t]*config[ \t]+user[ \t]+tacacs\+[ \t]*$/i,
     /(^[ \t]*set[ \t]+key[ \t]+)(?:(ENC[ \t]+(?:"[^"\r\n]+"|\S+))|"([^"\r\n]+)"|(\S+))[ \t]*$/gim,
     [2, 3, 4],
     fortigateBlockEntry,
@@ -71,7 +120,7 @@ const SECRET_SYNTAXES = Object.freeze([
     'fortigate-snmp-block-name',
     'community',
     'COMMUNITY',
-    /^[ \t]*config[ \t]+system[ \t]+snmp[ \t]+community[ \t]*\r?\n[\s\S]*?^[ \t]*end[ \t]*\r?$/gim,
+    /^[ \t]*config[ \t]+system[ \t]+snmp[ \t]+community[ \t]*$/i,
     /(^[ \t]*set[ \t]+name[ \t]+)(?:(ENC[ \t]+(?:"[^"\r\n]+"|\S+))|"([^"\r\n]+)"|(\S+))[ \t]*$/gim,
     [2, 3, 4],
     fortigateBlockEntry,
@@ -140,10 +189,12 @@ export function findSecretsInText(text) {
   if (typeof text !== 'string') return [];
   const findings = [];
   for (const spec of SECRET_SYNTAXES) {
-    const regions = spec.blockRegex
-      ? [...text.matchAll(cloneRegex(spec.blockRegex))].map(match => match[0])
+    const regions = spec.blockHeader
+      ? fortigateBlockRegions(text, spec.blockHeader).map(region => (
+        text.slice(region.start, region.end)
+      ))
       : [text];
-    const entryRegex = spec.blockRegex ? spec.entryRegex : spec.regex;
+    const entryRegex = spec.blockHeader ? spec.entryRegex : spec.regex;
     for (const region of regions) {
       for (const match of region.matchAll(cloneRegex(entryRegex))) {
         const original = secretValue(spec, match);
@@ -175,11 +226,22 @@ export function redactConfigSecrets(text) {
       counts[spec.category === 'certificate' ? 'cert' : spec.category] += 1;
       return spec.render(groups, placeholder);
     };
-    output = spec.blockRegex
-      ? output.replace(cloneRegex(spec.blockRegex), block => (
-        block.replace(cloneRegex(spec.entryRegex), replaceEntry)
-      ))
-      : output.replace(cloneRegex(spec.regex), replaceEntry);
+    if (spec.blockHeader) {
+      const regions = fortigateBlockRegions(output, spec.blockHeader);
+      const source = output;
+      const segments = [];
+      let cursor = 0;
+      for (const { start, end } of regions) {
+        segments.push(source.slice(cursor, start));
+        const block = source.slice(start, end);
+        segments.push(block.replace(cloneRegex(spec.entryRegex), replaceEntry));
+        cursor = end;
+      }
+      segments.push(source.slice(cursor));
+      output = segments.join('');
+    } else {
+      output = output.replace(cloneRegex(spec.regex), replaceEntry);
+    }
   }
   return { text: output, replacements, counts };
 }

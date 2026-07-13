@@ -184,7 +184,74 @@ end`,
   },
 ];
 
+const FORTIGATE_NESTED_SNMP_BLOCK = `config system snmp community
+ edit 1
+  set name "FIRST-SNMP-SECRET"
+  config hosts
+   edit 1
+    set ip 192.0.2.1 255.255.255.255
+   next
+  end
+ next
+ edit 2
+  set name SECOND-SNMP-SECRET
+ next
+ edit 3
+  set name ENC "THIRD-SNMP-SECRET"
+ next
+end`;
+
 describe('firewall secret registry', () => {
+  it('keeps the complete nested FortiGate target block in secret scope', () => {
+    const markers = [
+      'FIRST-SNMP-SECRET',
+      'SECOND-SNMP-SECRET',
+      'THIRD-SNMP-SECRET',
+    ];
+    const findings = findSecretsInText(FORTIGATE_NESTED_SNMP_BLOCK);
+    const redacted = redactConfigSecrets(FORTIGATE_NESTED_SNMP_BLOCK);
+    const sanitized = sanitizeConfig(FORTIGATE_NESTED_SNMP_BLOCK);
+
+    expect(findings).toHaveLength(3);
+    expect(redacted.replacements).toHaveLength(3);
+    expect(sanitized.replacements).toHaveLength(3);
+    for (const marker of markers) {
+      expect(redacted.text).not.toContain(marker);
+      expect(sanitized.sanitizedText).not.toContain(marker);
+      expect(redacted.replacements.some(entry => entry.original.includes(marker))).toBe(true);
+    }
+    for (const entry of redacted.replacements) {
+      expect(entry).toEqual({
+        type: 'community',
+        placeholder: entry.placeholder,
+        original: entry.original,
+      });
+      expect(redacted.text).toContain(entry.placeholder);
+      expect(entry).not.toHaveProperty('restore');
+    }
+    expect(findSecretsInText(redacted.text)).toEqual([]);
+    expect(redactConfigSecrets(redacted.text).replacements).toEqual([]);
+  });
+
+  it('scans multiple complete nested FortiGate target blocks', () => {
+    const second = FORTIGATE_NESTED_SNMP_BLOCK
+      .replaceAll('FIRST-SNMP-SECRET', 'FOURTH-SNMP-SECRET')
+      .replaceAll('SECOND-SNMP-SECRET', 'FIFTH-SNMP-SECRET')
+      .replaceAll('THIRD-SNMP-SECRET', 'SIXTH-SNMP-SECRET');
+    const text = `${FORTIGATE_NESTED_SNMP_BLOCK}\n${second}`;
+    const redacted = redactConfigSecrets(text);
+
+    expect(findSecretsInText(text)).toHaveLength(6);
+    expect(redacted.replacements.map(entry => entry.original)).toEqual([
+      'FIRST-SNMP-SECRET',
+      'SECOND-SNMP-SECRET',
+      'ENC "THIRD-SNMP-SECRET"',
+      'FOURTH-SNMP-SECRET',
+      'FIFTH-SNMP-SECRET',
+      'ENC "SIXTH-SNMP-SECRET"',
+    ]);
+  });
+
   it.each(FORTIGATE_MULTI_ENTRY_BLOCKS)(
     'enumerates and redacts every bounded FortiGate $label entry',
     ({ text, markers, type }) => {

@@ -28,9 +28,14 @@ describe('project security UI', () => {
   it.each([
     ['sanitized', { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: false }, 'Sanitized — safe to share', true],
     ['reversible-encrypted', { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: true }, 'Encrypted reversible — sensitive', false],
+    ['reversible-encrypted', { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: false }, 'Unsanitized or stale — sensitive', false],
     ['unsanitized', { mode: 'unsanitized', sanitizedEligible: false, reversibleAvailable: false }, 'Unsanitized or stale — sensitive', false],
-    ['legacy-secret-bearing', { mode: 'unsanitized', sanitizedEligible: false, reversibleAvailable: false }, 'Legacy secret-bearing — sensitive', false],
-    ['future-unknown-mode', null, 'Unsanitized or stale — sensitive', false],
+    ['unsanitized', { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: true }, 'Unsanitized or stale — sensitive', false],
+    ['legacy-secret-bearing', { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: true }, 'Legacy secret-bearing — sensitive', false],
+    ['future-unknown-mode', { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: true }, 'Unsanitized or stale — sensitive', false],
+    [undefined, { mode: 'sanitized', sanitizedEligible: true, reversibleAvailable: true }, 'Unsanitized or stale — sensitive', false],
+    ['sanitized', { mode: 'unsanitized', sanitizedEligible: false, reversibleAvailable: false }, 'Unsanitized or stale — sensitive', false],
+    ['sanitized', null, 'Unsanitized or stale — sensitive', false],
   ])('renders persistent workspace classification for %s', (mode, descriptor, copy, safe) => {
     const html = renderToStaticMarkup(
       <ProjectSecurityBadge mode={mode} descriptor={descriptor} />,

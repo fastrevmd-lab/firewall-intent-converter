@@ -5,7 +5,7 @@
  * and restoring all application state from a loaded project.
  * Uses ConfigContext, UIContext, ConversionContext, MergeContext, and UndoContext.
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useConfigContext } from '../contexts/ConfigContext.jsx';
 import { useUIContext } from '../contexts/UIContext.jsx';
 import { useConversionContext } from '../contexts/ConversionContext.jsx';
@@ -50,6 +50,11 @@ const RETRYABLE_IMPORT_CODES = new Set([
   'invalid_passphrase',
   'decryption_failed',
 ]);
+const CLASSIFICATION_UI_STATE = Object.freeze({
+  editTab: '',
+  platformView: '',
+  bottomTab: '',
+});
 
 export function assembleProjectStateBag(configState, conversionState, uiState, mergeState) {
   return {
@@ -213,9 +218,22 @@ export default function useProject() {
   // -----------------------------------------------------------------------
   // Secure export — serialize through the project security boundary first.
   // -----------------------------------------------------------------------
-  const getExportDescriptor = useCallback(() => classifyProjectSecurity(
-    assembleProjectStateBag(configState, conversionState, uiState, mergeState),
-  ), [configState, conversionState, uiState, mergeState]);
+  const exportDescriptor = useMemo(() => {
+    try {
+      return classifyProjectSecurity(assembleProjectStateBag(
+        configState,
+        conversionState,
+        CLASSIFICATION_UI_STATE,
+        mergeState,
+      ));
+    } catch {
+      return null;
+    }
+  }, [configState, conversionState, mergeState]);
+  const getExportDescriptor = useCallback(
+    () => exportDescriptor,
+    [exportDescriptor],
+  );
 
   const handleExportProject = useCallback(async request => {
     uiDispatch({ type: 'SET_LOADING', isLoading: true, message: 'Preparing project export...' });
