@@ -9,9 +9,8 @@ const SERIALIZATION_APPROVED = new Set([
   'public/utils/project-security.js',
   'public/utils/project-crypto.js',
 ]);
-const DOWNLOAD_APPROVED = new Set([
-  'public/hooks/useProject.js',
-]);
+const DOWNLOAD_APPROVED_PATH = 'public/hooks/useProject.js';
+const DOWNLOAD_APPROVED_FUNCTION = 'downloadValidatedProject';
 
 function publicJavaScriptFiles(directory = resolve(ROOT, 'public')) {
   return readdirSync(directory, { withFileTypes: true })
@@ -373,6 +372,9 @@ function propertyKinds(sourceKinds, property) {
       && ['serialized', 'security', 'state', 'payload', 'envelope'].includes(property)) {
     kinds.add('project');
   }
+  if (sourceKinds.has('validated-project-result') && property === 'serialized') {
+    kinds.add('validated-project');
+  }
   return kinds;
 }
 
@@ -454,6 +456,13 @@ function expressionKinds(node, model, projectContext) {
   if (node.type === 'CallExpression') {
     const calleeKinds = expressionKinds(node.callee, model, projectContext);
     if (calleeKinds.has('project-export-function')) kinds.add('project');
+    if (node.callee.type === 'Identifier'
+        && node.callee.name === 'ownDataValue'
+        && expressionKinds(node.arguments[0], model, projectContext)
+          .has('validated-project-result')
+        && constantString(node.arguments[1], model) === 'serialized') {
+      kinds.add('validated-project');
+    }
     if (calleeKinds.has('json-stringify')
         && expressionKinds(node.arguments[0], model, projectContext).has('project')) {
       kinds.add('project');
@@ -462,16 +471,25 @@ function expressionKinds(node, model, projectContext) {
   }
   if (node.type === 'NewExpression') {
     const calleeKinds = expressionKinds(node.callee, model, projectContext);
-    const projectData = node.arguments.some(argument => (
-      expressionKinds(argument, model, projectContext).has('project')
+    const argumentKinds = node.arguments.map(argument => (
+      expressionKinds(argument, model, projectContext)
     ));
+    const projectData = argumentKinds.some(group => group.has('project'));
+    const validatedProjectData = argumentKinds.some(group => group.has('validated-project'));
     if (calleeKinds.has('blob-constructor') && projectData) kinds.add('project-blob');
+    if (calleeKinds.has('blob-constructor') && validatedProjectData) {
+      kinds.add('validated-project-blob');
+    }
     return kinds;
   }
   if (node.type === 'ArrayExpression') {
-    if (node.elements.some(element => (
-      expressionKinds(element, model, projectContext).has('project')
-    ))) kinds.add('project');
+    const elementKinds = node.elements.map(element => (
+      expressionKinds(element, model, projectContext)
+    ));
+    if (elementKinds.some(group => group.has('project'))) kinds.add('project');
+    if (elementKinds.some(group => group.has('validated-project'))) {
+      kinds.add('validated-project');
+    }
     return kinds;
   }
   if (node.type === 'ObjectExpression') {
@@ -487,6 +505,26 @@ function expressionKinds(node, model, projectContext) {
     ))) kinds.add('project');
   }
   return kinds;
+}
+
+function namedFunction(ast, name) {
+  for (const statement of ast.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration'
+      ? statement.declaration
+      : statement;
+    if (declaration?.type === 'FunctionDeclaration' && declaration.id?.name === name) {
+      return declaration;
+    }
+  }
+  return undefined;
+}
+
+function identifierFromPattern(pattern) {
+  if (pattern?.type === 'Identifier') return pattern;
+  if (pattern?.type === 'AssignmentPattern' && pattern.left.type === 'Identifier') {
+    return pattern.left;
+  }
+  return undefined;
 }
 
 function bindPattern(pattern, sourceKinds, model, projectContext) {
@@ -593,12 +631,34 @@ async function analyzeSource(source, relativePath) {
   const model = buildScopeModel(ast);
   collectConstantStrings(model);
   const projectContext = isProjectContext(source, ast);
+  const approvedDownloadFunction = relativePath === DOWNLOAD_APPROVED_PATH
+    ? namedFunction(ast, DOWNLOAD_APPROVED_FUNCTION)
+    : undefined;
+  if (approvedDownloadFunction) {
+    const resultParameter = identifierFromPattern(approvedDownloadFunction.params[0]);
+    const environmentParameter = identifierFromPattern(approvedDownloadFunction.params[1]);
+    if (resultParameter) {
+      addKinds(resolveBinding(model, resultParameter, resultParameter.name), [
+        'validated-project-result',
+      ]);
+    }
+    if (environmentParameter) {
+      addKinds(resolveBinding(model, environmentParameter, environmentParameter.name), [
+        'global-namespace',
+      ]);
+    }
+  }
   collectBindings(model, projectContext);
   const decodedMap = transformed.map ? decodeSourceMap(transformed.map) : null;
   const violations = new Set();
   const report = (node, operation) => {
     violations.add(`${relativePath}:${mappedLine(node, decodedMap)}: ${operation}`);
   };
+  const isApprovedDownloadNode = node => Boolean(
+    approvedDownloadFunction
+    && node.start >= approvedDownloadFunction.start
+    && node.end <= approvedDownloadFunction.end,
+  );
 
   walkAst(ast, node => {
     if (isSanitizedV5WithTable(node, model)) {
@@ -617,21 +677,32 @@ async function analyzeSource(source, relativePath) {
             .has('project')) {
         report(node, 'project serialization');
       }
-      if (!DOWNLOAD_APPROVED.has(relativePath)
-          && calleeKinds.has('url-create-object-url')
-          && expressionKinds(node.arguments[0], model, projectContext)
-            .has('project-blob')) {
-        report(node, 'project object URL creation');
+      if (calleeKinds.has('url-create-object-url')) {
+        const argumentKinds = expressionKinds(node.arguments[0], model, projectContext);
+        const projectBlob = argumentKinds.has('project-blob')
+          || argumentKinds.has('validated-project-blob');
+        const approvedValidatedBlob = isApprovedDownloadNode(node)
+          && argumentKinds.has('validated-project-blob');
+        if (projectBlob && !approvedValidatedBlob) {
+          report(node, 'project object URL creation');
+        }
       }
     }
     if (node.type === 'NewExpression'
-        && !DOWNLOAD_APPROVED.has(relativePath)
         && expressionKinds(node.callee, model, projectContext)
           .has('blob-constructor')
-        && node.arguments.some(argument => (
-          expressionKinds(argument, model, projectContext).has('project')
-        ))) {
-      report(node, 'project Blob construction');
+    ) {
+      const argumentKinds = node.arguments.map(argument => (
+        expressionKinds(argument, model, projectContext)
+      ));
+      const projectData = argumentKinds.some(group => (
+        group.has('project') || group.has('validated-project')
+      ));
+      const approvedValidatedData = isApprovedDownloadNode(node)
+        && argumentKinds.some(group => group.has('validated-project'));
+      if (projectData && !approvedValidatedData) {
+        report(node, 'project Blob construction');
+      }
     }
   });
   return [...violations].sort((left, right) => {
@@ -653,6 +724,33 @@ async function analyzeRepository() {
 }
 
 const BYPASS_FIXTURES = [
+  {
+    label: 'raw project download in another function in the approved hook file',
+    relativePath: 'public/hooks/useProject.js',
+    source: `import { serializeProjectExport } from '../utils/project-security.js';
+export async function unsafeDownload(stateBag) {
+  const result = await serializeProjectExport(stateBag, 'unsafe');
+  const blob = new Blob([result.serialized], { type: 'application/json' });
+  URL.createObjectURL(blob);
+}`,
+    expected: [
+      'public/hooks/useProject.js:4: project Blob construction',
+      'public/hooks/useProject.js:5: project object URL creation',
+    ],
+  },
+  {
+    label: 'raw state in the named download helper without validated-result provenance',
+    relativePath: 'public/hooks/useProject.js',
+    source: `export function downloadValidatedProject(result, environment = globalThis) {
+  const stateBag = { fpic_version: 5, state: {} };
+  const blob = new environment.Blob([stateBag], { type: 'application/json' });
+  environment.URL.createObjectURL(blob);
+}`,
+    expected: [
+      'public/hooks/useProject.js:3: project Blob construction',
+      'public/hooks/useProject.js:4: project object URL creation',
+    ],
+  },
   {
     label: 'direct project serialization',
     relativePath: 'public/utils/project-direct.js',
@@ -905,6 +1003,19 @@ JSON.stringify(candidate);`,
 
 const SAFE_FIXTURES = [
   {
+    label: 'validated serialized result in the real download helper',
+    relativePath: 'public/hooks/useProject.js',
+    source: `function ownDataValue(value, key) { return value[key]; }
+export function downloadValidatedProject(result, environment = globalThis) {
+  const serialized = ownDataValue(result, 'serialized');
+  inspectProjectImport(serialized);
+  const BlobImpl = environment.Blob;
+  const urlApi = environment.URL;
+  const blob = new BlobImpl([serialized], { type: 'application/json' });
+  return urlApi.createObjectURL(blob);
+}`,
+  },
+  {
     label: 'shadowed JSON parameter',
     relativePath: 'public/components/ProjectDashboard.jsx',
     source: `export function renderProject(JSON) {
@@ -999,6 +1110,15 @@ describe('project export security enforcement analyzer', () => {
 });
 
 describe('project export security enforcement', () => {
+  it('runs complete Vitest discovery in CI while leaving standalone harnesses separate', () => {
+    const workflow = readFileSync(resolve(ROOT, '.github/workflows/ci.yml'), 'utf8');
+    const vitestStep = workflow.match(/- name: Run Vitest suites\n(?<body>[\s\S]*?)(?=\n\s+- name:)/)?.groups?.body;
+    expect(vitestStep).toBeDefined();
+    expect(vitestStep).toMatch(/run:\s+npx vitest run\s*$/m);
+    expect(vitestStep).not.toMatch(/tests\/[\w-]+\.test\.(?:js|jsx)/);
+    expect(workflow).toContain('for test_file in tests/*.test.js');
+  });
+
   it('allows project serialization and download only at approved boundaries', async () => {
     expect(await analyzeRepository()).toEqual([]);
   });

@@ -350,10 +350,11 @@ export default function App() {
       const data = await parseConfig(sanitized.sanitizedText);
       (data.intermediateConfig.security_policies || []).forEach(r => { r._review_status = 'unreviewed'; });
       const detectedVendor = data.detectedVendor || data.intermediateConfig?.metadata?.source_vendor || 'panos';
-      mergeDispatch({ type: 'UPDATE_SLOT', index: slotIndex, slot: {
+      mergeDispatch({ type: 'UPDATE_SLOT', index: slotIndex, preserveSanitization: true, slot: {
         configText: sanitized.sanitizedText,
         intermediateConfig: data.intermediateConfig,
         isSanitized: true,
+        projectSecurityMode: 'sanitized',
         sanitizationTable: sanitized.replacements,
         sourceVendor: detectedVendor,
         parseWarnings: data.warnings || [],
@@ -667,11 +668,11 @@ export default function App() {
 
       {/* Load project confirmation */}
       {ui.showLoadConfirm && (
-        <div className="modal-overlay" onClick={() => uiDispatch({ type: 'HIDE_MODAL', name: 'loadConfirm' })}>
+        <div className="modal-overlay" onClick={project.cancelValidatedImportReview}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
             <div className="modal-header">
               <h2>Load Project</h2>
-              <button className="modal-close" onClick={() => uiDispatch({ type: 'HIDE_MODAL', name: 'loadConfirm' })}>&times;</button>
+              <button className="modal-close" onClick={project.cancelValidatedImportReview}>&times;</button>
             </div>
             <div className="modal-body" style={{ padding: '16px 20px' }}>
               <p style={{ fontWeight: 600, marginBottom: 8 }}>{ui.showLoadConfirm.project.name || 'Unnamed Project'}</p>
@@ -693,7 +694,7 @@ export default function App() {
               )}
             </div>
             <div className="modal-footer" style={{ gap: 8 }}>
-              <button className="btn btn-secondary" onClick={() => uiDispatch({ type: 'HIDE_MODAL', name: 'loadConfirm' })}>Cancel</button>
+              <button className="btn btn-secondary" onClick={project.cancelValidatedImportReview}>Cancel</button>
               <button
                 className="btn btn-primary"
                 onClick={() => project.applyLoadedProject(

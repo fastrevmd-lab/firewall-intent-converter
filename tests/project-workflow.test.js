@@ -63,6 +63,7 @@ import {
   PROJECT_SECURITY_MODES,
   serializeProjectExport,
 } from '../public/utils/project-security.js';
+import { encryptReversiblePayload } from '../public/utils/project-crypto.js';
 
 const baseConfigState = {
   configText: 'set system host-name edge',
@@ -439,6 +440,36 @@ describe('transactional project hook orchestration', () => {
     }
   });
 
+  it('never stages or dispatches an authenticated reversible payload without restoration proof', async () => {
+    const passphrase = 'authenticated forged payload passphrase';
+    const envelope = await encryptReversiblePayload({
+      payloadSchema: 1,
+      name: 'forged-authenticated-project',
+      savedAt: '2026-07-11T00:00:00.000Z',
+      sourceMode: 'sanitized',
+      state: {
+        ...baseConfigState,
+        configText: 'set system host-name sanitized-fw',
+        isSanitized: true,
+        sanitizationTable: null,
+      },
+    }, passphrase);
+    const project = useProject();
+    project.handleLoadProjectFile(loadEvent(JSON.stringify(envelope)));
+    hookHarness.uiDispatch.mockClear();
+
+    await project.confirmPendingImport({ passphrase, acknowledgement: true });
+
+    expect(findUiAction('SHOW_MODAL', action => action.name === 'loadConfirm'))
+      .toBeUndefined();
+    expect(findUiAction('SET_FIELD', action => action.field === 'error')).toMatchObject({
+      value: 'Encrypted project could not be opened.',
+    });
+    expect(hookHarness.configDispatch).not.toHaveBeenCalled();
+    expect(hookHarness.conversionDispatch).not.toHaveBeenCalled();
+    expect(hookHarness.mergeDispatch).not.toHaveBeenCalled();
+  });
+
   it('rejects an oversized file before FileReader reads it', () => {
     const readAsText = vi.fn();
     vi.stubGlobal('FileReader', class TrackingFileReader {
@@ -655,6 +686,52 @@ describe('transactional project hook orchestration', () => {
     }
   });
 
+  it.each(['overlay', 'close', 'Cancel callback'])(
+    'clears a decrypted validated snapshot when final review is dismissed by %s',
+    async () => {
+      const original = 'FINAL-REVIEW-DECRYPTED-ORIGINAL';
+      const passphrase = 'final review cancellation passphrase';
+      const result = await serializeProjectExport({
+        ...baseConfigState,
+        configText: 'set system host-name SANITIZED_HOST_0',
+        isSanitized: true,
+        sanitizationTable: [{
+          type: 'hostname',
+          placeholder: 'SANITIZED_HOST_0',
+          original,
+        }],
+      }, 'final-review-cancel', {
+        mode: PROJECT_SECURITY_MODES.REVERSIBLE,
+        passphrase,
+        confirmationPassphrase: passphrase,
+        acknowledgement: true,
+      });
+      const project = useProject();
+      project.handleLoadProjectFile(loadEvent(result.serialized));
+      await project.confirmPendingImport({ passphrase, acknowledgement: true });
+      const loadConfirm = findUiAction('SHOW_MODAL', action => action.name === 'loadConfirm');
+      expect(loadConfirm).toBeDefined();
+
+      hookHarness.uiDispatch.mockClear();
+      project.cancelValidatedImportReview();
+      expect(findUiAction('HIDE_MODAL', action => action.name === 'loadConfirm'))
+        .toBeDefined();
+
+      hookHarness.uiDispatch.mockClear();
+      project.applyLoadedProject(loadConfirm.value.project, loadConfirm.value.security);
+      expect(hookHarness.configDispatch.mock.calls
+        .some(([action]) => action.type === 'LOAD_PROJECT')).toBe(false);
+      expect(hookHarness.conversionDispatch.mock.calls
+        .some(([action]) => action.type === 'LOAD_PROJECT')).toBe(false);
+      expect(hookHarness.mergeDispatch.mock.calls
+        .some(([action]) => action.type === 'LOAD_PROJECT')).toBe(false);
+      expect(treeContainsString(allDispatchedValues(), original)).toBe(false);
+      expect(findUiAction('SET_FIELD', action => action.field === 'error')).toMatchObject({
+        value: 'Project file is invalid.',
+      });
+    },
+  );
+
   it('ignores an in-flight encrypted open after a replacement file is selected', async () => {
     const passphrase = 'correct horse battery staple';
     const reversibleState = {
@@ -772,7 +849,7 @@ describe('transactional project hook orchestration', () => {
       .toMatchObject({ value: 'Project import acknowledgement is required.' });
   });
 
-  it('clears encrypted pending bytes when WebCrypto is unavailable', async () => {
+  it('normalizes unavailable WebCrypto without exposing environment details', async () => {
     const passphrase = 'correct horse battery staple';
     const reversibleState = {
       ...baseConfigState,
@@ -798,15 +875,15 @@ describe('transactional project hook orchestration', () => {
     await project.confirmPendingImport({ passphrase, acknowledgement: true });
 
     expect(findUiAction('SET_FIELD', action => action.field === 'error')).toMatchObject({
-      value: 'Encrypted project import is unavailable in this browser.',
+      value: 'Encrypted project could not be opened.',
     });
     expect(findUiAction('HIDE_MODAL', action => action.name === 'projectSecurityImport'))
-      .toBeDefined();
+      .toBeUndefined();
 
     hookHarness.uiDispatch.mockClear();
     await project.confirmPendingImport({ passphrase, acknowledgement: true });
     expect(findUiAction('SET_FIELD', action => action.field === 'error')).toMatchObject({
-      value: 'Project file is invalid.',
+      value: 'Encrypted project could not be opened.',
     });
     expect(findUiAction('SHOW_MODAL', action => action.name === 'loadConfirm'))
       .toBeUndefined();

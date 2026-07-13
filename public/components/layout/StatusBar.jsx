@@ -3,6 +3,8 @@ import { useConfigContext } from '../../contexts/ConfigContext.jsx';
 import { useConversionContext } from '../../contexts/ConversionContext.jsx';
 import { useUIContext } from '../../contexts/UIContext.jsx';
 import { useUndoContext } from '../../contexts/UndoContext.jsx';
+import { useMergeContext } from '../../contexts/MergeContext.jsx';
+import ProjectSecurityBadge, { deriveWorkspaceSecurityMode } from '../ProjectSecurityBadge.jsx';
 
 /**
  * StatusBar — Bottom bar showing conversion stats and quick indicators.
@@ -12,8 +14,12 @@ export default function StatusBar() {
   const { state: conv } = useConversionContext();
   const { state: ui, dispatch: uiDispatch } = useUIContext();
   const { state: undo } = useUndoContext();
+  const { state: merge } = useMergeContext();
 
-  const { sourceVendor, sourceModel, targetModel, intermediateConfig, warningStatuses } = cfg;
+  const {
+    sourceVendor, sourceModel, targetModel, intermediateConfig, warningStatuses,
+    projectSecurityMode,
+  } = cfg;
   const { conversionSummary, convertWarnings } = conv;
 
   // Policy counts
@@ -116,6 +122,11 @@ export default function StatusBar() {
 
       {/* Spacer */}
       <div style={{ flex: 1 }} />
+
+      <ProjectSecurityBadge mode={deriveWorkspaceSecurityMode(
+        { projectSecurityMode },
+        merge,
+      )} />
 
       {/* Keyboard hint */}
       <div

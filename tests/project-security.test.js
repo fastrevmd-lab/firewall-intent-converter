@@ -15,6 +15,7 @@ import {
   prepareUnsanitizedProjectState,
   serializeProjectExport,
 } from '../public/utils/project-security.js';
+import { ProjectCryptoError } from '../public/utils/project-crypto.js';
 
 const table = original => [{
   type: 'key',
@@ -672,10 +673,10 @@ describe('project security boundary', () => {
       } catch (caught) {
         error = caught;
       }
-      expect(error).toBeInstanceOf(ProjectSecurityError);
+      expect(error).toBeInstanceOf(ProjectCryptoError);
       expect(error).toMatchObject({
-        code: 'invalid_project',
-        message: 'Project file is invalid.',
+        code: 'decryption_failed',
+        message: 'Encrypted project could not be opened.',
       });
       expect(error.message).not.toContain('SENSITIVE-PASSPHRASE-GETTER');
     }

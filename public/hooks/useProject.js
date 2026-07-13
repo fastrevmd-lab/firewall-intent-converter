@@ -418,6 +418,12 @@ export default function useProject() {
     uiDispatch({ type: 'HIDE_MODAL', name: 'projectSecurityImport' });
   }, [invalidatePendingImport, uiDispatch]);
 
+  const cancelValidatedImportReview = useCallback(() => {
+    invalidatePendingImport();
+    uiDispatch({ type: 'SET_LOADING', isLoading: false });
+    uiDispatch({ type: 'HIDE_MODAL', name: 'loadConfirm' });
+  }, [invalidatePendingImport, uiDispatch]);
+
   // -----------------------------------------------------------------------
   // applyLoadedProject — restore all state from a project, dispatch
   //                       LOAD_PROJECT to all contexts
@@ -563,6 +569,7 @@ export default function useProject() {
     confirmPendingImport,
     applyLoadedProject,
     cancelPendingImport,
+    cancelValidatedImportReview,
     resetWorkspace,
     generateName,
   };

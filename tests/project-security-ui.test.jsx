@@ -8,6 +8,9 @@ import ProjectSecurityImportModal, {
   deriveProjectImportFormState,
   ProjectSecurityNotice,
 } from '../public/components/ProjectSecurityImportModal.jsx';
+import ProjectSecurityBadge, {
+  deriveWorkspaceSecurityMode,
+} from '../public/components/ProjectSecurityBadge.jsx';
 
 const exportInput = {
   descriptor: { sanitizedEligible: true, reversibleAvailable: true },
@@ -21,6 +24,36 @@ const exportInput = {
 };
 
 describe('project security UI', () => {
+  it.each([
+    ['sanitized', 'Sanitized — safe to share', true],
+    ['reversible-encrypted', 'Encrypted reversible — sensitive', false],
+    ['unsanitized', 'Unsanitized or stale — sensitive', false],
+    ['legacy-secret-bearing', 'Legacy secret-bearing — sensitive', false],
+    ['future-unknown-mode', 'Unsanitized or stale — sensitive', false],
+  ])('renders persistent workspace classification for %s', (mode, copy, safe) => {
+    const html = renderToStaticMarkup(<ProjectSecurityBadge mode={mode} />);
+    expect(html).toContain(copy);
+    if (safe) expect(html).toContain('safe to share');
+    else expect(html).not.toMatch(/>[^<]*safe to share[^<]*</);
+  });
+
+  it('downgrades the persistent badge when a populated merge slot has stale provenance', () => {
+    expect(deriveWorkspaceSecurityMode(
+      { projectSecurityMode: 'sanitized' },
+      {
+        mergeMode: true,
+        configSlots: [{
+          configText: 'set system host-name edited',
+          intermediateConfig: { metadata: {} },
+          isSanitized: false,
+        }],
+      },
+    )).toBe('unsanitized');
+    expect(deriveWorkspaceSecurityMode(
+      { projectSecurityMode: 'sanitized' },
+      { mergeMode: true, configSlots: [{ configText: '', intermediateConfig: null }] },
+    )).toBe('sanitized');
+  });
   it('defaults eligible workspaces to irreversible sanitized export', () => {
     const state = deriveProjectExportFormState(exportInput);
 

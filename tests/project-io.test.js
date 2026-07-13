@@ -9,12 +9,18 @@ import {
 } from '../public/utils/project-io.js';
 import {
   PROJECT_SECURITY_MODES,
+  MAX_PROJECT_PLAINTEXT_BYTES,
   classifyProjectSecurity,
   inspectProjectImport,
   openProjectImport,
   serializeProjectExport,
 } from '../public/utils/project-security.js';
 import { ConversionOutputError } from '../src/conversion/conversion-output.js';
+import { parseCiscoAsaConfig } from '../src/parsers/cisco-asa-parser.js';
+import { parseFortigateConfig } from '../src/parsers/fortigate-parser.js';
+import { parsePanosConfig } from '../src/parsers/panos-parser.js';
+import { sanitizeConfig } from '../public/utils/engine.js';
+import { encryptReversiblePayload } from '../public/utils/project-crypto.js';
 
 const IDENTIFIER_MAPPINGS = { version: 1, entries: [] };
 const RECONVERT_WARNING = 'Generated output from this older project was cleared because it has no validated identifier mapping. Reconvert before export or device push.';
@@ -49,6 +55,16 @@ function restorationTable(original = 'ORIGINAL-FW') {
   }];
 }
 
+function reversiblePayload(state) {
+  return {
+    payloadSchema: 1,
+    name: 'forged-authenticated-project',
+    savedAt: '2026-07-11T00:00:00.000Z',
+    sourceMode: 'sanitized',
+    state,
+  };
+}
+
 function v5Project(mode, state, overrides = {}) {
   const security = mode === 'sanitized'
     ? { ...SANITIZED_SECURITY }
@@ -67,6 +83,19 @@ function v5Project(mode, state, overrides = {}) {
     state,
     ...overrides,
   };
+}
+
+function serializedAtUtf8Bytes(value, targetBytes) {
+  const withEmptyPadding = JSON.stringify({
+    ...value,
+    state: { ...value.state, padding: '' },
+  });
+  const paddingLength = targetBytes - new TextEncoder().encode(withEmptyPadding).length;
+  if (paddingLength < 0) throw new Error('fixture target is too small');
+  return JSON.stringify({
+    ...value,
+    state: { ...value.state, padding: 'x'.repeat(paddingLength) },
+  });
 }
 
 describe('version 5 project security formats', () => {
@@ -218,6 +247,100 @@ describe('version 5 project security formats', () => {
     );
   });
 
+  it.each([
+    ['unsanitized source claim', {
+      ...baseState,
+      configText: 'set password "FORGED-RAW-PASSWORD"',
+      isSanitized: false,
+      sanitizationTable: null,
+    }],
+    ['missing reversible restoration data', {
+      ...baseState,
+      configText: 'set system host-name sanitized-fw',
+      isSanitized: true,
+      sanitizationTable: null,
+    }],
+    ['residual secret-bearing candidate state', {
+      ...baseState,
+      configText: 'set system host-name SANITIZED_HOST_0',
+      isSanitized: true,
+      sanitizationTable: restorationTable('FORGED-ORIGINAL-HOST'),
+      futureState: { warning: 'set password "FORGED-RESIDUAL-PASSWORD"' },
+    }],
+  ])('rejects authenticated reversible payload with %s', async (_label, state) => {
+    const envelope = await encryptReversiblePayload(reversiblePayload(state), PASSPHRASE);
+    let error;
+    try {
+      await openProjectImport(JSON.stringify(envelope), { passphrase: PASSPHRASE });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      name: 'ProjectCryptoError',
+      code: 'decryption_failed',
+      message: 'Encrypted project could not be opened.',
+    });
+    expect(error).not.toHaveProperty('cause');
+  });
+
+  it('normalizes every recognized encrypted-file open failure at the real import boundary', async () => {
+    const exported = await serializeProjectExport({
+      ...baseState,
+      configText: 'set system host-name SANITIZED_HOST_0',
+      isSanitized: true,
+      sanitizationTable: restorationTable('UNIFORM-OPEN-ORIGINAL'),
+    }, 'uniform-open-errors', {
+      mode: PROJECT_SECURITY_MODES.REVERSIBLE,
+      passphrase: PASSPHRASE,
+      confirmationPassphrase: PASSPHRASE,
+      acknowledgement: true,
+    });
+    const originalEnvelope = JSON.parse(exported.serialized);
+    const cases = [
+      ['short wrong passphrase', () => structuredClone(originalEnvelope), 'short'],
+      ['altered fixed metadata', envelope => {
+        envelope.security.schema = 2;
+        return envelope;
+      }, PASSPHRASE],
+      ['altered salt', envelope => {
+        envelope.security.salt = (envelope.security.salt[0] === 'A' ? 'B' : 'A')
+          + envelope.security.salt.slice(1);
+        return envelope;
+      }, PASSPHRASE],
+      ['altered nonce', envelope => {
+        envelope.security.nonce = (envelope.security.nonce[0] === 'A' ? 'B' : 'A')
+          + envelope.security.nonce.slice(1);
+        return envelope;
+      }, PASSPHRASE],
+      ['altered ciphertext', envelope => {
+        envelope.ciphertext = (envelope.ciphertext[0] === 'A' ? 'B' : 'A')
+          + envelope.ciphertext.slice(1);
+        return envelope;
+      }, PASSPHRASE],
+    ];
+
+    for (const [label, mutate, passphrase] of cases) {
+      const envelope = mutate(structuredClone(originalEnvelope));
+      let error;
+      try {
+        await openProjectImport(JSON.stringify(envelope), { passphrase });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error, label).toMatchObject({
+        name: 'ProjectCryptoError',
+        code: 'decryption_failed',
+        message: 'Encrypted project could not be opened.',
+      });
+      expect(error, label).not.toHaveProperty('cause');
+      expect(Reflect.ownKeys(error).filter(key => ![
+        'stack', 'message', 'name', 'code',
+      ].includes(key)), label).toEqual([]);
+      expect(error.message, label).not.toContain('UNIFORM-OPEN-ORIGINAL');
+      expect(error.message, label).not.toContain(passphrase);
+    }
+  });
+
   it('acceptance: sanitized import cannot restore originals', async () => {
     const exported = await serializeProjectExport({
       ...baseState,
@@ -232,6 +355,65 @@ describe('version 5 project security formats', () => {
     expect(opened.requiresConfirmation).toBe(false);
     expect(opened.project.state.sanitizationTable).toBeNull();
     expect(JSON.stringify(opened.project)).not.toContain('IMPORT-ORIGINAL');
+  });
+
+  const PARSER_SECRET_CASES = [
+    {
+      label: 'ASA SNMP host community',
+      original: 'ASA-HOST-COMM-SECRET',
+      text: 'ASA Version 9.18\nsnmp-server host inside 192.0.2.44 community ASA-HOST-COMM-SECRET version 2c',
+      parse: value => parseCiscoAsaConfig(value),
+    },
+    {
+      label: 'FortiGate TACACS block key',
+      original: 'FGT-TACACS-REAL-SECRET',
+      text: 'config user tacacs+\n edit "tac-1"\n  set server "192.0.2.10"\n  set key "FGT-TACACS-REAL-SECRET"\n next\nend',
+      parse: value => parseFortigateConfig(value),
+    },
+    {
+      label: 'FortiGate SNMP block name',
+      original: 'FGT-SNMP-REAL-SECRET',
+      text: 'config system snmp community\n edit 1\n  set name "FGT-SNMP-REAL-SECRET"\n next\nend',
+      parse: value => parseFortigateConfig(value),
+    },
+    {
+      label: 'PAN-OS direct RADIUS secret',
+      original: 'PANOS-RADIUS-REAL-SECRET',
+      text: '<config version="11.1"><devices><entry name="localhost.localdomain"><vsys><entry name="vsys1"><authentication-profile><entry name="rad"><method><radius><server-profile>r</server-profile><secret>PANOS-RADIUS-REAL-SECRET</secret></radius></method></entry></authentication-profile></entry></vsys></entry></devices></config>',
+      parse: value => parsePanosConfig(value),
+    },
+  ];
+
+  it.each(PARSER_SECRET_CASES)('rejects raw parser-supported secret syntax from sanitized export: $label', async ({ text }) => {
+    await expect(serializeProjectExport({
+      ...baseState,
+      configText: text,
+      isSanitized: true,
+      sanitizationTable: null,
+    }, 'unsafe-parser-input', { mode: 'sanitized' }))
+      .rejects.toMatchObject({ code: 'secret_leak' });
+  });
+
+  it.each(PARSER_SECRET_CASES)('sanitizes parser-supported secret syntax before parsed export: $label', async ({ text, original, parse }) => {
+    const sanitized = sanitizeConfig(text);
+    const parsed = parse(sanitized.sanitizedText);
+    const result = await serializeProjectExport({
+      ...baseState,
+      configText: sanitized.sanitizedText,
+      intermediateConfig: parsed.intermediateConfig,
+      isSanitized: true,
+      sanitizationTable: sanitized.replacements,
+    }, 'safe-parser-input', { mode: 'sanitized' });
+    expect(result.serialized).not.toContain(original);
+    expect(result.serialized).not.toContain('sanitizationTable');
+  });
+
+  it('does not preserve an ASA SNMP host community as a trap-group name', () => {
+    const parsed = parseCiscoAsaConfig(
+      'ASA Version 9.18\nsnmp-server host inside 192.0.2.44 community ASA-HOST-COMM-SECRET version 2c',
+    );
+    expect(JSON.stringify(parsed.intermediateConfig.snmp_config))
+      .not.toContain('ASA-HOST-COMM-SECRET');
   });
 
   it('classifies mixed merge slots and populated greenfield state as unsanitized', async () => {
@@ -322,6 +504,62 @@ describe('version 5 project security formats', () => {
     }
   });
 
+  it.each([1, 2, 3, 4])(
+    'downgrades legacy v%s claimed-sanitized mixed merge state to confirmed unsanitized',
+    version => {
+      const serialized = JSON.stringify(project(version, null, 'set', {
+        isSanitized: true,
+        sanitizationTable: null,
+        mergeMode: true,
+        configSlots: [{
+          configText: 'set system host-name raw-merge-slot',
+          intermediateConfig: { metadata: {} },
+          isSanitized: false,
+          sanitizationTable: null,
+        }],
+      }));
+      expect(inspectProjectImport(serialized)).toMatchObject({
+        kind: PROJECT_SECURITY_MODES.UNSANITIZED,
+        security: {
+          mode: PROJECT_SECURITY_MODES.UNSANITIZED,
+          restorationAvailable: false,
+        },
+        requiresConfirmation: true,
+      });
+    },
+  );
+
+  it.each([1, 2, 3, 4])(
+    'downgrades legacy v%s claimed-sanitized residual secret syntax to confirmed unsanitized',
+    version => {
+      const serialized = JSON.stringify(project(version, null, 'set', {
+        configText: 'set password "RAW-LEGACY-SECRET"',
+        isSanitized: true,
+        sanitizationTable: null,
+      }));
+      expect(inspectProjectImport(serialized)).toMatchObject({
+        kind: PROJECT_SECURITY_MODES.UNSANITIZED,
+        security: {
+          mode: PROJECT_SECURITY_MODES.UNSANITIZED,
+          restorationAvailable: false,
+        },
+        requiresConfirmation: true,
+      });
+    },
+  );
+
+  it('still rejects invalid restoration data in a legacy claimed-sanitized file', () => {
+    const serialized = JSON.stringify(project(4, null, 'set', {
+      isSanitized: true,
+      sanitizationTable: [{
+        type: 'key', placeholder: 'SANITIZED_KEY_0', original: '',
+      }],
+    }));
+    expect(() => inspectProjectImport(serialized)).toThrow(expect.objectContaining({
+      code: 'invalid_project',
+    }));
+  });
+
   it('rescans legacy sanitized projects without tables before classifying them safe', async () => {
     const safe = JSON.stringify(project(4, null, 'set', {
       configText: 'set system host-name sanitized-fw',
@@ -340,9 +578,10 @@ describe('version 5 project security formats', () => {
       isSanitized: true,
       sanitizationTable: null,
     }));
-    expect(() => inspectProjectImport(unsafe)).toThrow(expect.objectContaining({
-      code: 'invalid_project',
-    }));
+    expect(inspectProjectImport(unsafe)).toMatchObject({
+      kind: PROJECT_SECURITY_MODES.UNSANITIZED,
+      requiresConfirmation: true,
+    });
   });
 
   it('acceptance: keeps passphrases and secrets out of descriptors, errors, storage, and logs', async () => {
@@ -422,6 +661,42 @@ describe('version 5 project security formats', () => {
         message: 'Project file version is not supported.',
       }),
     );
+  });
+
+  it.each([
+    ['v5 unsanitized', () => v5Project('unsanitized', {
+      ...baseState,
+      isSanitized: false,
+      sanitizationTable: null,
+    })],
+    ['legacy plaintext', () => project(4, null, 'set', {
+      isSanitized: false,
+      sanitizationTable: null,
+    })],
+  ])('enforces the 48 MiB plaintext import boundary for %s', (_label, createValue) => {
+    const below = serializedAtUtf8Bytes(
+      createValue(),
+      MAX_PROJECT_PLAINTEXT_BYTES - 1,
+    );
+    const above = serializedAtUtf8Bytes(
+      createValue(),
+      MAX_PROJECT_PLAINTEXT_BYTES + 1,
+    );
+    expect(new TextEncoder().encode(below)).toHaveLength(MAX_PROJECT_PLAINTEXT_BYTES - 1);
+    expect(new TextEncoder().encode(above)).toHaveLength(MAX_PROJECT_PLAINTEXT_BYTES + 1);
+    expect(inspectProjectImport(below).kind).toBe(PROJECT_SECURITY_MODES.UNSANITIZED);
+
+    let error;
+    try {
+      inspectProjectImport(above);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      code: 'oversized_project',
+      message: 'Project data exceeds the supported size limit.',
+    });
+    expect(error.message).not.toContain('x'.repeat(64));
   });
 });
 

@@ -12,6 +12,7 @@ const CASES = [
   ['panos direct PSK', '<pre-shared-key>PANOS-DIRECT-PSK-ORIGINAL</pre-shared-key>', 'PANOS-DIRECT-PSK-ORIGINAL', 'key'],
   ['panos API key', '<api-key>PANOS-API-ORIGINAL</api-key>', 'PANOS-API-ORIGINAL', 'key'],
   ['panos auth key', '<auth-key>PANOS-AUTH-ORIGINAL</auth-key>', 'PANOS-AUTH-ORIGINAL', 'key'],
+  ['panos direct RADIUS secret', '<secret>PANOS-RADIUS-REAL-SECRET</secret>', 'PANOS-RADIUS-REAL-SECRET', 'key'],
   ['panos phash', '<phash>$6$PANOS-HASH-ORIGINAL</phash>', '$6$PANOS-HASH-ORIGINAL', 'hash'],
   ['panos password hash', '<password-hash>PANOS-PASSWORD-HASH-ORIGINAL</password-hash>', 'PANOS-PASSWORD-HASH-ORIGINAL', 'hash'],
   ['panos encrypted secret', '<encrypted-secret>PANOS-ENCRYPTED-ORIGINAL</encrypted-secret>', 'PANOS-ENCRYPTED-ORIGINAL', 'hash'],
@@ -41,6 +42,8 @@ const CASES = [
   ['fortigate unquoted TACACS secret', 'set tacacs-secret FGT-TACACS-UNQUOTED-ORIGINAL', 'FGT-TACACS-UNQUOTED-ORIGINAL', 'key'],
   ['fortigate encrypted TACACS secret', 'set tacacs-secret ENC FGT-TACACS-ENC-ORIGINAL', 'ENC FGT-TACACS-ENC-ORIGINAL', 'key'],
   ['fortigate secondary secret', 'set secondary-secret "FGT-SECONDARY-ORIGINAL"', 'FGT-SECONDARY-ORIGINAL', 'key'],
+  ['fortigate TACACS block key', 'config user tacacs+\n edit "tac-1"\n  set server "192.0.2.10"\n  set key "FGT-TACACS-REAL-SECRET"\n next\nend', 'FGT-TACACS-REAL-SECRET', 'key'],
+  ['fortigate SNMP block name', 'config system snmp community\n edit 1\n  set name "FGT-SNMP-REAL-SECRET"\n next\nend', 'FGT-SNMP-REAL-SECRET', 'community'],
 
   ['asa ISAKMP key', 'crypto isakmp key ASA-PSK-ORIGINAL address 203.0.113.9', 'ASA-PSK-ORIGINAL', 'key'],
   ['asa enable secret', 'enable secret ASA-HASH-ORIGINAL', 'ASA-HASH-ORIGINAL', 'hash'],
@@ -53,6 +56,7 @@ const CASES = [
   ['asa IKEv2 local PSK', 'ikev2 local-authentication pre-shared-key ASA-IKEV2-LOCAL-ORIGINAL', 'ASA-IKEV2-LOCAL-ORIGINAL', 'key'],
   ['asa IKEv2 remote PSK', 'ikev2 remote-authentication pre-shared-key ASA-IKEV2-REMOTE-ORIGINAL', 'ASA-IKEV2-REMOTE-ORIGINAL', 'key'],
   ['asa SNMP community', 'snmp-server community ASA-SNMP-ORIGINAL', 'ASA-SNMP-ORIGINAL', 'community'],
+  ['asa SNMP host community', 'snmp-server host inside 192.0.2.44 community ASA-HOST-COMM-SECRET version 2c', 'ASA-HOST-COMM-SECRET', 'community'],
   ['asa RADIUS key', 'radius-server host 192.0.2.2 key ASA-RADIUS-ORIGINAL', 'ASA-RADIUS-ORIGINAL', 'key'],
   ['asa TACACS key', 'tacacs-server host 192.0.2.3 key ASA-TACACS-ORIGINAL', 'ASA-TACACS-ORIGINAL', 'key'],
   ['ftd RADIUS secret', 'radius-server host 192.0.2.4 secret ASA-RADIUS-SECRET-ORIGINAL', 'ASA-RADIUS-SECRET-ORIGINAL', 'key'],
@@ -185,6 +189,8 @@ describe('firewall secret registry', () => {
     'set security ike proposal ike authentication-method pre-shared-keys',
     '<certificate>PUBLIC-CERTIFICATE-DATA</certificate>',
     'set applications application tacacs-plus protocol tcp',
+    'config firewall policy\n edit 1\n  set key "NON-SECRET-POLICY-KEY"\n  set name "NON-SECRET-POLICY-NAME"\n next\nend',
+    'config system interface\n edit "port1"\n  set name "NON-SECRET-INTERFACE-NAME"\n next\nend',
   ])('does not classify non-secret syntax: %s', text => {
     expect(findSecretsInText(text)).toEqual([]);
   });

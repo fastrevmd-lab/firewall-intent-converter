@@ -682,7 +682,13 @@ function parseProjectText(serialized) {
     throw new ProjectSecurityError('invalid_project');
   }
   if (!assertPlainObject(parsed)) throw new ProjectSecurityError('invalid_project');
-  return parsed;
+  return { parsed, byteLength };
+}
+
+function isRecognizedEncryptedProject(parsed) {
+  return parsed.fpic_version === CURRENT_VERSION
+    && assertPlainObject(parsed.security)
+    && optionalDataValue(parsed.security, 'mode') === PROJECT_SECURITY_MODES.REVERSIBLE;
 }
 
 function normalizeSanitizedRestorationState(state) {
@@ -733,6 +739,12 @@ function validateUnsanitizedPlaintext(project) {
 
 function classifyLegacyProject(project) {
   const prepared = prepareUnsanitizedProjectState(project.state);
+  const unsanitized = () => ({
+    mode: PROJECT_SECURITY_MODES.UNSANITIZED,
+    requiresConfirmation: true,
+    restorationAvailable: prepared.restorationAvailable,
+    state: prepared.state,
+  });
   if (project.state.isSanitized === true && prepared.restorationAvailable) {
     return {
       mode: PROJECT_SECURITY_MODES.LEGACY,
@@ -742,6 +754,8 @@ function classifyLegacyProject(project) {
     };
   }
   if (project.state.isSanitized === true) {
+    const classification = classifyProjectSecurity(prepared.state);
+    if (!classification.sanitizedEligible) return unsanitized();
     const sanitized = prepareSanitizedProjectState(project.state);
     const candidate = {
       fpic_version: CURRENT_VERSION,
@@ -752,7 +766,15 @@ function classifyLegacyProject(project) {
       security: SANITIZED_METADATA,
       state: sanitized.state,
     };
-    assertSanitizedProjectSafe(candidate, sanitized.originals);
+    try {
+      assertSanitizedProjectSafe(candidate, sanitized.originals);
+    } catch (error) {
+      if (error instanceof ProjectSecurityError
+          && ['secret_leak', 'original_leak', 'unsanitized_source'].includes(error.code)) {
+        return unsanitized();
+      }
+      throw error;
+    }
     return {
       mode: PROJECT_SECURITY_MODES.SANITIZED,
       requiresConfirmation: false,
@@ -760,12 +782,7 @@ function classifyLegacyProject(project) {
       state: sanitized.state,
     };
   }
-  return {
-    mode: PROJECT_SECURITY_MODES.UNSANITIZED,
-    requiresConfirmation: true,
-    restorationAvailable: prepared.restorationAvailable,
-    state: prepared.state,
-  };
+  return unsanitized();
 }
 
 function inspectLegacyProject(project) {
@@ -835,9 +852,17 @@ function inspectParsedProject(parsed) {
   throw new ProjectSecurityError('invalid_project');
 }
 
+function inspectProjectSource(source) {
+  if (source.byteLength > MAX_PROJECT_PLAINTEXT_BYTES
+      && !isRecognizedEncryptedProject(source.parsed)) {
+    throw new ProjectSecurityError('oversized_project');
+  }
+  return inspectParsedProject(source.parsed);
+}
+
 export function inspectProjectImport(serialized) {
   try {
-    return inspectParsedProject(parseProjectText(serialized));
+    return inspectProjectSource(parseProjectText(serialized));
   } catch (error) {
     if (error instanceof ProjectSecurityError
         && ['unsupported_version', 'oversized_project'].includes(error.code)) {
@@ -868,19 +893,38 @@ function extractImportPassphrase(options) {
 }
 
 async function openProjectImportInternal(serialized, options) {
-  const passphrase = extractImportPassphrase(options);
-  const inspected = inspectProjectImport(serialized);
-  if (inspected.kind !== PROJECT_SECURITY_MODES.REVERSIBLE) {
-    return {
-      project: inspected.envelope,
-      security: inspected.security,
-      warnings: inspected.warnings,
-      requiresConfirmation: inspected.requiresConfirmation,
-    };
-  }
-
-  const payload = await decryptReversibleEnvelope(inspected.envelope, passphrase);
+  const source = parseProjectText(serialized);
+  const recognizedEncrypted = isRecognizedEncryptedProject(source.parsed);
   try {
+    const passphrase = extractImportPassphrase(options);
+    const inspected = inspectProjectSource(source);
+    if (inspected.kind !== PROJECT_SECURITY_MODES.REVERSIBLE) {
+      return {
+        project: inspected.envelope,
+        security: inspected.security,
+        warnings: inspected.warnings,
+        requiresConfirmation: inspected.requiresConfirmation,
+      };
+    }
+
+    const payload = await decryptReversibleEnvelope(inspected.envelope, passphrase);
+    const classification = classifyProjectSecurity(payload.state);
+    if (!classification.sanitizedEligible || !classification.reversibleAvailable) {
+      throw new ProjectSecurityError('invalid_project');
+    }
+    const sanitized = prepareSanitizedProjectState(payload.state);
+    const candidate = {
+      fpic_version: CURRENT_VERSION,
+      name: payload.name,
+      savedAt: payload.savedAt,
+      security: SANITIZED_METADATA,
+      state: {
+        ...sanitized.state,
+        projectSecurityMode: PROJECT_SECURITY_MODES.SANITIZED,
+      },
+    };
+    assertSanitizedProjectSafe(candidate, sanitized.originals);
+
     const prepared = prepareUnsanitizedProjectState(payload.state);
     const result = validateStateCoreForImport({
       fpic_version: CURRENT_VERSION,
@@ -896,8 +940,9 @@ async function openProjectImportInternal(serialized, options) {
       warnings: result.warnings,
       requiresConfirmation: true,
     };
-  } catch {
-    throw new ProjectSecurityError('invalid_project');
+  } catch (error) {
+    if (recognizedEncrypted) throw new ProjectCryptoError('decryption_failed');
+    throw error;
   }
 }
 
