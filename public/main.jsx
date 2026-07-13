@@ -17,6 +17,7 @@ import './styles/layout.css';
 import './styles/nav-tree.css';
 import './styles/command-palette.css';
 import './styles/status-bar.css';
+import './styles/brand.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

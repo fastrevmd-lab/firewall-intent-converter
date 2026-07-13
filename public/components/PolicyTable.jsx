@@ -1792,11 +1792,10 @@ export default function PolicyTable({
         {/* Group controls */}
         {onGroupWithAI && (
           <button
-            className="btn btn-secondary btn-sm"
+            className={`btn btn-secondary btn-sm btn-translate${llmColor === 'var(--llm-local)' ? ' llm-local' : ''}`}
             onClick={onGroupWithAI}
             disabled={groupingInProgress || policies.length === 0}
             title={llmColor === 'var(--llm-local)' ? 'Note: sending info to Local LLM' : 'Warning: sending info to a Public LLM'}
-            style={{ background: llmColor || 'var(--llm-cloud)', color: '#1a1a2e', borderColor: llmColor || 'var(--llm-cloud)' }}
           >
             {groupingInProgress ? 'Grouping...' : hasGroups ? `Grouped (${displayGroups.length})` : 'Auto-group w/LLM'}
           </button>

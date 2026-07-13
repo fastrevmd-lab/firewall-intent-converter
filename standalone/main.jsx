@@ -21,6 +21,7 @@ import '../public/styles/nav-tree.css';
 import '../public/styles/command-palette.css';
 import '../public/styles/status-bar.css';
 import './standalone-overrides.css';
+import '../public/styles/brand.css';
 
 // Force deterministic mode — bypasses LLM disclaimer and disables all AI
 // features via the existing isDeterministicMode() gates in the app.
