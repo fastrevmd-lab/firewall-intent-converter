@@ -113,7 +113,7 @@ describe('Mechub browser identity assets', () => {
       const svg = read(path);
       expect(svg).toContain('viewBox="0 0 120 120"');
       expect(svg).toContain('M18,96 L18,32 L60,74 L102,32 L102,96');
-      expect(svg).not.toMatch(/<script|https?:|xlink:href/i);
+      expect(svg).not.toMatch(/<script|(?:xlink:)?href\s*=\s*["']https?:|src\s*=\s*["']https?:/i);
     }
     expect(read('static/brand/mechub-favicon.svg')).not.toContain('<circle');
   });
@@ -218,7 +218,7 @@ npm run build
 npm run build:standalone
 ```
 
-Expected: 3 asset tests PASS; both builds exit 0; `dist/brand/` and `dist-standalone/brand/` contain the three SVGs; emitted CSS/assets contain local WOFF2 fonts.
+Expected: 4 asset tests PASS; both builds exit 0; `dist/brand/` and `dist-standalone/brand/` contain the three SVGs; emitted CSS/assets contain local WOFF2 fonts.
 
 - [ ] **Step 7: Commit the identity inputs**
 
