@@ -1,5 +1,5 @@
 {
-  "name": "firewall-policy-converter",
+  "name": "firewallintentconverter",
   "version": "1.2.0",
   "description": "Professional firewall configuration conversion tool — PAN-OS to Juniper SRX",
   "license": "(MIT OR Apache-2.0)",
@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview --host",
     "build:standalone": "vite build --config vite.standalone.config.js && sed 's|\\.\\./assets/|./assets/|g' dist-standalone/standalone/index.html > dist-standalone/index.html && rm -rf dist-standalone/standalone && cp standalone/README.txt dist-standalone/",
-    "zip:standalone": "npm run build:standalone && cd dist-standalone && zip -r ../firewall-policy-converter-standalone.zip . -x 'prompts/*' && cd .."
+    "zip:standalone": "npm run build:standalone && cd dist-standalone && zip -r ../firewallintentconverter-standalone.zip . -x 'prompts/*' && cd .."
   },
   "devDependencies": {
     "@vitejs/plugin-react": "6.0.2",

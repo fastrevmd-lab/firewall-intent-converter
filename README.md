@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h1 align="center">firewall-intent-converter</h1>
+<h1 align="center">firewallintentconverter</h1>
 
 <p align="center"><strong>Browser-based firewall config to Juniper SRX conversion</strong><br>
 <em>a mechub project — sovereign network-security automation</em></p>
@@ -43,8 +43,8 @@ A browser-based tool that converts firewall configurations into an intermediate 
 ### Development
 
 ```bash
-git clone <repo-url> firewall-intent-converter
-cd firewall-intent-converter
+git clone <repo-url> firewallintentconverter
+cd firewallintentconverter
 npm install
 npm run dev
 ```
@@ -359,7 +359,7 @@ See [TODO.md](TODO.md) for the full roadmap and planned features.
 ## Project Structure
 
 ```
-firewall-intent-converter/
+firewallintentconverter/
 ├── vite.config.js                # Vite config (React, publicDir: 'static', relative base)
 ├── package.json
 ├── TODO.md                       # Roadmap & TODO (Rev1–Rev13)
