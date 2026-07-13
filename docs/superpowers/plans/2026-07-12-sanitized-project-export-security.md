@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only in `/home/mharman/Projects/fwintentconverter/.worktrees/issue-11-sanitized-project-secrets` on branch `agent/issue-11-sanitized-project-secrets`.
+- Work only in `/home/mharman/Projects/firewallintentconverter/.worktrees/issue-11-sanitized-project-secrets` on branch `agent/issue-11-sanitized-project-secrets`.
 - Design authority: `docs/superpowers/specs/2026-07-12-sanitized-project-export-security-design.md`.
 - Project format advances to version 5. Valid exported modes are exactly `sanitized`, `reversible-encrypted`, and `unsanitized`.
 - A version 5 sanitized file has no `sanitizationTable` at any depth, no known original in raw or JSON-escaped form, and `restorationAvailable: false`.
@@ -1768,11 +1768,11 @@ Verify PR state is merged and issue #11 is closed.
 Wait for the merge-triggered `main` CI run and confirm every job succeeds. Then:
 
 ```bash
-git -C /home/mharman/Projects/fwintentconverter pull --ff-only origin main
-git -C /home/mharman/Projects/fwintentconverter worktree remove /home/mharman/Projects/fwintentconverter/.worktrees/issue-11-sanitized-project-secrets
-git -C /home/mharman/Projects/fwintentconverter worktree prune
-git -C /home/mharman/Projects/fwintentconverter branch -d agent/issue-11-sanitized-project-secrets
-git -C /home/mharman/Projects/fwintentconverter push origin --delete agent/issue-11-sanitized-project-secrets
+git -C /home/mharman/Projects/firewallintentconverter pull --ff-only origin main
+git -C /home/mharman/Projects/firewallintentconverter worktree remove /home/mharman/Projects/firewallintentconverter/.worktrees/issue-11-sanitized-project-secrets
+git -C /home/mharman/Projects/firewallintentconverter worktree prune
+git -C /home/mharman/Projects/firewallintentconverter branch -d agent/issue-11-sanitized-project-secrets
+git -C /home/mharman/Projects/firewallintentconverter push origin --delete agent/issue-11-sanitized-project-secrets
 ```
 
 If squash history prevents ordinary local deletion, first reconfirm the merged PR SHA and green post-merge run, then delete the already-published feature branch using the least-destructive command that succeeds. Final evidence must show clean synchronized `main`, one primary worktree, deleted feature refs, merged PR, closed issue #11, and the next open security issue.

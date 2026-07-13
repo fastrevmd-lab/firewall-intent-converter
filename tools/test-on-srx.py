@@ -83,7 +83,7 @@ PRESERVE_COMMANDS = """\
 set system host-name vSRX-test18
 set system root-authentication encrypted-password "$6$slN9fm9A$LPMXWgKf9v.MkzcbjQ4qSjQ3sNJMIILeSxDJawPXU5iV4oH39VUh6E0i6.YO9yT9E72p./dG/PyNIe.U73PIa0"
 set system login user intenttester class super-user uid 2002
-set system login user intenttester authentication ssh-ed25519 "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG+IhfC4H8iE4pC7ZoEf245h9Mp/ZvScgldFilcuVP2X intenttester@firewall-intent-converter"
+set system login user intenttester authentication ssh-ed25519 "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG+IhfC4H8iE4pC7ZoEf245h9Mp/ZvScgldFilcuVP2X intenttester@firewallintentconverter"
 set system login user netconf class super-user uid 2000
 set system login user netconf authentication ssh-ed25519 "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOLjxJRoNDQuoBQXEEEKTcKRkhxOTDfMSWymo6m0jD+ root@cd62172ddf11"
 set system login user srxoutpost class super-user uid 2001
