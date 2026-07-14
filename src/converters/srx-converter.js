@@ -167,7 +167,8 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // then emit application definitions BEFORE emitting the policy commands.
   // This ensures all custom applications are defined before policies reference them.
   const policyCommands = [];
-  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath);
+  const policyStructure = options.policyStructure === 'zone-pair' ? 'zone-pair' : 'global';
+  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath, policyStructure);
 
   // Tier 2 emission: concrete custom applications (known ports from canonical data)
   if (concreteCustomApps.size > 0) {
@@ -1619,7 +1620,101 @@ function orderedZoneEntries(zones) {
     ));
 }
 
-function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath) {
+/**
+ * Emit the match/action body for one security policy (everything after the
+ * `security policies ... policy <name>` prefix line). Shared by both the
+ * zone-pair and global emission paths so their behavior cannot drift.
+ *
+ * @param {string[]} commands - output accumulator
+ * @param {string} policyPath - e.g. `security policies global policy P` or
+ *   `security policies from-zone X to-zone Y policy P`
+ * @param {string} policyName - resolved policy identifier
+ * @param {object} ctx - see plan Task 1 Interfaces block
+ */
+function emitPolicyBody(commands, policyPath, policyName, ctx) {
+  const {
+    policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
+    utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
+    identifiers, identifierPath, warnings, deactivateCommands,
+  } = ctx;
+
+  // Description (include PAN-OS tags as comments)
+  let fullDescription = policy.description || '';
+  if (policy.tags && policy.tags.length > 0) {
+    const tagNote = `[PAN-OS tags: ${policy.tags.join(', ')}]`;
+    fullDescription = fullDescription ? `${fullDescription} ${tagNote}` : tagNote;
+  }
+  if (fullDescription) {
+    commands.push(`set ${policyPath} description ${setQuoted(fullDescription, `security_policies[${pIdx}].description`)}`);
+  }
+
+  const effectiveSrcAddrs = srcAddrs.length > 0 ? srcAddrs : [{ value: 'any', index: null }];
+  for (const { index: addressIndex } of effectiveSrcAddrs) {
+    const addressName = addressIndex === null
+      ? 'any'
+      : identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].src_addresses[${addressIndex}]`));
+    commands.push(`set ${policyPath} match source-address ${addressName}`);
+  }
+
+  const effectiveDstAddrs = dstAddrs.length > 0 ? dstAddrs : [{ value: 'any', index: null }];
+  for (const { index: addressIndex } of effectiveDstAddrs) {
+    const addressName = addressIndex === null
+      ? 'any'
+      : identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].dst_addresses[${addressIndex}]`));
+    commands.push(`set ${policyPath} match destination-address ${addressName}`);
+  }
+
+  let apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor, pIdx, identifiers, identifierPath);
+  if (apps.includes('any')) apps = ['any'];
+  for (const app of apps) {
+    commands.push(`set ${policyPath} match application ${app}`);
+  }
+
+  if (policy.source_users && policy.source_users.length > 0) {
+    for (const identity of policy.source_users) {
+      // identifier-catalog: non-symbol security-policy source-identity match value
+      commands.push(`set ${policyPath} match source-identity ${setQuoted(sanitizeJunosName(identity), `security_policies[${pIdx}].source_users`)}`);
+    }
+  }
+
+  const srxAction = mapAction(policy.action);
+  commands.push(`set ${policyPath} then ${srxAction}`);
+
+  if (policy.log_start) commands.push(`set ${policyPath} then log session-init`);
+  if (policy.log_end) commands.push(`set ${policyPath} then log session-close`);
+  if (policy._srx_log_count !== false) commands.push(`set ${policyPath} then count`);
+
+  if (utmPolicyMap[pIdx]) {
+    const utmPolicyName = identifiers.nameForReference(identifierPath(`security_policies[${pIdx}]#utm-policy`));
+    commands.push(`set ${policyPath} then permit application-services utm-policy ${utmPolicyName}`);
+  }
+  if (idpPolicyMap[pIdx]) {
+    const idpPolicyName = identifiers.nameForReference(identifierPath(`security_policies[${pIdx}]#idp-policy`));
+    commands.push(`set ${policyPath} then permit application-services idp-policy ${idpPolicyName}`);
+  }
+  if (secIntelEnabled && policy.action === 'allow' && dstZones.some(z => z.toLowerCase() === 'untrust')) {
+    commands.push(`set ${policyPath} then permit application-services security-intelligence-policy ${secIntelPolicyName}`);
+  }
+
+  if (policy._srx_decrypt && policy.action === 'allow') {
+    const sslProfile = identifiers.nameForReference(identifierPath(
+      policy._srx_decrypt_profile
+        ? `security_policies[${pIdx}]._srx_decrypt_profile`
+        : `security_policies[${pIdx}]#ssl-proxy-profile`,
+    ));
+    commands.push(`# NOTE: SSL proxy skipped — profile "${sslProfile}" requires manual PKI setup before enabling`);
+    commands.push(`# set ${policyPath} then permit application-services ssl-proxy profile-name ${sslProfile}`);
+  }
+
+  if (policy.schedule) {
+    const scheduleName = identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].schedule`));
+    commands.push(`set ${policyPath} scheduler-name ${scheduleName}`);
+  }
+
+  if (policy.disabled) deactivateCommands.push(`deactivate ${policyPath}`);
+}
+
+function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath, policyStructure = 'global') {
   if (!policies || policies.length === 0) return;
 
   const {
@@ -1679,153 +1774,86 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
     const sourceEntries = orderedZoneEntries(srcZones);
     const destinationEntries = orderedZoneEntries(dstZones);
 
-    // Handle zone-based policy paths
-    let definitionIndex = 0;
-    const policyNamesByContext = new Map();
-    for (const { zone: srcZone, index: sourceIndex } of sourceEntries) {
-      const sourcePath = policy[sourceZoneField]?.length > 0
-        ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
-        : `security_policies[${pIdx}]#effective-source-zone`;
-      const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+    if (policyStructure === 'zone-pair') {
+      // ---- existing zone-pair emission (unchanged) ----
+      let definitionIndex = 0;
+      const policyNamesByContext = new Map();
+      for (const { zone: srcZone, index: sourceIndex } of sourceEntries) {
+        const sourcePath = policy[sourceZoneField]?.length > 0
+          ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
+          : `security_policies[${pIdx}]#effective-source-zone`;
+        const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+        for (const { zone: dstZone, index: destinationIndex } of destinationEntries) {
+          const destinationPath = policy[destinationZoneField]?.length > 0
+            ? `security_policies[${pIdx}].${destinationZoneField}[${destinationIndex}]`
+            : `security_policies[${pIdx}]#effective-destination-zone`;
+          const toZone = identifiers.nameForReference(identifierPath(destinationPath));
+          // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
+          const isGlobal = fromZone === 'any' || toZone === 'any';
+          const policyContext = isGlobal ? 'global' : encodeJunosZonePair(srcZone, dstZone);
+          let policyName;
+          if (policyNamesByContext.has(policyContext)) {
+            policyName = policyNamesByContext.get(policyContext);
+          } else {
+            definitionIndex += 1;
+            const genericName = !policy.name
+              || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
+              || /^\d+$/.test(policy.name);
+            policyName = genericName
+              ? identifiers.nameForGenerated(
+                identifierPath(`security_policies[${pIdx}]`),
+                generatedPolicyRole(srcZone, dstZone),
+              )
+              : identifiers.nameForDefinition(identifierPath(
+                definitionIndex === 1
+                  ? `security_policies[${pIdx}].name`
+                  : `security_policies[${pIdx}].name#zone-pair:${encodeJunosZonePair(srcZone, dstZone)}`,
+              ));
+            policyNamesByContext.set(policyContext, policyName);
+          }
+          const policyPath = isGlobal
+            ? `security policies global policy ${policyName}`
+            : `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
+
+          emitPolicyBody(commands, policyPath, policyName, {
+            policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
+            utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
+            identifiers, identifierPath, warnings, deactivateCommands,
+          });
+        }
+      }
+    } else {
+      // ---- global emission: one consolidated rule per policy ----
+      const genericName = !policy.name
+        || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
+        || /^\d+$/.test(policy.name);
+      const firstSrc = sourceEntries[0]?.zone ?? 'any';
+      const firstDst = destinationEntries[0]?.zone ?? 'any';
+      const policyName = genericName
+        ? identifiers.nameForGenerated(identifierPath(`security_policies[${pIdx}]`), generatedPolicyRole(firstSrc, firstDst))
+        : identifiers.nameForDefinition(identifierPath(`security_policies[${pIdx}].name`));
+      const policyPath = `security policies global policy ${policyName}`;
+
+      for (const { zone: srcZone, index: sourceIndex } of sourceEntries) {
+        const sourcePath = policy[sourceZoneField]?.length > 0
+          ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
+          : `security_policies[${pIdx}]#effective-source-zone`;
+        const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+        commands.push(`set ${policyPath} match from-zone ${fromZone}`);
+      }
       for (const { zone: dstZone, index: destinationIndex } of destinationEntries) {
         const destinationPath = policy[destinationZoneField]?.length > 0
           ? `security_policies[${pIdx}].${destinationZoneField}[${destinationIndex}]`
           : `security_policies[${pIdx}]#effective-destination-zone`;
         const toZone = identifiers.nameForReference(identifierPath(destinationPath));
-        // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
-        const isGlobal = fromZone === 'any' || toZone === 'any';
-        const policyContext = isGlobal ? 'global' : encodeJunosZonePair(srcZone, dstZone);
-        let policyName;
-        if (policyNamesByContext.has(policyContext)) {
-          policyName = policyNamesByContext.get(policyContext);
-        } else {
-          definitionIndex += 1;
-          const genericName = !policy.name
-            || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
-            || /^\d+$/.test(policy.name);
-          policyName = genericName
-            ? identifiers.nameForGenerated(
-              identifierPath(`security_policies[${pIdx}]`),
-              generatedPolicyRole(srcZone, dstZone),
-            )
-            : identifiers.nameForDefinition(identifierPath(
-              definitionIndex === 1
-                ? `security_policies[${pIdx}].name`
-                : `security_policies[${pIdx}].name#zone-pair:${encodeJunosZonePair(srcZone, dstZone)}`,
-            ));
-          policyNamesByContext.set(policyContext, policyName);
-        }
-        const policyPath = isGlobal
-          ? `security policies global policy ${policyName}`
-          : `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
-
-        // Description (include PAN-OS tags as comments)
-        let fullDescription = policy.description || '';
-        if (policy.tags && policy.tags.length > 0) {
-          const tagNote = `[PAN-OS tags: ${policy.tags.join(', ')}]`;
-          fullDescription = fullDescription ? `${fullDescription} ${tagNote}` : tagNote;
-        }
-        if (fullDescription) {
-          commands.push(`set ${policyPath} description ${setQuoted(fullDescription, `security_policies[${pIdx}].description`)}`);
-        }
-
-        // Match criteria: source addresses
-        const effectiveSrcAddrs = srcAddrs.length > 0 ? srcAddrs : [{ value: 'any', index: null }];
-        for (const { value: addr, index: addressIndex } of effectiveSrcAddrs) {
-          const addressName = addressIndex === null
-            ? 'any'
-            : identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].src_addresses[${addressIndex}]`));
-          commands.push(`set ${policyPath} match source-address ${addressName}`);
-        }
-
-        // Match criteria: destination addresses
-        const effectiveDstAddrs = dstAddrs.length > 0 ? dstAddrs : [{ value: 'any', index: null }];
-        for (const { value: addr, index: addressIndex } of effectiveDstAddrs) {
-          const addressName = addressIndex === null
-            ? 'any'
-            : identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].dst_addresses[${addressIndex}]`));
-          commands.push(`set ${policyPath} match destination-address ${addressName}`);
-        }
-
-        // Match criteria: applications
-        let apps = resolveApplications(policy.applications, policy.services, warnings, policyName, appGroups, sourceVendor, pIdx, identifiers, identifierPath);
-        // Junos: if 'any' is present, it must be the only application entry
-        if (apps.includes('any')) {
-          apps = ['any'];
-        }
-        for (const app of apps) {
-          commands.push(`set ${policyPath} match application ${app}`);
-        }
-
-        // Match criteria: source identity (user/group via JIMS)
-        if (policy.source_users && policy.source_users.length > 0) {
-          for (const identity of policy.source_users) {
-            // identifier-catalog: non-symbol security-policy source-identity match value
-            commands.push(`set ${policyPath} match source-identity ${setQuoted(sanitizeJunosName(identity), `security_policies[${pIdx}].source_users`)}`);
-          }
-        }
-
-        // Action
-        const srxAction = mapAction(policy.action);
-        commands.push(`set ${policyPath} then ${srxAction}`);
-
-        // Logging
-        if (policy.log_start) {
-          commands.push(`set ${policyPath} then log session-init`);
-        }
-        if (policy.log_end) {
-          commands.push(`set ${policyPath} then log session-close`);
-        }
-
-        // Count (enabled by default)
-        if (policy._srx_log_count !== false) {
-          commands.push(`set ${policyPath} then count`);
-        }
-
-        // UTM policy attachment
-        if (utmPolicyMap[pIdx]) {
-          const utmPolicyName = identifiers.nameForReference(
-            identifierPath(`security_policies[${pIdx}]#utm-policy`),
-          );
-          commands.push(`set ${policyPath} then permit application-services utm-policy ${utmPolicyName}`);
-        }
-
-        // IDP policy attachment
-        if (idpPolicyMap[pIdx]) {
-          const idpPolicyName = identifiers.nameForReference(
-            identifierPath(`security_policies[${pIdx}]#idp-policy`),
-          );
-          commands.push(`set ${policyPath} then permit application-services idp-policy ${idpPolicyName}`);
-        }
-
-        // SecIntel attachment (on permit rules to untrust)
-        if (secIntelEnabled && policy.action === 'allow' && dstZones.some(z => z.toLowerCase() === 'untrust')) {
-          commands.push(`set ${policyPath} then permit application-services security-intelligence-policy ${secIntelPolicyName}`);
-        }
-
-        // Fix 8: SSL Proxy profiles require PKI certificates that can't be auto-generated.
-        // Skip the active ssl-proxy-profile reference; emit as comment only.
-        if (policy._srx_decrypt && policy.action === 'allow') {
-          const sslProfile = identifiers.nameForReference(identifierPath(
-            policy._srx_decrypt_profile
-              ? `security_policies[${pIdx}]._srx_decrypt_profile`
-              : `security_policies[${pIdx}]#ssl-proxy-profile`,
-          ));
-          commands.push(`# NOTE: SSL proxy skipped — profile "${sslProfile}" requires manual PKI setup before enabling`);
-          commands.push(`# set ${policyPath} then permit application-services ssl-proxy profile-name ${sslProfile}`);
-        }
-
-        // Schedule reference
-        if (policy.schedule) {
-          const scheduleName = identifiers.nameForReference(identifierPath(`security_policies[${pIdx}].schedule`));
-          commands.push(`set ${policyPath} scheduler-name ${scheduleName}`);
-        }
-
-        // Disabled rules → deactivate command
-        if (policy.disabled) {
-          deactivateCommands.push(`deactivate ${policyPath}`);
-        }
+        commands.push(`set ${policyPath} match to-zone ${toZone}`);
       }
+
+      emitPolicyBody(commands, policyPath, policyName, {
+        policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
+        utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
+        identifiers, identifierPath, warnings, deactivateCommands,
+      });
     }
 
     summary.policies_converted++;
