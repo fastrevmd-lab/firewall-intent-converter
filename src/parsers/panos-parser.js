@@ -2544,11 +2544,6 @@ function parseInterfaceConfig(config, zones, warnings) {
   const devices = getNestedValue(config, 'devices');
   if (!devices) return interfaces;
 
-  // Iterate over device entries
-  for (const device of extractEntries(devices)) {
-    const network = getNestedValue(device, 'network.interface');
-    if (!network) continue;
-
   // PAN-OS interface types: ethernet, loopback, tunnel, aggregate-ethernet, vlan
   const typeMap = {
     ethernet: 'physical',
@@ -2558,69 +2553,90 @@ function parseInterfaceConfig(config, zones, warnings) {
     vlan: 'vlan',
   };
 
-  for (const [ifType, container] of Object.entries(network)) {
-    if (!container || typeof container !== 'object') continue;
-    const typeName = typeMap[ifType] || ifType;
-    const entries = extractEntries(container);
+  // Iterate over device entries
+  for (const device of extractEntries(devices)) {
+    const network = getNestedValue(device, 'network.interface');
+    if (!network) continue;
 
-    for (const entry of entries) {
-      const ifName = entry['@_name'] || '';
-      if (!ifName) continue;
+    for (const [ifType, container] of Object.entries(network)) {
+      if (!container || typeof container !== 'object') continue;
+      const typeName = typeMap[ifType] || ifType;
+      const entries = extractEntries(container);
 
-      // L3 sub-interfaces
-      const l3 = getNestedValue(entry, 'layer3');
-      if (l3) {
-        // Get IP from top-level layer3 (for interfaces without sub-interfaces)
-        const topIps = getNestedValue(l3, 'ip');
-        if (topIps) {
-          const ipEntries = extractEntries(topIps);
-          const ip = ipEntries.length > 0 ? (ipEntries[0]['@_name'] || '') : '';
-          const ipv6Node = getNestedValue(l3, 'ipv6.address');
-          const ipv6 = ipv6Node ? (extractEntries(ipv6Node)[0]?.['@_name'] || '') : '';
-          interfaces.push({
-            name: ifName,
-            ip,
-            ipv6,
-            zone: ifToZone[ifName] || '',
-            vlan: '',
-            type: typeName,
-            description: entry.comment || '',
-            status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
-            speed: '',
-          });
-        }
+      for (const entry of entries) {
+        const ifName = entry['@_name'] || '';
+        if (!ifName) continue;
 
-        // Sub-interfaces (units)
-        const units = getNestedValue(l3, 'units');
-        if (units) {
-          const unitEntries = extractEntries(units);
-          for (const unit of unitEntries) {
-            const unitName = unit['@_name'] || '';
-            const fullName = unitName || ifName;
-            const unitIps = getNestedValue(unit, 'ip');
-            const ip = unitIps ? (extractEntries(unitIps)[0]?.['@_name'] || '') : '';
-            const unitIpv6 = getNestedValue(unit, 'ipv6.address');
-            const ipv6 = unitIpv6 ? (extractEntries(unitIpv6)[0]?.['@_name'] || '') : '';
-            const tag = unit.tag || '';
+        // L3 sub-interfaces
+        const l3 = getNestedValue(entry, 'layer3');
+        if (l3) {
+          // Get IP from top-level layer3 (for interfaces without sub-interfaces)
+          const topIps = getNestedValue(l3, 'ip');
+          if (topIps) {
+            const ipEntries = extractEntries(topIps);
+            const ip = ipEntries.length > 0 ? (ipEntries[0]['@_name'] || '') : '';
+            const ipv6Node = getNestedValue(l3, 'ipv6.address');
+            const ipv6 = ipv6Node ? (extractEntries(ipv6Node)[0]?.['@_name'] || '') : '';
             interfaces.push({
-              name: fullName,
+              name: ifName,
               ip,
               ipv6,
-              zone: ifToZone[fullName] || '',
-              vlan: String(tag),
+              zone: ifToZone[ifName] || '',
+              vlan: '',
               type: typeName,
-              description: unit.comment || entry.comment || '',
-              status: 'up',
+              description: entry.comment || '',
+              status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
               speed: '',
             });
           }
-        }
 
-        // If no IPs and no units found, still include the interface
-        if (!topIps && !units) {
+          // Sub-interfaces (units)
+          const units = getNestedValue(l3, 'units');
+          if (units) {
+            const unitEntries = extractEntries(units);
+            for (const unit of unitEntries) {
+              const unitName = unit['@_name'] || '';
+              const fullName = unitName || ifName;
+              const unitIps = getNestedValue(unit, 'ip');
+              const ip = unitIps ? (extractEntries(unitIps)[0]?.['@_name'] || '') : '';
+              const unitIpv6 = getNestedValue(unit, 'ipv6.address');
+              const ipv6 = unitIpv6 ? (extractEntries(unitIpv6)[0]?.['@_name'] || '') : '';
+              const tag = unit.tag || '';
+              interfaces.push({
+                name: fullName,
+                ip,
+                ipv6,
+                zone: ifToZone[fullName] || '',
+                vlan: String(tag),
+                type: typeName,
+                description: unit.comment || entry.comment || '',
+                status: 'up',
+                speed: '',
+              });
+            }
+          }
+
+          // If no IPs and no units found, still include the interface
+          if (!topIps && !units) {
+            interfaces.push({
+              name: ifName,
+              ip: '',
+              ipv6: '',
+              zone: ifToZone[ifName] || '',
+              vlan: '',
+              type: typeName,
+              description: entry.comment || '',
+              status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
+              speed: '',
+            });
+          }
+        } else {
+          // Non-L3 interface or loopback/tunnel
+          const ipEntries = getNestedValue(entry, 'ip');
+          const ip = ipEntries ? (extractEntries(ipEntries)[0]?.['@_name'] || '') : '';
           interfaces.push({
             name: ifName,
-            ip: '',
+            ip,
             ipv6: '',
             zone: ifToZone[ifName] || '',
             vlan: '',
@@ -2630,24 +2646,8 @@ function parseInterfaceConfig(config, zones, warnings) {
             speed: '',
           });
         }
-      } else {
-        // Non-L3 interface or loopback/tunnel
-        const ipEntries = getNestedValue(entry, 'ip');
-        const ip = ipEntries ? (extractEntries(ipEntries)[0]?.['@_name'] || '') : '';
-        interfaces.push({
-          name: ifName,
-          ip,
-          ipv6: '',
-          zone: ifToZone[ifName] || '',
-          vlan: '',
-          type: typeName,
-          description: entry.comment || '',
-          status: entry['link-state'] === 'down' ? 'shutdown' : 'up',
-          speed: '',
-        });
       }
     }
-  }
   }
 
   if (interfaces.length > 0) {
