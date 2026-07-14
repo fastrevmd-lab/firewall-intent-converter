@@ -102,6 +102,36 @@ function tokenizeSetLine(line, lineNumber) {
   return tokens;
 }
 
+/**
+ * Validates an IPv4-shaped token (four dot-separated numbers, optional /prefix).
+ * Checks that all octets are 0-255 and prefix (if present) is 0-32.
+ * @param {string} token - token to validate
+ * @param {string} fieldPath - context for error reporting
+ */
+function validateIpv4Token(token, fieldPath) {
+  const prefixMatch = token.match(/^([^/]+)(?:\/(\d+))?$/u);
+  if (!prefixMatch) return;
+
+  const [, address, prefix] = prefixMatch;
+  const octets = address.split('.');
+
+  // Every octet must be 0–255
+  for (const octet of octets) {
+    const num = parseInt(octet, 10);
+    if (num < 0 || num > 255) {
+      fail('set output', 'malformed IPv4 address or prefix', fieldPath);
+    }
+  }
+
+  // Prefix (if present) must be 0–32
+  if (prefix !== undefined) {
+    const prefixNum = parseInt(prefix, 10);
+    if (prefixNum < 0 || prefixNum > 32) {
+      fail('set output', 'malformed IPv4 address or prefix', fieldPath);
+    }
+  }
+}
+
 export function validateSetOutput(commands) {
   if (!Array.isArray(commands)) fail('set output', 'expected an array of commands');
 
@@ -127,6 +157,14 @@ export function validateSetOutput(commands) {
     }
     if (FORBIDDEN_PATHS.some(path => startsWithPath(hierarchy, path))) {
       fail('set output', 'forbidden configuration hierarchy', fieldPath);
+    }
+
+    // Validate IPv4-shaped tokens (four dot-separated numeric groups, optional /prefix)
+    const ipv4Pattern = /^\d+(?:\.\d+){3}(?:\/\d+)?$/u;
+    for (const token of tokens) {
+      if (ipv4Pattern.test(token)) {
+        validateIpv4Token(token, fieldPath);
+      }
     }
   });
   return commands;
