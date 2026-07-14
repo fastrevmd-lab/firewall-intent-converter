@@ -47,6 +47,7 @@ const SRX_TUNNEL_TYPES = [
   { value: 'st0',       label: 'st0 (IPsec Secure Tunnel)', description: 'Standard IPsec VPN tunnel' },
   { value: 'gr-0/0/0',  label: 'gr-0/0/0 (GRE Tunnel)',     description: 'Generic Routing Encapsulation' },
   { value: 'ip-0/0/0',  label: 'ip-0/0/0 (IP-IP Tunnel)',   description: 'IP-in-IP encapsulation' },
+  { value: 'st0-ra',    label: 'st0 (SSL-VPN / Remote Access)', description: 'GlobalProtect → Juniper Secure Connect / IPsec dial-up (manual rebuild)' },
 ];
 
 /** Detect if a PAN-OS interface is a tunnel */
@@ -63,6 +64,33 @@ function isLoopbackInterface(ifaceName) {
 function getUnit(ifaceName) {
   const m = ifaceName.match(/\.(\d+)$/);
   return m ? m[1] : '0';
+}
+
+/**
+ * Resolve the real Junos interface base for a tunnel-type selection.
+ * The `st0-ra` value is a UI marker for SSL-VPN intent; it always serializes
+ * to a real `st0` interface so the emitted mapping is a valid Junos token.
+ * @param {string} tunnelType
+ * @returns {string}
+ */
+export function srxTunnelBase(tunnelType) {
+  return tunnelType === 'st0-ra' ? 'st0' : tunnelType;
+}
+
+/**
+ * Choose the default tunnel-type selection for a PAN-OS tunnel interface.
+ * An existing non-st0 mapping prefix wins; otherwise GlobalProtect tunnels
+ * default to the SSL-VPN marker, and everything else to plain st0 IPsec.
+ * @param {string} ifaceName
+ * @param {Set<string>} sslVpnTunnels
+ * @param {string} existingMapping
+ * @returns {string}
+ */
+export function defaultTunnelTypeFor(ifaceName, sslVpnTunnels, existingMapping = '') {
+  if (existingMapping.startsWith('gr-')) return 'gr-0/0/0';
+  if (existingMapping.startsWith('ip-')) return 'ip-0/0/0';
+  if (sslVpnTunnels && sslVpnTunnels.has(ifaceName)) return 'st0-ra';
+  return 'st0';
 }
 
 export default function InterfaceMapper({
@@ -83,6 +111,11 @@ export default function InterfaceMapper({
     }
     return raw;
   }, [targetModel, portProfile]);
+
+  const sslVpnTunnels = useMemo(
+    () => new Set((intermediateConfig?.global_protect?.gateways || []).map(g => g.tunnel_interface)),
+    [intermediateConfig],
+  );
 
   // Initialize mappings from existing or build fresh
   const [mappings, setMappings] = useState(() => {
@@ -111,15 +144,8 @@ export default function InterfaceMapper({
     for (const zone of (intermediateConfig?.zones || [])) {
       for (const iface of (zone.interfaces || [])) {
         if (isTunnelInterface(iface)) {
-          // Parse existing mapping to detect type, or default to st0
           const existing = existingMappings?.[iface] || '';
-          if (existing.startsWith('gr-')) {
-            types[iface] = 'gr-0/0/0';
-          } else if (existing.startsWith('ip-')) {
-            types[iface] = 'ip-0/0/0';
-          } else {
-            types[iface] = 'st0';
-          }
+          types[iface] = defaultTunnelTypeFor(iface, sslVpnTunnels, existing);
         }
       }
     }
@@ -283,7 +309,7 @@ export default function InterfaceMapper({
     const unit = tunnelUnits[panosIface] || getUnit(panosIface);
     setMappings(prev => ({
       ...prev,
-      [panosIface]: `${tunnelType}.${unit}`,
+      [panosIface]: `${srxTunnelBase(tunnelType)}.${unit}`,
     }));
   };
 
@@ -293,7 +319,7 @@ export default function InterfaceMapper({
     const tunnelType = tunnelTypes[panosIface] || 'st0';
     setMappings(prev => ({
       ...prev,
-      [panosIface]: `${tunnelType}.${unit}`,
+      [panosIface]: `${srxTunnelBase(tunnelType)}.${unit}`,
     }));
   };
 
@@ -573,8 +599,9 @@ export default function InterfaceMapper({
                               title="Tunnel unit number"
                             />
                             <span className="port-badge speed-virtual" style={{ marginLeft: 6 }}>
-                              {(tunnelTypes[panosIface] || 'st0') === 'st0' ? 'IPsec' :
-                               (tunnelTypes[panosIface] || 'st0').startsWith('gr') ? 'GRE' : 'IP-IP'}
+                              {tunnelTypes[panosIface] === 'st0-ra' ? 'SSL-VPN'
+                                : (tunnelTypes[panosIface] || 'st0') === 'st0' ? 'IPsec'
+                                : (tunnelTypes[panosIface] || 'st0').startsWith('gr') ? 'GRE' : 'IP-IP'}
                             </span>
                           </div>
                         ) : isLoopback ? (
