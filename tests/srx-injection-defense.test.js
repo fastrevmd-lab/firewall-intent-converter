@@ -1023,7 +1023,7 @@ describe('set converter injection defense', () => {
     config.security_policies[0].dst_addresses = ['any'];
     config.security_policies[0].action = 'allow';
 
-    const generated = convertToSrxSetCommands(config).commands
+    const generated = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' }).commands
       .filter(line => line.startsWith('set ') || line.startsWith('deactivate '))
       .join('\n');
     const reparsed = parseSrxConfig(generated).intermediateConfig;

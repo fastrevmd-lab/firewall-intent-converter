@@ -665,7 +665,7 @@ describe('Randomized Junos identifier allocation integrity', () => {
 describe('delimiter-bearing zone-pair identity', () => {
   it('keeps all generic policy pairs distinct in Set, XML, and the mapping', () => {
     const config = delimiterZonePolicyConfig('Rule-1');
-    const setResult = convertToSrxSetCommands(config);
+    const setResult = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' });
     const xmlResult = buildSrxXml(config);
     const setAssociations = setPolicyAssociations(setResult);
     const xmlAssociations = xmlPolicyAssociations(xmlResult);
@@ -684,7 +684,7 @@ describe('delimiter-bearing zone-pair identity', () => {
 
   it('keeps non-generic policy definition lookups distinct for every zone pair', () => {
     const config = delimiterZonePolicyConfig('Named Policy');
-    const setResult = convertToSrxSetCommands(config);
+    const setResult = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' });
     const xmlResult = buildSrxXml(config);
     const policyMappings = setResult.identifierMappings.entries.filter(
       entry => entry.namespace === 'security-policy',
@@ -699,7 +699,7 @@ describe('delimiter-bearing zone-pair identity', () => {
 
   it('keeps source and destination NAT groups, roles, contexts, and rule paths distinct', () => {
     const config = delimiterZoneNatConfig();
-    const setResult = convertToSrxSetCommands(config);
+    const setResult = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' });
     const xmlResult = buildSrxXml(config);
     const ruleSetMappings = setResult.identifierMappings.entries.filter(
       entry => entry.namespace === 'nat-rule-set',
@@ -721,8 +721,8 @@ describe('delimiter-bearing zone-pair identity', () => {
 
 describe('Set identifier-plan integration', () => {
   it('keeps generic policy output names associated with semantics when policies and zones reorder', () => {
-    const forward = setPolicyAssociations(convertToSrxSetCommands(genericPolicyOrderConfig()));
-    const reversed = setPolicyAssociations(convertToSrxSetCommands(reversedGenericPolicyOrderConfig()));
+    const forward = setPolicyAssociations(convertToSrxSetCommands(genericPolicyOrderConfig(), {}, null, { policyStructure: 'zone-pair' }));
+    const reversed = setPolicyAssociations(convertToSrxSetCommands(reversedGenericPolicyOrderConfig(), {}, null, { policyStructure: 'zone-pair' }));
 
     expect(forward).toHaveLength(8);
     expect(reversed).toEqual(forward);
@@ -1140,7 +1140,7 @@ describe('Set identifier-plan integration', () => {
       ],
     });
 
-    const result = convertToSrxSetCommands(config);
+    const result = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' });
     const policies = result.identifierMappings.entries.filter(
       entry => entry.namespace === 'security-policy',
     );
@@ -1210,7 +1210,7 @@ describe('Set identifier-plan integration', () => {
       })],
     });
 
-    const result = convertToSrxSetCommands(config);
+    const result = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' });
     const applicationEntries = result.identifierMappings.entries.filter(
       entry => entry.namespace === 'application-entry',
     );
@@ -1545,7 +1545,7 @@ describe('Set identifier-plan integration', () => {
         applications: ['mysql'],
       })],
     });
-    const result = convertToSrxSetCommands(config);
+    const result = convertToSrxSetCommands(config, {}, null, { policyStructure: 'zone-pair' });
 
     expect(result.commands).toContain(
       'set security policies from-zone trust to-zone untrust policy Database match application junos-mysql',
@@ -1685,7 +1685,7 @@ describe('Set identifier-plan integration', () => {
       })],
     });
     const mappedInterface = 'ge-0/0/0.0';
-    const result = convertToSrxSetCommands(config, { port1: mappedInterface });
+    const result = convertToSrxSetCommands(config, { port1: mappedInterface }, null, { policyStructure: 'zone-pair' });
     const portOneEntries = result.identifierMappings.entries.filter(entry => (
       entry.sourceName === 'port1'
     ));

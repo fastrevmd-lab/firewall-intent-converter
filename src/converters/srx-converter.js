@@ -167,7 +167,8 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // then emit application definitions BEFORE emitting the policy commands.
   // This ensures all custom applications are defined before policies reference them.
   const policyCommands = [];
-  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath);
+  const policyStructure = options.policyStructure === 'zone-pair' ? 'zone-pair' : 'global';
+  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath, policyStructure);
 
   // Tier 2 emission: concrete custom applications (known ports from canonical data)
   if (concreteCustomApps.size > 0) {
@@ -1713,7 +1714,7 @@ function emitPolicyBody(commands, policyPath, policyName, ctx) {
   if (policy.disabled) deactivateCommands.push(`deactivate ${policyPath}`);
 }
 
-function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath) {
+function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath, policyStructure = 'global') {
   if (!policies || policies.length === 0) return;
 
   const {
@@ -1773,52 +1774,86 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
     const sourceEntries = orderedZoneEntries(srcZones);
     const destinationEntries = orderedZoneEntries(dstZones);
 
-    // Handle zone-based policy paths
-    let definitionIndex = 0;
-    const policyNamesByContext = new Map();
-    for (const { zone: srcZone, index: sourceIndex } of sourceEntries) {
-      const sourcePath = policy[sourceZoneField]?.length > 0
-        ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
-        : `security_policies[${pIdx}]#effective-source-zone`;
-      const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+    if (policyStructure === 'zone-pair') {
+      // ---- existing zone-pair emission (unchanged) ----
+      let definitionIndex = 0;
+      const policyNamesByContext = new Map();
+      for (const { zone: srcZone, index: sourceIndex } of sourceEntries) {
+        const sourcePath = policy[sourceZoneField]?.length > 0
+          ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
+          : `security_policies[${pIdx}]#effective-source-zone`;
+        const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+        for (const { zone: dstZone, index: destinationIndex } of destinationEntries) {
+          const destinationPath = policy[destinationZoneField]?.length > 0
+            ? `security_policies[${pIdx}].${destinationZoneField}[${destinationIndex}]`
+            : `security_policies[${pIdx}]#effective-destination-zone`;
+          const toZone = identifiers.nameForReference(identifierPath(destinationPath));
+          // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
+          const isGlobal = fromZone === 'any' || toZone === 'any';
+          const policyContext = isGlobal ? 'global' : encodeJunosZonePair(srcZone, dstZone);
+          let policyName;
+          if (policyNamesByContext.has(policyContext)) {
+            policyName = policyNamesByContext.get(policyContext);
+          } else {
+            definitionIndex += 1;
+            const genericName = !policy.name
+              || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
+              || /^\d+$/.test(policy.name);
+            policyName = genericName
+              ? identifiers.nameForGenerated(
+                identifierPath(`security_policies[${pIdx}]`),
+                generatedPolicyRole(srcZone, dstZone),
+              )
+              : identifiers.nameForDefinition(identifierPath(
+                definitionIndex === 1
+                  ? `security_policies[${pIdx}].name`
+                  : `security_policies[${pIdx}].name#zone-pair:${encodeJunosZonePair(srcZone, dstZone)}`,
+              ));
+            policyNamesByContext.set(policyContext, policyName);
+          }
+          const policyPath = isGlobal
+            ? `security policies global policy ${policyName}`
+            : `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
+
+          emitPolicyBody(commands, policyPath, policyName, {
+            policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
+            utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
+            identifiers, identifierPath, warnings, deactivateCommands,
+          });
+        }
+      }
+    } else {
+      // ---- global emission: one consolidated rule per policy ----
+      const genericName = !policy.name
+        || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
+        || /^\d+$/.test(policy.name);
+      const firstSrc = sourceEntries[0]?.zone ?? 'any';
+      const firstDst = destinationEntries[0]?.zone ?? 'any';
+      const policyName = genericName
+        ? identifiers.nameForGenerated(identifierPath(`security_policies[${pIdx}]`), generatedPolicyRole(firstSrc, firstDst))
+        : identifiers.nameForDefinition(identifierPath(`security_policies[${pIdx}].name`));
+      const policyPath = `security policies global policy ${policyName}`;
+
+      for (const { zone: srcZone, index: sourceIndex } of sourceEntries) {
+        const sourcePath = policy[sourceZoneField]?.length > 0
+          ? `security_policies[${pIdx}].${sourceZoneField}[${sourceIndex}]`
+          : `security_policies[${pIdx}]#effective-source-zone`;
+        const fromZone = identifiers.nameForReference(identifierPath(sourcePath));
+        commands.push(`set ${policyPath} match from-zone ${fromZone}`);
+      }
       for (const { zone: dstZone, index: destinationIndex } of destinationEntries) {
         const destinationPath = policy[destinationZoneField]?.length > 0
           ? `security_policies[${pIdx}].${destinationZoneField}[${destinationIndex}]`
           : `security_policies[${pIdx}]#effective-destination-zone`;
         const toZone = identifiers.nameForReference(identifierPath(destinationPath));
-        // Fix 9: Use global policy when EITHER zone is 'any' (not just both)
-        const isGlobal = fromZone === 'any' || toZone === 'any';
-        const policyContext = isGlobal ? 'global' : encodeJunosZonePair(srcZone, dstZone);
-        let policyName;
-        if (policyNamesByContext.has(policyContext)) {
-          policyName = policyNamesByContext.get(policyContext);
-        } else {
-          definitionIndex += 1;
-          const genericName = !policy.name
-            || /^(rule|policy|permit|deny)[-_]?\d+$/i.test(policy.name)
-            || /^\d+$/.test(policy.name);
-          policyName = genericName
-            ? identifiers.nameForGenerated(
-              identifierPath(`security_policies[${pIdx}]`),
-              generatedPolicyRole(srcZone, dstZone),
-            )
-            : identifiers.nameForDefinition(identifierPath(
-              definitionIndex === 1
-                ? `security_policies[${pIdx}].name`
-                : `security_policies[${pIdx}].name#zone-pair:${encodeJunosZonePair(srcZone, dstZone)}`,
-            ));
-          policyNamesByContext.set(policyContext, policyName);
-        }
-        const policyPath = isGlobal
-          ? `security policies global policy ${policyName}`
-          : `security policies from-zone ${fromZone} to-zone ${toZone} policy ${policyName}`;
-
-        emitPolicyBody(commands, policyPath, policyName, {
-          policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
-          utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
-          identifiers, identifierPath, warnings, deactivateCommands,
-        });
+        commands.push(`set ${policyPath} match to-zone ${toZone}`);
       }
+
+      emitPolicyBody(commands, policyPath, policyName, {
+        policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
+        utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
+        identifiers, identifierPath, warnings, deactivateCommands,
+      });
     }
 
     summary.policies_converted++;
