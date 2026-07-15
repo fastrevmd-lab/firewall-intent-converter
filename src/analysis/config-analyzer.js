@@ -22,6 +22,12 @@ function isExternalZone(zoneName) {
   return /untrust|internet|outside|\bwan\b|external|public|inet/i.test(String(zoneName || ''));
 }
 
+/** Threshold for large group detection (issue #50). */
+const LARGE_GROUP_THRESHOLD = 50;
+
+/** Threshold for nested group depth detection (issue #50). */
+const NESTED_GROUP_THRESHOLD = 3;
+
 export const AnalysisEngine = {
   _yield() { return new Promise(r => setTimeout(r, 0)); },
 
@@ -52,6 +58,10 @@ export const AnalysisEngine = {
       await step('Checking for empty policy set...', () => this._emptyPolicySet(config)),
       await step('Checking for zones without policy...', () => this._zonesWithoutPolicy(config)),
       await step('Checking for remote logging...', () => this._logCompleteness(config)),
+      await step('Checking for large groups...', () => this._largeGroups(config)),
+      await step('Checking for nested groups...', () => this._nestedGroups(config)),
+      await step('Checking for undescribed objects...', () => this._undescribedObjects(config)),
+      await step('Checking for undescribed policies...', () => this._undescribedPolicies(config)),
     ];
   },
 
@@ -803,6 +813,232 @@ export const AnalysisEngine = {
       count: 1,
       items: [{ key: 'no_remote_log', label: 'No remote syslog target configured' }],
       description: 'No remote syslog/security-log target configured — policy and threat logs are not forwarded off-box.',
+    };
+  },
+
+  // ── Large Groups (issue #50) ──────────────────────────────────────────────
+  /**
+   * 18. Large Groups — groups with >= 50 members (operational hygiene).
+   * Flags address_groups, service_groups, application_groups.
+   */
+  _largeGroups(config) {
+    const large = [];
+    const addressGroups = config.address_groups || [];
+    const serviceGroups = config.service_groups || [];
+    const applicationGroups = config.application_groups || [];
+
+    for (const g of addressGroups) {
+      if ((g.members || []).length >= LARGE_GROUP_THRESHOLD) {
+        large.push(g);
+      }
+    }
+    for (const g of serviceGroups) {
+      if ((g.members || []).length >= LARGE_GROUP_THRESHOLD) {
+        large.push(g);
+      }
+    }
+    for (const g of applicationGroups) {
+      if ((g.members || []).length >= LARGE_GROUP_THRESHOLD) {
+        large.push(g);
+      }
+    }
+
+    const count = large.length;
+    if (!count) {
+      return { id: 'large_group', count: 0, items: [], description: 'No large groups found.' };
+    }
+
+    const items = large.map(g => ({
+      key: g.name,
+      label: `${g.name} (${(g.members || []).length} members)`,
+    }));
+
+    return {
+      id: 'large_group',
+      count,
+      items,
+      description: `${count} group${count !== 1 ? 's have' : ' has'} >= ${LARGE_GROUP_THRESHOLD} members (may be hard to manage).`,
+    };
+  },
+
+  // ── Nested Groups (issue #50) ─────────────────────────────────────────────
+  /**
+   * 19. Nested Groups — groups with nesting depth >= 3.
+   * Computes depth per group type independently. Guards against cycles.
+   * Depth is deterministic: computed per group with a fresh path set (no cross-group memoization).
+   */
+  _nestedGroups(config) {
+    const flagged = [];
+
+    /**
+     * Compute depth for a group type (address, service, or application).
+     * Each group's depth is computed independently with a fresh path set for deterministic results.
+     * @param {Array} groups - array of group objects with name and members
+     * @returns {Map<string, number>} - name → depth
+     */
+    const computeDepths = (groups) => {
+      const nameToGroup = new Map(groups.map(g => [g.name, g]));
+      const depths = new Map();
+
+      /**
+       * Compute depth for a single group, starting with an empty path.
+       * @param {string} groupName - group name
+       * @param {Set<string>} path - current path (for cycle detection)
+       * @returns {number} - depth
+       */
+      const getDepth = (groupName, path) => {
+        if (path.has(groupName)) return 0; // back-edge: stop (deterministic)
+        if (!nameToGroup.has(groupName)) return 0; // leaf/object member
+
+        const group = nameToGroup.get(groupName);
+        const members = group.members || [];
+        const newPath = new Set(path);
+        newPath.add(groupName);
+
+        const memberDepths = [];
+        for (const member of members) {
+          memberDepths.push(getDepth(member, newPath));
+        }
+
+        const maxChildDepth = memberDepths.length > 0 ? Math.max(...memberDepths) : 0;
+        return 1 + maxChildDepth;
+      };
+
+      // Compute depth(g.name, emptySet) for every group (fresh empty path each time)
+      for (const g of groups) {
+        depths.set(g.name, getDepth(g.name, new Set()));
+      }
+
+      return depths;
+    };
+
+    const addressGroups = config.address_groups || [];
+    const serviceGroups = config.service_groups || [];
+    const applicationGroups = config.application_groups || [];
+
+    const addrDepths = computeDepths(addressGroups);
+    const svcDepths = computeDepths(serviceGroups);
+    const appDepths = computeDepths(applicationGroups);
+
+    for (const g of addressGroups) {
+      const depth = addrDepths.get(g.name) || 1;
+      if (depth >= NESTED_GROUP_THRESHOLD) {
+        flagged.push({ name: g.name, depth });
+      }
+    }
+    for (const g of serviceGroups) {
+      const depth = svcDepths.get(g.name) || 1;
+      if (depth >= NESTED_GROUP_THRESHOLD) {
+        flagged.push({ name: g.name, depth });
+      }
+    }
+    for (const g of applicationGroups) {
+      const depth = appDepths.get(g.name) || 1;
+      if (depth >= NESTED_GROUP_THRESHOLD) {
+        flagged.push({ name: g.name, depth });
+      }
+    }
+
+    const count = flagged.length;
+    if (!count) {
+      return { id: 'nested_group', count: 0, items: [], description: 'No deeply nested groups found.' };
+    }
+
+    const items = flagged.map(f => ({
+      key: f.name,
+      label: `${f.name} (depth ${f.depth})`,
+    }));
+
+    return {
+      id: 'nested_group',
+      count,
+      items,
+      description: `${count} group${count !== 1 ? 's have' : ' has'} nesting depth >= ${NESTED_GROUP_THRESHOLD} (may be hard to troubleshoot).`,
+    };
+  },
+
+  // ── Undescribed Objects (issue #50) ───────────────────────────────────────
+  /**
+   * 20. Undescribed Objects — objects/groups with no description field.
+   * Covers address_objects, service_objects, address_groups, service_groups.
+   */
+  _undescribedObjects(config) {
+    const isEmpty = (desc) => !desc || String(desc).trim() === '';
+
+    const undescribed = [];
+    const addressObjects = config.address_objects || [];
+    const serviceObjects = config.service_objects || [];
+    const addressGroups = config.address_groups || [];
+    const serviceGroups = config.service_groups || [];
+
+    for (const obj of addressObjects) {
+      if (isEmpty(obj.description)) {
+        undescribed.push({ name: obj.name, type: 'address object' });
+      }
+    }
+    for (const obj of serviceObjects) {
+      if (isEmpty(obj.description)) {
+        undescribed.push({ name: obj.name, type: 'service object' });
+      }
+    }
+    for (const grp of addressGroups) {
+      if (isEmpty(grp.description)) {
+        undescribed.push({ name: grp.name, type: 'address group' });
+      }
+    }
+    for (const grp of serviceGroups) {
+      if (isEmpty(grp.description)) {
+        undescribed.push({ name: grp.name, type: 'service group' });
+      }
+    }
+
+    const count = undescribed.length;
+    if (!count) {
+      return { id: 'undescribed_object', count: 0, items: [], description: 'All objects and groups have descriptions.' };
+    }
+
+    const items = undescribed.map(u => ({
+      key: u.name,
+      label: `${u.name} (${u.type})`,
+    }));
+
+    return {
+      id: 'undescribed_object',
+      count,
+      items,
+      description: `${count} object${count !== 1 ? 's/groups have' : '/group has'} no description (operational hygiene).`,
+    };
+  },
+
+  // ── Undescribed Policies (issue #50) ──────────────────────────────────────
+  /**
+   * 21. Undescribed Policies — non-implicit policies with no description.
+   * Excludes _implicit policies.
+   */
+  _undescribedPolicies(config) {
+    const policies = config.security_policies || [];
+    const isEmpty = (desc) => !desc || String(desc).trim() === '';
+
+    const undescribed = policies.filter(p => !p._implicit && isEmpty(p.description));
+    const count = undescribed.length;
+
+    if (!count) {
+      return { id: 'undescribed_policy', count: 0, items: [], description: 'All policies have descriptions.' };
+    }
+
+    const pKey = (p) => p._rule_index != null ? String(p._rule_index) : p.name;
+    const pLabel = (p) => p._rule_index != null ? `#${p._rule_index} ${p.name}` : p.name;
+
+    const items = undescribed.map(p => ({
+      key: pKey(p),
+      label: pLabel(p),
+    }));
+
+    return {
+      id: 'undescribed_policy',
+      count,
+      items,
+      description: `${count} polic${count !== 1 ? 'ies have' : 'y has'} no description (operational hygiene).`,
     };
   },
 };
