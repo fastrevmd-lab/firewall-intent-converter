@@ -280,6 +280,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     warnings,
     summary,
     config.address_objects,
+    config.address_groups,
     config.zones,
     identifiers,
     identifierPath,
@@ -2282,6 +2283,7 @@ function convertNatRules(
   warnings,
   summary,
   addressObjects,
+  addressGroups,
   configuredZones,
   identifiers,
   identifierPath,
@@ -2301,6 +2303,9 @@ function convertNatRules(
     else if (obj.subnet) addrLookup[plannedName] = obj.subnet;
     else if (obj.address) addrLookup[plannedName] = obj.address;
   }
+
+  // Build set of address-group names for NAT match name-refs
+  const groupNames = new Set((addressGroups || []).map(g => g.name));
 
   const natRuleIndex = new Map(natRules.map((rule, index) => [rule, index]));
   const sourceZonesFor = natSourceZones;
@@ -2468,11 +2473,24 @@ function convertNatRules(
             }
             commands.push(`set ${rulePath} match source-address ${anyAddr}`);
           } else {
-            const resolved = hasSourceAddresses
-              ? matchAddress(ruleIndex, 'src_addresses', addressIndex, addr)
-              : addr;
-            if (resolved) {
-              commands.push(`set ${rulePath} match source-address ${resolved}`);
+            // Check if addr is a literal IP/prefix
+            const isLiteral = /^\d+\.\d+\.\d+\.\d+(\/\d+)?$/.test(addr) || /^[0-9a-fA-F:]+\/\d+$/.test(addr);
+            if (isLiteral) {
+              commands.push(`set ${rulePath} match source-address ${addr}`);
+            } else if (groupNames.has(addr)) {
+              // Address group → emit name-ref
+              const groupNameRef = identifiers.nameForReference(
+                identifierPath(`nat_rules[${ruleIndex}].src_addresses[${addressIndex}]`),
+              );
+              commands.push(`set ${rulePath} match source-address-name ${groupNameRef}`);
+            } else {
+              // Address object or unknown → resolve to IP
+              const resolved = hasSourceAddresses
+                ? matchAddress(ruleIndex, 'src_addresses', addressIndex, addr)
+                : addr;
+              if (resolved) {
+                commands.push(`set ${rulePath} match source-address ${resolved}`);
+              }
             }
           }
         }
@@ -2488,13 +2506,37 @@ function convertNatRules(
             }
             commands.push(`set ${rulePath} match destination-address ${anyAddr}`);
           } else {
-            const resolved = hasDestinationAddresses
-              ? matchAddress(ruleIndex, 'dst_addresses', addressIndex, addr)
-              : addr;
-            if (resolved) {
-              commands.push(`set ${rulePath} match destination-address ${resolved}`);
+            // Check if addr is a literal IP/prefix
+            const isLiteral = /^\d+\.\d+\.\d+\.\d+(\/\d+)?$/.test(addr) || /^[0-9a-fA-F:]+\/\d+$/.test(addr);
+            if (isLiteral) {
+              commands.push(`set ${rulePath} match destination-address ${addr}`);
+            } else if (groupNames.has(addr)) {
+              // Address group → emit name-ref
+              const groupNameRef = identifiers.nameForReference(
+                identifierPath(`nat_rules[${ruleIndex}].dst_addresses[${addressIndex}]`),
+              );
+              commands.push(`set ${rulePath} match destination-address-name ${groupNameRef}`);
+            } else {
+              // Address object or unknown → resolve to IP
+              const resolved = hasDestinationAddresses
+                ? matchAddress(ruleIndex, 'dst_addresses', addressIndex, addr)
+                : addr;
+              if (resolved) {
+                commands.push(`set ${rulePath} match destination-address ${resolved}`);
+              }
             }
           }
+        }
+
+        // Protocol and port matching (from service)
+        if (rule.match_protocol) {
+          const proto = String(rule.match_protocol).toLowerCase();
+          if (proto === 'tcp' || proto === 'udp') {
+            commands.push(`set ${rulePath} match protocol ${proto}`);
+          }
+        }
+        if (rule.match_port) {
+          commands.push(`set ${rulePath} match destination-port ${rule.match_port}`);
         }
 
         // Translation action
