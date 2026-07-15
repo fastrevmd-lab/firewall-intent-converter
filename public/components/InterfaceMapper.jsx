@@ -68,6 +68,9 @@ function getUnit(ifaceName) {
 
 /** PAN-OS logical L3 sub-interface, e.g. ethernet1/13.100 (parent + unit). */
 export function isSubInterface(ifaceName) {
+  // Exclude SRX-format tunnel/loopback/aggregate units in case this helper is
+  // ever reused on SRX-side names (st0.10, lo0.0, ae0.100 are not sub-interfaces).
+  if (/^(st0|lo0|ae\d+)\.\d+$/i.test(ifaceName)) return false;
   return /\.\d+$/.test(ifaceName) && !isTunnelInterface(ifaceName) && !isLoopbackInterface(ifaceName);
 }
 
