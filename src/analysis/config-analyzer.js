@@ -28,6 +28,46 @@ const LARGE_GROUP_THRESHOLD = 50;
 /** Threshold for nested group depth detection (issue #50). */
 const NESTED_GROUP_THRESHOLD = 3;
 
+/**
+ * True if a crypto token denotes a weak cipher (DES/3DES family).
+ * @param {string} token - Crypto token (e.g., "des", "3des-cbc", "des-cbc")
+ * @returns {boolean} - True if the token contains 'des'
+ */
+function isWeakEncToken(token) {
+  return token.includes('des');
+}
+
+/**
+ * True if a token denotes weak integrity/hash (MD5 or SHA-1 family).
+ * @param {string} token - Auth token (e.g., "md5", "hmac-md5-96", "sha1", "hmac-sha1-96")
+ * @returns {boolean} - True if the token contains 'md5', 'sha1', or 'sha-1'
+ */
+function isWeakAuthToken(token) {
+  return token.includes('md5') || token.includes('sha1') || token.includes('sha-1');
+}
+
+/**
+ * Parse a Junos/PAN dh-group token like "group14" → 14 (NaN if not parseable).
+ * @param {string} v - DH group string (e.g., "group14", "group2")
+ * @returns {number} - Group number or NaN
+ */
+function dhGroupNumber(v) {
+  const m = /group\s*(\d+)/i.exec(String(v || ''));
+  return m ? parseInt(m[1], 10) : NaN;
+}
+
+/**
+ * Split a comma/space-joined crypto list into lowercased tokens.
+ * @param {string} v - Crypto string (e.g., "aes-256-cbc,3des")
+ * @returns {string[]} - Array of lowercased tokens
+ */
+function cryptoTokens(v) {
+  return String(v || '')
+    .split(/[,\s]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export const AnalysisEngine = {
   _yield() { return new Promise(r => setTimeout(r, 0)); },
 
@@ -62,6 +102,9 @@ export const AnalysisEngine = {
       await step('Checking for nested groups...', () => this._nestedGroups(config)),
       await step('Checking for undescribed objects...', () => this._undescribedObjects(config)),
       await step('Checking for undescribed policies...', () => this._undescribedPolicies(config)),
+      await step('Checking for weak IKE crypto...', () => this._weakIke(config)),
+      await step('Checking for weak IPsec crypto...', () => this._weakIpsec(config)),
+      await step('Checking for zones without screen...', () => this._zonesWithoutScreen(config)),
     ];
   },
 
@@ -1039,6 +1082,196 @@ export const AnalysisEngine = {
       count,
       items,
       description: `${count} polic${count !== 1 ? 'ies have' : 'y has'} no description (operational hygiene).`,
+    };
+  },
+
+  /**
+   * 22. Weak IKE Crypto — VPN tunnels with weak IKE proposals (issue #48 Group B).
+   * Flags tunnels with: DH group < 14, weak encryption (DES/3DES), weak auth (MD5/SHA1).
+   */
+  _weakIke(config) {
+    const tunnels = config.vpn_tunnels || [];
+    const flagged = [];
+
+    for (const t of tunnels) {
+      if (!t.ike_proposal) continue;
+
+      const weaknesses = [];
+      const prop = t.ike_proposal;
+
+      // Check DH group
+      const dhNum = dhGroupNumber(prop.dh_group);
+      if (!isNaN(dhNum) && dhNum < 14) {
+        weaknesses.push(`DH group ${dhNum}`);
+      }
+
+      // Check encryption
+      const encTokens = cryptoTokens(prop.encryption);
+      for (const tok of encTokens) {
+        if (isWeakEncToken(tok)) {
+          weaknesses.push(tok);
+          break; // one per category
+        }
+      }
+
+      // Check authentication
+      const authTokens = cryptoTokens(prop.authentication);
+      for (const tok of authTokens) {
+        if (isWeakAuthToken(tok)) {
+          weaknesses.push(tok);
+          break;
+        }
+      }
+
+      if (weaknesses.length) {
+        flagged.push({
+          name: t.name,
+          weaknesses,
+        });
+      }
+    }
+
+    const count = flagged.length;
+    if (!count) {
+      return {
+        id: 'weak_ike',
+        count: 0,
+        items: [],
+        description: 'No VPN tunnels with weak IKE crypto.',
+      };
+    }
+
+    const items = flagged.map(f => ({
+      key: f.name,
+      label: `${f.name} — ${f.weaknesses.join(', ')}`,
+    }));
+
+    return {
+      id: 'weak_ike',
+      count,
+      items,
+      description: `${count} VPN tunnel${count !== 1 ? 's have' : ' has'} weak IKE crypto (DH < 14, DES/3DES, MD5/SHA1).`,
+    };
+  },
+
+  /**
+   * 23. Weak IPsec Crypto — VPN tunnels with weak IPsec proposals (issue #48 Group B).
+   * Flags tunnels with: weak encryption (DES/3DES), weak auth (MD5/SHA1), no PFS.
+   */
+  _weakIpsec(config) {
+    const tunnels = config.vpn_tunnels || [];
+    const flagged = [];
+
+    for (const t of tunnels) {
+      if (!t.ipsec_proposal) continue;
+
+      const weaknesses = [];
+      const prop = t.ipsec_proposal;
+
+      // Check encryption
+      const encTokens = cryptoTokens(prop.encryption);
+      for (const tok of encTokens) {
+        if (isWeakEncToken(tok)) {
+          weaknesses.push(tok);
+          break;
+        }
+      }
+
+      // Check authentication
+      const authTokens = cryptoTokens(prop.authentication);
+      for (const tok of authTokens) {
+        if (isWeakAuthToken(tok)) {
+          weaknesses.push(tok);
+          break;
+        }
+      }
+
+      // Check PFS
+      const pfsGroup = String(prop.pfs_group || '').toLowerCase().trim();
+      const noPfs = !prop.pfs_group || pfsGroup === 'none' || pfsGroup === 'disabled' || pfsGroup === 'group0' || dhGroupNumber(prop.pfs_group) === 0;
+      if (noPfs) {
+        weaknesses.push('no PFS');
+      }
+
+      if (weaknesses.length) {
+        flagged.push({
+          name: t.name,
+          weaknesses,
+        });
+      }
+    }
+
+    const count = flagged.length;
+    if (!count) {
+      return {
+        id: 'weak_ipsec',
+        count: 0,
+        items: [],
+        description: 'No VPN tunnels with weak IPsec crypto.',
+      };
+    }
+
+    const items = flagged.map(f => ({
+      key: f.name,
+      label: `${f.name} — ${f.weaknesses.join(', ')}`,
+    }));
+
+    return {
+      id: 'weak_ipsec',
+      count,
+      items,
+      description: `${count} VPN tunnel${count !== 1 ? 's have' : ' has'} weak IPsec crypto (DES/3DES, MD5/SHA1, no PFS).`,
+    };
+  },
+
+  /**
+   * 24. Zones Without Screen — External zones without IDS screen profile (issue #48 Group B).
+   * Flags external/untrusted zones that have no screen_config binding.
+   */
+  _zonesWithoutScreen(config) {
+    const zones = config.zones || [];
+    if (!zones.length) {
+      return { id: 'no_screen', count: 0, items: [], description: 'No zones defined.' };
+    }
+
+    const screenConfig = config.screen_config || [];
+
+    // Build set of zones with screen bindings
+    const boundZones = new Set();
+    for (const sc of screenConfig) {
+      if (sc.zone) {
+        boundZones.add(sc.zone);
+      }
+    }
+
+    // Find external zones without screen
+    const flagged = [];
+    for (const z of zones) {
+      if (isExternalZone(z.name) && !boundZones.has(z.name)) {
+        flagged.push(z.name);
+      }
+    }
+
+    const count = flagged.length;
+    if (!count) {
+      return {
+        id: 'no_screen',
+        count: 0,
+        items: [],
+        description: 'All external/untrusted zones have screen profiles bound.',
+      };
+    }
+
+    const items = flagged.map(name => ({
+      key: name,
+      label: name,
+    }));
+
+    return {
+      id: 'no_screen',
+      count,
+      items,
+      description: `${count} external/untrusted zone${count !== 1 ? 's have' : ' has'} no screen (IDS-options) profile bound.`,
     };
   },
 };
