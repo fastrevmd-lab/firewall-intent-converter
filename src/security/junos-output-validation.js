@@ -135,6 +135,9 @@ function validateIpv4Token(token, fieldPath) {
 export function validateSetOutput(commands) {
   if (!Array.isArray(commands)) fail('set output', 'expected an array of commands');
 
+  // Fix 2: Track NAT rule completeness (every rule with match must have then)
+  const natRuleState = new Map(); // key: 'natType|ruleSet|rule', value: {hasMatch, hasThen}
+
   commands.forEach((line, index) => {
     const fieldPath = `line ${index + 1}`;
     if (typeof line !== 'string') fail('set output', 'expected a string', fieldPath);
@@ -166,7 +169,64 @@ export function validateSetOutput(commands) {
         validateIpv4Token(token, fieldPath);
       }
     }
+
+    // NAT pool address literal gate (Issue #35): NAT pools must only contain literal IP addresses/prefixes
+    // Match: set security nat (source|destination) pool <name> address <X>
+    // where <X> is the final token and is NOT the keyword 'port'
+    if (hierarchy[0] === 'security' && hierarchy[1] === 'nat' &&
+        (hierarchy[2] === 'source' || hierarchy[2] === 'destination') &&
+        hierarchy[3] === 'pool' && tokens.length >= 7) {
+      // tokens: [set, security, nat, source/destination, pool, <name>, address, ...]
+      const addressIdx = tokens.indexOf('address', 6);
+      if (addressIdx !== -1 && addressIdx < tokens.length - 1) {
+        const addressValueIdx = addressIdx + 1;
+        const addressValue = tokens[addressValueIdx];
+        // Skip validation if this is an 'address port <N>' line (addressValue === 'port')
+        if (addressValue !== 'port') {
+          // addressValue must be a valid IPv4/IPv6 address/prefix or range (a-b)
+          const isIpv4 = /^\d+\.\d+\.\d+\.\d+(\/\d+)?$/u.test(addressValue);
+          const isIpv6 = /^[0-9a-fA-F:]+\/\d+$/u.test(addressValue);
+          const isRange = /^\d+\.\d+\.\d+\.\d+-\d+\.\d+\.\d+\.\d+$/u.test(addressValue);
+          if (!isIpv4 && !isIpv6 && !isRange) {
+            fail('set output', 'NAT pool address must be a literal IP address, prefix, or range', fieldPath);
+          }
+        }
+      }
+    }
+
+    // Fix 2: Track NAT rule match/then completeness
+    // Match: set security nat (source|destination) rule-set <rs> rule <rule> (match|then) ...
+    // Ignore deactivate lines
+    if (tokens[0] === 'set' && hierarchy[0] === 'security' && hierarchy[1] === 'nat' &&
+        (hierarchy[2] === 'source' || hierarchy[2] === 'destination') &&
+        hierarchy[3] === 'rule-set' && tokens.length >= 8) {
+      // tokens: [set, security, nat, source/destination, rule-set, <rs>, rule, <rule>, match|then, ...]
+      const ruleIdx = tokens.indexOf('rule', 6);
+      if (ruleIdx !== -1 && ruleIdx + 1 < tokens.length) {
+        const ruleName = tokens[ruleIdx + 1];
+        const nextToken = tokens[ruleIdx + 2];
+        if (nextToken === 'match' || nextToken === 'then') {
+          const natType = hierarchy[2];
+          const ruleSet = tokens[5]; // rule-set name
+          const key = `${natType}|${ruleSet}|${ruleName}`;
+          if (!natRuleState.has(key)) {
+            natRuleState.set(key, { hasMatch: false, hasThen: false });
+          }
+          const state = natRuleState.get(key);
+          if (nextToken === 'match') state.hasMatch = true;
+          if (nextToken === 'then') state.hasThen = true;
+        }
+      }
+    }
   });
+
+  // Fix 2: Verify every NAT rule with match has then
+  for (const [key, state] of natRuleState.entries()) {
+    if (state.hasMatch && !state.hasThen) {
+      fail('set output', 'NAT rule has match without a then action', `NAT rule ${key}`);
+    }
+  }
+
   return commands;
 }
 
