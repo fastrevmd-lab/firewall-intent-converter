@@ -66,6 +66,38 @@ function getUnit(ifaceName) {
   return m ? m[1] : '0';
 }
 
+/** PAN-OS logical L3 sub-interface, e.g. ethernet1/13.100 (parent + unit). */
+export function isSubInterface(ifaceName) {
+  // Exclude SRX-format tunnel/loopback/aggregate units in case this helper is
+  // ever reused on SRX-side names (st0.10, lo0.0, ae0.100 are not sub-interfaces).
+  if (/^(st0|lo0|ae\d+)\.\d+$/i.test(ifaceName)) return false;
+  return /\.\d+$/.test(ifaceName) && !isTunnelInterface(ifaceName) && !isLoopbackInterface(ifaceName);
+}
+
+/** Parent physical name of a sub-interface (ethernet1/13.100 → ethernet1/13). */
+export function parentInterface(ifaceName) {
+  return ifaceName.replace(/\.\d+$/, '');
+}
+
+/**
+ * Re-point every sub-interface of `parentPanos` to a unit on `srxIface`'s base.
+ * @param {{ [k: string]: string }} mappings
+ * @param {string} parentPanos - PAN-OS parent name (e.g. ethernet1/13)
+ * @param {string} srxIface - the parent's new SRX target (e.g. ge-0/0/5)
+ * @returns {{ [k: string]: string }} updated copy
+ */
+export function deriveSubInterfaceMappings(mappings, parentPanos, srxIface) {
+  const base = String(srxIface || '').split('.')[0];
+  if (!base) return { ...mappings };
+  const updated = { ...mappings };
+  for (const key of Object.keys(updated)) {
+    if (isSubInterface(key) && parentInterface(key) === parentPanos) {
+      updated[key] = `${base}.${key.split('.').pop()}`;
+    }
+  }
+  return updated;
+}
+
 /**
  * Resolve the real Junos interface base for a tunnel-type selection.
  * The `st0-ra` value is a UI marker for SSL-VPN intent; it always serializes
@@ -298,7 +330,9 @@ export default function InterfaceMapper({
         }
       }
 
-      return updated;
+      // Re-point this parent's sub-interfaces to the new port.
+      const withSubs = deriveSubInterfaceMappings(updated, panosIface, srxIface);
+      return withSubs;
     });
   };
 
@@ -610,6 +644,21 @@ export default function InterfaceMapper({
                             <code className="loopback-mapped">lo0.{getUnit(panosIface)}</code>
                             <span className="port-badge speed-virtual">Loopback</span>
                           </div>
+                        ) : isSubInterface(panosIface) ? (
+                          /* Sub-interface — a unit on its parent's port (no separate port) */
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <code style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                              {currentSrx || `${(mappings[parentInterface(panosIface)] || '').split('.')[0]}.${panosIface.split('.').pop()}`}
+                            </code>
+                            {parsedIfaceMap[panosIface]?.vlan && (
+                              <span className="port-badge" style={{ fontSize: 10, padding: '1px 5px' }}>
+                                vlan {parsedIfaceMap[panosIface].vlan}
+                              </span>
+                            )}
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                              unit on {parentInterface(panosIface)}
+                            </span>
+                          </div>
                         ) : (
                           /* Physical port dropdown */
                           <>
@@ -756,33 +805,45 @@ export default function InterfaceMapper({
 }
 
 /**
- * Builds a default mapping by assigning SRX ports in order.
- * Tunnel interfaces get st0.X, loopbacks get lo0.X.
+ * Build default PAN-OS→SRX interface mappings. Parents and tunnels/loopbacks
+ * get their own target; sub-interfaces map to a unit on their parent's port.
+ * @param {object} intermediateConfig
+ * @param {object} targetModelData - { ports: [{ name, speed, type }] }
+ * @returns {{ [panosIface: string]: string }}
  */
-function buildDefaultMappings(intermediateConfig, targetModelData) {
+export function buildDefaultMappings(intermediateConfig, targetModelData) {
   const mappings = {};
-
   const availablePorts = targetModelData ? [...targetModelData.ports] : [];
   const usedPorts = new Set();
 
+  // Pass 1: tunnels, loopbacks, and parent physical interfaces.
   for (const zone of (intermediateConfig?.zones || [])) {
     for (const iface of (zone.interfaces || [])) {
       if (isTunnelInterface(iface)) {
-        // Default tunnel mapping: st0.{unit}
-        const unit = getUnit(iface);
-        mappings[iface] = `st0.${unit}`;
+        mappings[iface] = `st0.${getUnit(iface)}`;
       } else if (isLoopbackInterface(iface)) {
-        // Default loopback mapping: lo0.{unit}
-        const unit = getUnit(iface);
-        mappings[iface] = `lo0.${unit}`;
+        mappings[iface] = `lo0.${getUnit(iface)}`;
+      } else if (isSubInterface(iface)) {
+        continue; // handled in pass 2
       } else {
-        // Find a matching physical port
         const port = availablePorts.find(p => !usedPorts.has(p.name));
         if (port) {
           mappings[iface] = port.name;
           usedPorts.add(port.name);
         }
       }
+    }
+  }
+
+  // Pass 2: sub-interfaces → parent's SRX port base + this sub-interface's unit.
+  for (const zone of (intermediateConfig?.zones || [])) {
+    for (const iface of (zone.interfaces || [])) {
+      if (!isSubInterface(iface)) continue;
+      const parentSrx = mappings[parentInterface(iface)];
+      if (!parentSrx) continue; // parent unmapped → let the converter derive it
+      const parentBase = parentSrx.split('.')[0];
+      const unit = iface.split('.').pop();
+      mappings[iface] = `${parentBase}.${unit}`;
     }
   }
 

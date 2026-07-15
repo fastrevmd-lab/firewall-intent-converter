@@ -587,6 +587,35 @@ function convertInterfaceAddresses(interfaces, commands, warnings, summary, inte
   commands.push('# Interface Addresses');
   commands.push('# =============================================');
 
+  // --- VLAN tagging pre-pass ---
+  // Group by SRX physical base to detect tagged sub-units (802.1Q).
+  const vlanByBase = new Map();       // base -> Map(unit -> tag)
+  const baseHasNativeIp = new Map();  // base -> true when a unit-0 iface has an IP and no tag
+  for (const iface of interfaces) {
+    if (!iface.ip && !iface.ipv6) continue;
+    const [base, unit = '0'] = mapInterfaceName(iface.name || '', interfaceMappings).split('.');
+    const tag = iface.vlan ? String(iface.vlan) : '';
+    if (tag) {
+      if (!vlanByBase.has(base)) vlanByBase.set(base, new Map());
+      vlanByBase.get(base).set(unit, tag);
+    } else if (unit === '0') {
+      baseHasNativeIp.set(base, true);
+    }
+  }
+  for (const [base, unitTags] of vlanByBase) {
+    commands.push(`set interfaces ${base} flexible-vlan-tagging`);
+    if (baseHasNativeIp.get(base)) {
+      const usedTags = new Set([...unitTags.values()].map(Number));
+      let nativeVlan = 1;
+      while (usedTags.has(nativeVlan) && nativeVlan < 4094) nativeVlan += 1;
+      commands.push(`set interfaces ${base} native-vlan-id ${nativeVlan}`);
+      commands.push(`# NOTE: native-vlan-id ${nativeVlan} inferred for the untagged parent IP on ${base} — verify against your VLAN plan`);
+      warnings.push(createWarning('warning', `interfaces/${base}`,
+        `native-vlan-id ${nativeVlan} was inferred for the untagged parent IP on ${base}`,
+        'PAN-OS does not specify a native VLAN — confirm this id fits your VLAN plan'));
+    }
+  }
+
   const configuredInterfaces = new Set();
   for (const iface of interfaces) {
     if (!iface.ip && !iface.ipv6) continue;
@@ -603,6 +632,10 @@ function convertInterfaceAddresses(interfaces, commands, warnings, summary, inte
       continue;
     }
     configuredInterfaces.add(ifKey);
+
+    if (iface.vlan) {
+      commands.push(`set interfaces ${base} unit ${unit} vlan-id ${String(iface.vlan)}`);
+    }
 
     if (iface.ip) {
       commands.push(`set interfaces ${base} unit ${unit} family inet address ${iface.ip}`);
