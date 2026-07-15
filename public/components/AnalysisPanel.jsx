@@ -27,6 +27,10 @@ const FINDING_LABELS = {
   empty_policyset: 'Empty Policy Set',
   zones_no_policy: 'Zones Without Policy',
   log_completeness: 'No Remote Logging',
+  large_group: 'Oversized Groups',
+  nested_group: 'Deeply Nested Groups',
+  undescribed_object: 'Objects Without Description',
+  undescribed_policy: 'Policies Without Description',
 };
 
 const FINDING_SEVERITY = {
@@ -47,6 +51,10 @@ const FINDING_SEVERITY = {
   empty_policyset: 'warning',
   zones_no_policy: 'info',
   log_completeness: 'info',
+  large_group: 'info',
+  nested_group: 'info',
+  undescribed_object: 'info',
+  undescribed_policy: 'info',
 };
 
 const FINDING_ACTIONS = {
