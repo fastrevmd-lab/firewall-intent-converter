@@ -865,12 +865,14 @@ export const AnalysisEngine = {
   /**
    * 19. Nested Groups — groups with nesting depth >= 3.
    * Computes depth per group type independently. Guards against cycles.
+   * Depth is deterministic: computed per group with a fresh path set (no cross-group memoization).
    */
   _nestedGroups(config) {
     const flagged = [];
 
     /**
      * Compute depth for a group type (address, service, or application).
+     * Each group's depth is computed independently with a fresh path set for deterministic results.
      * @param {Array} groups - array of group objects with name and members
      * @returns {Map<string, number>} - name → depth
      */
@@ -878,30 +880,33 @@ export const AnalysisEngine = {
       const nameToGroup = new Map(groups.map(g => [g.name, g]));
       const depths = new Map();
 
-      const getDepth = (name, visited = new Set()) => {
-        if (depths.has(name)) return depths.get(name);
-        if (visited.has(name)) return 1; // cycle detected, treat as leaf
-        if (!nameToGroup.has(name)) return 0; // not a group, just a member
+      /**
+       * Compute depth for a single group, starting with an empty path.
+       * @param {string} groupName - group name
+       * @param {Set<string>} path - current path (for cycle detection)
+       * @returns {number} - depth
+       */
+      const getDepth = (groupName, path) => {
+        if (path.has(groupName)) return 0; // back-edge: stop (deterministic)
+        if (!nameToGroup.has(groupName)) return 0; // leaf/object member
 
-        const group = nameToGroup.get(name);
+        const group = nameToGroup.get(groupName);
         const members = group.members || [];
-        visited.add(name);
+        const newPath = new Set(path);
+        newPath.add(groupName);
 
-        let maxChildDepth = 0;
+        const memberDepths = [];
         for (const member of members) {
-          if (nameToGroup.has(member)) {
-            const childDepth = getDepth(member, new Set(visited));
-            maxChildDepth = Math.max(maxChildDepth, childDepth);
-          }
+          memberDepths.push(getDepth(member, newPath));
         }
 
-        const depth = 1 + maxChildDepth;
-        depths.set(name, depth);
-        return depth;
+        const maxChildDepth = memberDepths.length > 0 ? Math.max(...memberDepths) : 0;
+        return 1 + maxChildDepth;
       };
 
+      // Compute depth(g.name, emptySet) for every group (fresh empty path each time)
       for (const g of groups) {
-        getDepth(g.name);
+        depths.set(g.name, getDepth(g.name, new Set()));
       }
 
       return depths;

@@ -147,6 +147,40 @@ describe('Operational Cleanup Checks', () => {
       // May flag some or none depending on cycle handling; main test is no hang
     });
 
+    it('produces deterministic depth for cycles regardless of array order', () => {
+      // Build cyclic address-group set A→B→C→A
+      const configForward = {
+        address_groups: [
+          { name: 'A', members: ['B'] },
+          { name: 'B', members: ['C'] },
+          { name: 'C', members: ['A'] },
+        ],
+        service_groups: [],
+        application_groups: [],
+      };
+
+      const configReverse = {
+        address_groups: [
+          { name: 'C', members: ['A'] },
+          { name: 'B', members: ['C'] },
+          { name: 'A', members: ['B'] },
+        ],
+        service_groups: [],
+        application_groups: [],
+      };
+
+      const resultForward = AnalysisEngine._nestedGroups(configForward);
+      const resultReverse = AnalysisEngine._nestedGroups(configReverse);
+
+      // Extract flagged group names
+      const flaggedForward = new Set(resultForward.items.map(i => i.key));
+      const flaggedReverse = new Set(resultReverse.items.map(i => i.key));
+
+      // Deterministic: same groups flagged regardless of order
+      expect(flaggedForward).toEqual(flaggedReverse);
+      expect(resultForward.count).toBe(resultReverse.count);
+    });
+
     it('returns empty finding for shallow groups', () => {
       const config = {
         address_groups: [
