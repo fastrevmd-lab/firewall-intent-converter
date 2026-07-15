@@ -170,4 +170,13 @@ describe('Static Routes: qualified-next-hop for backup routes (issue #36)', () =
     // Should NOT have route-level preference (min metric is 10)
     expect(routeCommands.filter(cmd => cmd.match(/preference \d+$/) && !cmd.includes('qualified-next-hop'))).toHaveLength(0);
   });
+
+  it('counts each route once in the summary, including grouped backups', () => {
+    const mk = (n) => ({ destination: '0.0.0.0/0', next_hop: `${n}.0.0.1`, next_hop_type: 'ip-address', metric: n * 10, vrf: '' });
+    const base = { zones: [], address_objects: [], service_objects: [], security_policies: [], nat_rules: [] };
+    const count = (routes) => convertToSrxSetCommands({ ...base, static_routes: routes }).summary.static_routes_converted;
+    expect(count([mk(1)])).toBe(1);            // single
+    expect(count([mk(1), mk(2)])).toBe(2);     // primary + 1 backup
+    expect(count([mk(1), mk(2), mk(3)])).toBe(3); // primary + 2 backups (was 4 before the fix)
+  });
 });

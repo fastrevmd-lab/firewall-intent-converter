@@ -2715,12 +2715,8 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
         }
       }
 
-      // Count all routes in this group
-      for (let i = 0; i < sortedGroup.length; i++) {
-        summary.static_routes_converted++;
-      }
-      // Decrement once because the outer loop will increment for the first route
-      summary.static_routes_converted--;
+      // Count every route in this group once (later members hit the skip branch).
+      summary.static_routes_converted += sortedGroup.length;
     } else if (!processedGroups.has(key)) {
       // Single route or discard/next-vr route — use the old logic
       if (route.vrf) {
@@ -2768,10 +2764,8 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
       }
 
       summary.static_routes_converted++;
-    } else {
-      // This route was already processed as part of a group, skip (but still count)
-      summary.static_routes_converted++;
     }
+    // else: already counted with its qualified-next-hop group — skip.
   }
 
   commands.push('');
