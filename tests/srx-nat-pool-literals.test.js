@@ -124,6 +124,40 @@ describe('NAT Pool Literal Addresses (Issue #35)', () => {
       // Must preserve the prefix as-is
       expect(natCommands.some(c => c.includes('address 203.0.113.0/24'))).toBe(true);
     });
+
+    // Fix 3: IPv6 normalization
+    it('should normalize bare IPv6 address to /128 in static source NAT', () => {
+      const config = {
+        zones: [
+          { name: 'trust', interfaces: ['ge-0/0/0'] },
+          { name: 'untrust', interfaces: ['ge-0/0/1'] },
+        ],
+        address_objects: [
+          { name: 'IPv6Source', value: '2001:db8::1' }, // bare IPv6, no prefix
+        ],
+        nat_rules: [
+          {
+            name: 'static-snat-ipv6',
+            type: 'source',
+            enabled: true,
+            src_zones: ['trust'],
+            dst_zones: ['untrust'],
+            src_addresses: ['10.0.1.0/24'],
+            dst_addresses: ['any'],
+            translated_src: {
+              type: 'static',
+              address: 'IPv6Source',
+            },
+          },
+        ],
+      };
+
+      const result = convertToSrxSetCommands(config);
+      const natCommands = result.commands.filter(c => c.includes('security nat source'));
+
+      // Must emit pool with normalized IPv6 (add /128)
+      expect(natCommands.some(c => c.includes('address 2001:db8::1/128'))).toBe(true);
+    });
   });
 
   describe('Destination NAT', () => {
@@ -158,6 +192,9 @@ describe('NAT Pool Literal Addresses (Issue #35)', () => {
       // Must NOT emit then destination-nat for this rule
       expect(natCommands.some(c => c.includes('then destination-nat pool'))).toBe(false);
 
+      // Fix 1: Must NOT emit ANY match line for this rule (the whole rule is skipped)
+      expect(natCommands.some(c => c.includes('rule dnat-undefined match'))).toBe(false);
+
       // Must have a caveat comment
       expect(result.commands.some(c =>
         c.includes('#') && c.toLowerCase().includes('nat') && c.includes('GHOST-SERVER')
@@ -167,6 +204,9 @@ describe('NAT Pool Literal Addresses (Issue #35)', () => {
       expect(result.warnings.some(w =>
         w.severity === 'nat' && w.element.includes('GHOST-SERVER')
       )).toBe(true);
+
+      // Fix 1: The full output must pass validateSetOutput (no match-without-then)
+      expect(() => validateSetOutput(result.commands)).not.toThrow();
     });
 
     it('should emit normalized pool address when translated address resolves to a literal', () => {
@@ -246,6 +286,42 @@ describe('NAT Pool Literal Addresses (Issue #35)', () => {
       // Must emit then destination-nat
       expect(natCommands.some(c => c.includes('then destination-nat pool'))).toBe(true);
     });
+
+    // Fix 3: IPv6 normalization for destination NAT
+    it('should normalize bare IPv6 address to /128 in destination NAT', () => {
+      const config = {
+        zones: [
+          { name: 'untrust', interfaces: ['ge-0/0/1'] },
+          { name: 'trust', interfaces: ['ge-0/0/0'] },
+        ],
+        address_objects: [
+          { name: 'IPv6Server', value: '2001:db8::10' }, // bare IPv6
+        ],
+        nat_rules: [
+          {
+            name: 'dnat-ipv6',
+            type: 'destination',
+            enabled: true,
+            src_zones: ['untrust'],
+            dst_zones: ['trust'],
+            src_addresses: ['any'],
+            dst_addresses: ['2001:db8::20'],
+            translated_dst: {
+              address: 'IPv6Server',
+            },
+          },
+        ],
+      };
+
+      const result = convertToSrxSetCommands(config);
+      const natCommands = result.commands.filter(c => c.includes('security nat destination'));
+
+      // Must emit pool with normalized IPv6 (add /128)
+      expect(natCommands.some(c => c.includes('address 2001:db8::10/128'))).toBe(true);
+
+      // Must emit then destination-nat
+      expect(natCommands.some(c => c.includes('then destination-nat pool'))).toBe(true);
+    });
   });
 
   describe('Output Gate Validation', () => {
@@ -301,6 +377,25 @@ describe('NAT Pool Literal Addresses (Issue #35)', () => {
     it('should accept NAT pool with IP range (a-b format)', () => {
       const validCommands = [
         'set security nat source pool range-pool address 203.0.113.10-203.0.113.20',
+      ];
+
+      expect(() => validateSetOutput(validCommands)).not.toThrow();
+    });
+
+    // Fix 2: NAT rule completeness gate
+    it('should reject NAT rule with match but no then', () => {
+      const invalidCommands = [
+        'set security nat destination rule-set RS rule R match destination-address 0.0.0.0/0',
+      ];
+
+      expect(() => validateSetOutput(invalidCommands)).toThrow(/match without a then/i);
+    });
+
+    it('should accept complete NAT rule with match and then', () => {
+      const validCommands = [
+        'set security nat destination rule-set RS from zone untrust',
+        'set security nat destination rule-set RS rule R match destination-address 0.0.0.0/0',
+        'set security nat destination rule-set RS rule R then destination-nat pool P',
       ];
 
       expect(() => validateSetOutput(validCommands)).not.toThrow();

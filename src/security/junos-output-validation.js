@@ -135,6 +135,9 @@ function validateIpv4Token(token, fieldPath) {
 export function validateSetOutput(commands) {
   if (!Array.isArray(commands)) fail('set output', 'expected an array of commands');
 
+  // Fix 2: Track NAT rule completeness (every rule with match must have then)
+  const natRuleState = new Map(); // key: 'natType|ruleSet|rule', value: {hasMatch, hasThen}
+
   commands.forEach((line, index) => {
     const fieldPath = `line ${index + 1}`;
     if (typeof line !== 'string') fail('set output', 'expected a string', fieldPath);
@@ -190,7 +193,40 @@ export function validateSetOutput(commands) {
         }
       }
     }
+
+    // Fix 2: Track NAT rule match/then completeness
+    // Match: set security nat (source|destination) rule-set <rs> rule <rule> (match|then) ...
+    // Ignore deactivate lines
+    if (tokens[0] === 'set' && hierarchy[0] === 'security' && hierarchy[1] === 'nat' &&
+        (hierarchy[2] === 'source' || hierarchy[2] === 'destination') &&
+        hierarchy[3] === 'rule-set' && tokens.length >= 8) {
+      // tokens: [set, security, nat, source/destination, rule-set, <rs>, rule, <rule>, match|then, ...]
+      const ruleIdx = tokens.indexOf('rule', 6);
+      if (ruleIdx !== -1 && ruleIdx + 1 < tokens.length) {
+        const ruleName = tokens[ruleIdx + 1];
+        const nextToken = tokens[ruleIdx + 2];
+        if (nextToken === 'match' || nextToken === 'then') {
+          const natType = hierarchy[2];
+          const ruleSet = tokens[5]; // rule-set name
+          const key = `${natType}|${ruleSet}|${ruleName}`;
+          if (!natRuleState.has(key)) {
+            natRuleState.set(key, { hasMatch: false, hasThen: false });
+          }
+          const state = natRuleState.get(key);
+          if (nextToken === 'match') state.hasMatch = true;
+          if (nextToken === 'then') state.hasThen = true;
+        }
+      }
+    }
   });
+
+  // Fix 2: Verify every NAT rule with match has then
+  for (const [key, state] of natRuleState.entries()) {
+    if (state.hasMatch && !state.hasThen) {
+      fail('set output', 'NAT rule has match without a then action', `NAT rule ${key}`);
+    }
+  }
+
   return commands;
 }
 
