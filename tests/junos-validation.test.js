@@ -143,6 +143,37 @@ describe('Junos set-output validation', () => {
       expect(error.message).not.toContain(command);
     }
   });
+
+  it('rejects malformed IPv4 addresses with octets > 255', () => {
+    expect(() => validateSetOutput([
+      'set security address-book global address bad-net 206.40.58.1649',
+    ])).toThrow(/malformed IPv4/i);
+  });
+
+  it('rejects malformed IPv4 prefixes with prefix length > 32', () => {
+    expect(() => validateSetOutput([
+      'set security address-book global address bad-prefix 10.0.0.0/49',
+    ])).toThrow(/malformed IPv4/i);
+  });
+
+  it('accepts valid IPv4 addresses and prefixes', () => {
+    const commands = [
+      'set security address-book global address ok 192.168.1.0/24',
+      'set security address-book global address host 10.0.0.1/32',
+      'set interfaces ge-0/0/0 unit 0 family inet address 192.0.2.1/24',
+    ];
+
+    expect(validateSetOutput(commands)).toBe(commands);
+  });
+
+  it('does not false-positive on interface names that contain dots and numbers', () => {
+    const commands = [
+      'set interfaces ge-0/0/0 unit 0 family inet',
+      'set interfaces ae0 unit 0 vlan-id 100',
+    ];
+
+    expect(validateSetOutput(commands)).toBe(commands);
+  });
 });
 
 describe('Junos XML-output validation', () => {
