@@ -31,6 +31,9 @@ const FINDING_LABELS = {
   nested_group: 'Deeply Nested Groups',
   undescribed_object: 'Objects Without Description',
   undescribed_policy: 'Policies Without Description',
+  weak_ike: 'Weak IKE Crypto',
+  weak_ipsec: 'Weak IPsec Crypto',
+  no_screen: 'Zones Without Screen',
 };
 
 const FINDING_SEVERITY = {
@@ -55,6 +58,9 @@ const FINDING_SEVERITY = {
   nested_group: 'info',
   undescribed_object: 'info',
   undescribed_policy: 'info',
+  weak_ike: 'warning',
+  weak_ipsec: 'warning',
+  no_screen: 'warning',
 };
 
 const FINDING_ACTIONS = {
