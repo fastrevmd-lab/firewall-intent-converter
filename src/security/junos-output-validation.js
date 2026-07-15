@@ -166,6 +166,30 @@ export function validateSetOutput(commands) {
         validateIpv4Token(token, fieldPath);
       }
     }
+
+    // NAT pool address literal gate (Issue #35): NAT pools must only contain literal IP addresses/prefixes
+    // Match: set security nat (source|destination) pool <name> address <X>
+    // where <X> is the final token and is NOT the keyword 'port'
+    if (hierarchy[0] === 'security' && hierarchy[1] === 'nat' &&
+        (hierarchy[2] === 'source' || hierarchy[2] === 'destination') &&
+        hierarchy[3] === 'pool' && tokens.length >= 7) {
+      // tokens: [set, security, nat, source/destination, pool, <name>, address, ...]
+      const addressIdx = tokens.indexOf('address', 6);
+      if (addressIdx !== -1 && addressIdx < tokens.length - 1) {
+        const addressValueIdx = addressIdx + 1;
+        const addressValue = tokens[addressValueIdx];
+        // Skip validation if this is an 'address port <N>' line (addressValue === 'port')
+        if (addressValue !== 'port') {
+          // addressValue must be a valid IPv4/IPv6 address/prefix or range (a-b)
+          const isIpv4 = /^\d+\.\d+\.\d+\.\d+(\/\d+)?$/u.test(addressValue);
+          const isIpv6 = /^[0-9a-fA-F:]+\/\d+$/u.test(addressValue);
+          const isRange = /^\d+\.\d+\.\d+\.\d+-\d+\.\d+\.\d+\.\d+$/u.test(addressValue);
+          if (!isIpv4 && !isIpv6 && !isRange) {
+            fail('set output', 'NAT pool address must be a literal IP address, prefix, or range', fieldPath);
+          }
+        }
+      }
+    }
   });
   return commands;
 }

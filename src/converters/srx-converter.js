@@ -2533,9 +2533,18 @@ function convertNatRules(
             );
             // NAT pool address must be an IP, not a named object — resolve it
             const resolvedStaticAddr = translatedAddress(rule.translated_src.address);
-            const staticAddr = resolvedStaticAddr || rule.translated_src.address;
-            commands.push(`set ${rulePath} then source-nat pool ${staticPoolName}`);
-            commands.push(`set security nat source pool ${staticPoolName} address ${staticAddr}`);
+            if (resolvedStaticAddr) {
+              // Ensure bare host IPs have /32 prefix for Junos NAT pool format
+              const staticAddr = /^\d+\.\d+\.\d+\.\d+$/.test(resolvedStaticAddr)
+                ? `${resolvedStaticAddr}/32`
+                : resolvedStaticAddr;
+              commands.push(`set security nat source pool ${staticPoolName} address ${staticAddr}`);
+              commands.push(`set ${rulePath} then source-nat pool ${staticPoolName}`);
+            } else {
+              commands.push(`# NAT: translated source "${rule.translated_src.address}" is not a resolvable IP/prefix — using interface NAT`);
+              warnings.push(createWarning('nat', `Source NAT translated address "${rule.translated_src.address}" could not be resolved to an IP/prefix — fell back to interface NAT`));
+              commands.push(`set ${rulePath} then source-nat interface`);
+            }
           } else {
             // Unknown translation type — default to interface NAT (e.g., Check Point hide NAT)
             commands.push(`set ${rulePath} then source-nat interface`);
@@ -2628,21 +2637,23 @@ function convertNatRules(
             // Resolve named objects and ensure bare IPs get /32 suffix.
             const resolvedDst = translatedAddress(dstAddr);
             if (resolvedDst) {
-              dstAddr = resolvedDst;
+              // Ensure host IPs have /32 prefix for Junos NAT pool format
+              dstAddr = /^\d+\.\d+\.\d+\.\d+$/.test(resolvedDst)
+                ? `${resolvedDst}/32`
+                : resolvedDst;
+              const poolName = identifiers.nameForGenerated(
+                identifierPath(`nat_rules[${ruleIndex}]`),
+                'destination-nat-pool',
+              );
+              commands.push(`set security nat destination pool ${poolName} address ${dstAddr}`);
+              if (rule.translated_port) {
+                commands.push(`set security nat destination pool ${poolName} address port ${rule.translated_port}`);
+              }
+              commands.push(`set ${rulePath} then destination-nat pool ${poolName}`);
+            } else {
+              commands.push(`# NAT: translated destination "${dstAddr}" is not a resolvable IP/prefix — skipped destination NAT`);
+              warnings.push(createWarning('nat', `Destination NAT translated address "${dstAddr}" could not be resolved to an IP/prefix — skipped destination NAT`));
             }
-            // Ensure host IPs have /32 prefix for Junos NAT pool format
-            if (/^\d+\.\d+\.\d+\.\d+$/.test(dstAddr)) {
-              dstAddr = `${dstAddr}/32`;
-            }
-            const poolName = identifiers.nameForGenerated(
-              identifierPath(`nat_rules[${ruleIndex}]`),
-              'destination-nat-pool',
-            );
-            commands.push(`set security nat destination pool ${poolName} address ${dstAddr}`);
-            if (rule.translated_port) {
-              commands.push(`set security nat destination pool ${poolName} address port ${rule.translated_port}`);
-            }
-            commands.push(`set ${rulePath} then destination-nat pool ${poolName}`);
           }
         }
 
