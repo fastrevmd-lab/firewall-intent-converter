@@ -12,6 +12,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 const FINDING_LABELS = {
   unused_objects: 'Unused Objects',
   shadowed: 'Shadowed Policies',
+  nat_shadowed: 'Shadowed NAT Rules',
   duplicates: 'Duplicate Objects',
   disabled: 'Disabled Policies',
   logging_off: 'Logging Disabled',
@@ -39,6 +40,7 @@ const FINDING_LABELS = {
 const FINDING_SEVERITY = {
   unused_objects: 'info',
   shadowed: 'warning',
+  nat_shadowed: 'warning',
   duplicates: 'info',
   disabled: 'info',
   logging_off: 'warning',

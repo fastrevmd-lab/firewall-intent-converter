@@ -83,6 +83,7 @@ export const AnalysisEngine = {
     return [
       await step('Checking for unused objects...', () => this._unusedObjects(config)),
       await step('Detecting shadowed policies...', () => this._shadowedPolicies(config)),
+      await step('Detecting shadowed NAT rules...', () => this._shadowedNat(config)),
       await step('Detecting duplicate objects...', () => this._duplicateObjects(config)),
       await step('Checking for disabled policies...', () => this._disabledPolicies(config)),
       await step('Checking logging coverage...', () => this._loggingOff(config)),
@@ -247,6 +248,103 @@ export const AnalysisEngine = {
     const svcOk = (earlier.services || []).includes('any');
 
     return srcZoneOk && dstZoneOk && srcAddrOk && dstAddrOk && svcOk;
+  },
+
+  // ── Shadowed NAT rules (issue #57) ───────────────────────────────────────
+  /**
+   * True if `earlier` NAT rule shadows `later` NAT rule (conservative).
+   * @param {object} earlier - Earlier NAT rule
+   * @param {object} later - Later NAT rule
+   * @returns {boolean} - True if earlier shadows later
+   */
+  _natShadows(earlier, later) {
+    // Different NAT types never shadow each other
+    if (earlier.type !== later.type) return false;
+
+    // Read zones from source_zones/src_zones and destination_zones/dst_zones
+    const eSrcZones = (earlier.source_zones || earlier.src_zones || []).length
+      ? (earlier.source_zones || earlier.src_zones)
+      : ['any'];
+    const lSrcZones = (later.source_zones || later.src_zones || []).length
+      ? (later.source_zones || later.src_zones)
+      : ['any'];
+    const eDstZones = (earlier.destination_zones || earlier.dst_zones || []).length
+      ? (earlier.destination_zones || earlier.dst_zones)
+      : ['any'];
+    const lDstZones = (later.destination_zones || later.dst_zones || []).length
+      ? (later.destination_zones || later.dst_zones)
+      : ['any'];
+
+    // Zone superset checks
+    const srcZoneOk = eSrcZones.includes('any') || lSrcZones.every(z => eSrcZones.includes(z));
+    const dstZoneOk = eDstZones.includes('any') || lDstZones.every(z => eDstZones.includes(z));
+
+    // Earlier must match any source AND any destination
+    const srcAddrOk = (earlier.src_addresses || []).includes('any');
+    const dstAddrOk = (earlier.dst_addresses || []).includes('any');
+
+    // Earlier must be protocol/port unconstrained (conservative)
+    const serviceOk = !earlier.match_protocol && !earlier.match_port;
+
+    return srcZoneOk && dstZoneOk && srcAddrOk && dstAddrOk && serviceOk;
+  },
+
+  /**
+   * Detect shadowed NAT rules (issue #57).
+   * @param {object} config - Intermediate config
+   * @returns {object} - Finding { id, count, items, description }
+   */
+  _shadowedNat(config) {
+    const rules = config.nat_rules || [];
+
+    // Skip shadow detection for very large NAT rulesets (O(n^2))
+    if (rules.length > 2000) {
+      return {
+        id: 'nat_shadowed',
+        count: 0,
+        items: [],
+        description: 'NAT shadow detection skipped for over 2000 rules.',
+      };
+    }
+
+    const shadowed = [];
+    for (let i = 1; i < rules.length; i++) {
+      for (let j = 0; j < i; j++) {
+        if (this._natShadows(rules[j], rules[i])) {
+          shadowed.push({ rule: rules[i], shadowedBy: rules[j] });
+          break; // Stop at first shadowing rule for this later rule
+        }
+      }
+    }
+
+    const count = shadowed.length;
+    if (!count) {
+      return {
+        id: 'nat_shadowed',
+        count: 0,
+        items: [],
+        description: 'No shadowed NAT rules found.',
+      };
+    }
+
+    const nKey = (r) => r._rule_index != null ? String(r._rule_index) : r.name;
+    const nLabel = (r) => r._rule_index != null ? `#${r._rule_index} ${r.name}` : r.name;
+
+    const items = shadowed.map(s => ({
+      key: nKey(s.rule),
+      label: `${nLabel(s.rule)} — shadowed by ${nLabel(s.shadowedBy)}`,
+    }));
+
+    const firstFew = shadowed.slice(0, 3)
+      .map(s => `${nLabel(s.rule)} shadowed by ${nLabel(s.shadowedBy)}`)
+      .join('; ');
+
+    return {
+      id: 'nat_shadowed',
+      count,
+      items,
+      description: `${count} NAT rule${count !== 1 ? 's are' : ' is'} fully shadowed by an earlier, broader rule. ${firstFew}.`,
+    };
   },
 
   // ── Duplicate objects ─────────────────────────────────────────────────────
