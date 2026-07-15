@@ -2637,6 +2637,28 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
     }
   }
 
+  // Group ip-address-type routes by vrf|destination for qualified-next-hop processing
+  const ipAddressRouteGroups = new Map();
+  const processedGroups = new Set();
+
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex];
+    if (!route.destination) continue;
+    const dest = route.destination.trim();
+    const rawNextHop = route.next_hop ? route.next_hop.trim().replace(/[^\w.:/-]/g, '') : '';
+    const nextHop = route.next_hop_type === 'next-vr'
+      ? rawNextHop : mapInterfaceName(rawNextHop, interfaceMappings);
+
+    // Only group ip-address routes (not discard/next-vr/none) that have a mapped next-hop
+    if (nextHop && route.next_hop_type !== 'next-vr' && route.next_hop_type !== 'discard' && route.next_hop_type !== 'none') {
+      const key = `${route.vrf || ''}|${dest}`;
+      if (!ipAddressRouteGroups.has(key)) {
+        ipAddressRouteGroups.set(key, []);
+      }
+      ipAddressRouteGroups.get(key).push({ route, routeIndex, nextHop });
+    }
+  }
+
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
     const route = routes[routeIndex];
     if (!route.destination) continue;
@@ -2649,51 +2671,107 @@ function convertStaticRoutes(routes, commands, warnings, summary, interfaceMappi
 
     const { instanceName, nextTableName } = routeIdentifierNames[routeIndex];
 
-    if (route.vrf) {
-      // Routing instance
-      if (route.next_hop_type === 'discard') {
-        if (!routesWithAction.has(key)) {
-          commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} discard`);
-          routesWithAction.add(key);
-        }
-      } else if (route.next_hop_type === 'next-vr' && nextHop) {
-        // Skip next-table if this destination already has a concrete next-hop
-        if (!routesWithNextHop.has(key)) {
-          commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} next-table ${nextTableName}.inet.0`);
-          routesWithAction.add(key);
-        }
-      } else if (nextHop) {
-        commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} next-hop ${nextHop}`);
-        routesWithAction.add(key);
-      }
-      if (route.metric && route.metric !== 10) {
-        const pref = Math.max(1, Math.min(4294967295, route.metric));
-        commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} preference ${pref}`);
-      }
-    } else {
-      // Global routing-options
-      if (route.next_hop_type === 'discard') {
-        if (!routesWithAction.has(key)) {
-          commands.push(`set routing-options static route ${dest} discard`);
-          routesWithAction.add(key);
-        }
-      } else if (route.next_hop_type === 'next-vr' && nextHop) {
-        // Skip next-table if this destination already has a concrete next-hop
-        if (!routesWithNextHop.has(key)) {
-          commands.push(`set routing-options static route ${dest} next-table ${nextTableName}.inet.0`);
-          routesWithAction.add(key);
-        }
-      } else if (nextHop) {
-        commands.push(`set routing-options static route ${dest} next-hop ${nextHop}`);
-        routesWithAction.add(key);
-      }
-      if (route.metric && route.metric !== 10) {
-        const pref = Math.max(1, Math.min(4294967295, route.metric));
-        commands.push(`set routing-options static route ${dest} preference ${pref}`);
-      }
-    }
+    // Determine the command prefix (VRF or global)
+    const prefix = route.vrf
+      ? `set routing-instances ${instanceName} routing-options static route ${dest}`
+      : `set routing-options static route ${dest}`;
 
-    summary.static_routes_converted++;
+    // Check if this route is part of an ip-address group that needs qualified-next-hop processing
+    const group = ipAddressRouteGroups.get(key);
+    if (group && group.length > 1 && !processedGroups.has(key)) {
+      // Process the entire group at once
+      processedGroups.add(key);
+
+      // Sort by metric ascending (default to 10 if not set)
+      const sortedGroup = [...group].sort((a, b) => {
+        const metricA = a.route.metric || 10;
+        const metricB = b.route.metric || 10;
+        return metricA - metricB;
+      });
+
+      const minMetric = sortedGroup[0].route.metric || 10;
+
+      // Emit primary next-hops (all routes with minMetric)
+      for (const { route: r, nextHop: nh } of sortedGroup) {
+        const metric = r.metric || 10;
+        if (metric === minMetric) {
+          commands.push(`${prefix} next-hop ${nh}`);
+          routesWithAction.add(key);
+        }
+      }
+
+      // Emit route-level preference only if minMetric !== 10
+      if (minMetric !== 10) {
+        const pref = Math.max(1, Math.min(4294967295, minMetric));
+        commands.push(`${prefix} preference ${pref}`);
+      }
+
+      // Emit qualified-next-hop for backups (all routes with metric > minMetric)
+      for (const { route: r, nextHop: nh } of sortedGroup) {
+        const metric = r.metric || 10;
+        if (metric > minMetric) {
+          const pref = Math.max(1, Math.min(4294967295, metric));
+          commands.push(`${prefix} qualified-next-hop ${nh} preference ${pref}`);
+        }
+      }
+
+      // Count all routes in this group
+      for (let i = 0; i < sortedGroup.length; i++) {
+        summary.static_routes_converted++;
+      }
+      // Decrement once because the outer loop will increment for the first route
+      summary.static_routes_converted--;
+    } else if (!processedGroups.has(key)) {
+      // Single route or discard/next-vr route — use the old logic
+      if (route.vrf) {
+        // Routing instance
+        if (route.next_hop_type === 'discard') {
+          if (!routesWithAction.has(key)) {
+            commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} discard`);
+            routesWithAction.add(key);
+          }
+        } else if (route.next_hop_type === 'next-vr' && nextHop) {
+          // Skip next-table if this destination already has a concrete next-hop
+          if (!routesWithNextHop.has(key)) {
+            commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} next-table ${nextTableName}.inet.0`);
+            routesWithAction.add(key);
+          }
+        } else if (nextHop) {
+          commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} next-hop ${nextHop}`);
+          routesWithAction.add(key);
+        }
+        if (route.metric && route.metric !== 10) {
+          const pref = Math.max(1, Math.min(4294967295, route.metric));
+          commands.push(`set routing-instances ${instanceName} routing-options static route ${dest} preference ${pref}`);
+        }
+      } else {
+        // Global routing-options
+        if (route.next_hop_type === 'discard') {
+          if (!routesWithAction.has(key)) {
+            commands.push(`set routing-options static route ${dest} discard`);
+            routesWithAction.add(key);
+          }
+        } else if (route.next_hop_type === 'next-vr' && nextHop) {
+          // Skip next-table if this destination already has a concrete next-hop
+          if (!routesWithNextHop.has(key)) {
+            commands.push(`set routing-options static route ${dest} next-table ${nextTableName}.inet.0`);
+            routesWithAction.add(key);
+          }
+        } else if (nextHop) {
+          commands.push(`set routing-options static route ${dest} next-hop ${nextHop}`);
+          routesWithAction.add(key);
+        }
+        if (route.metric && route.metric !== 10) {
+          const pref = Math.max(1, Math.min(4294967295, route.metric));
+          commands.push(`set routing-options static route ${dest} preference ${pref}`);
+        }
+      }
+
+      summary.static_routes_converted++;
+    } else {
+      // This route was already processed as part of a group, skip (but still count)
+      summary.static_routes_converted++;
+    }
   }
 
   commands.push('');
