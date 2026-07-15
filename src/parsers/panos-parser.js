@@ -134,7 +134,7 @@ export function parsePanosConfig(configText) {
     const applications = parseApplications(vsys, warnings);
     const applicationGroups = parseApplicationGroups(vsys, warnings);
     const securityPolicies = parseSecurityRules(vsys, warnings);
-    const natRules = parseNatRules(vsys, warnings);
+    const natRules = parseNatRules(vsys, warnings, serviceObjects);
     const externalLists = parseExternalLists(vsys, warnings);
     const schedules = parseScheduleObjects(vsys);
 
@@ -1994,7 +1994,7 @@ function parseVpnConfig(config, warnings) {
 
   return vpnTunnels;
 }
-function parseNatRules(vsys, warnings) {
+function parseNatRules(vsys, warnings, serviceObjects) {
   const rulebase = vsys.rulebase;
   if (!rulebase) return [];
 
@@ -2006,6 +2006,14 @@ function parseNatRules(vsys, warnings) {
 
   const rulesContainer = Array.isArray(rulesNode) ? rulesNode[0] : rulesNode;
   const ruleEntries = extractEntries(rulesContainer);
+
+  // Build service lookup: name → {protocol, port_range}
+  const serviceLookup = {};
+  for (const svc of serviceObjects || []) {
+    if (svc.name && svc.protocol && svc.port_range) {
+      serviceLookup[svc.name] = { protocol: svc.protocol, port: svc.port_range };
+    }
+  }
 
   return ruleEntries.map((entry, index) => {
     const name = entry['@_name'] || `nat-rule-${index + 1}`;
@@ -2019,6 +2027,18 @@ function parseNatRules(vsys, warnings) {
     let translatedSrc = null;
     let translatedDst = null;
     let translatedPort = null;
+    let matchProtocol = null;
+    let matchPort = null;
+
+    // Service match (protocol/port)
+    const serviceName = typeof entry.service === 'string' ? entry.service.trim() : '';
+    if (serviceName && serviceName !== 'any' && serviceName !== 'application-default') {
+      const svc = serviceLookup[serviceName];
+      if (svc) {
+        matchProtocol = svc.protocol;
+        matchPort = svc.port;
+      }
+    }
 
     // Source NAT
     if (entry['source-translation']) {
@@ -2081,6 +2101,8 @@ function parseNatRules(vsys, warnings) {
       translated_src: translatedSrc,
       translated_dst: translatedDst,
       translated_port: translatedPort,
+      match_protocol: matchProtocol || undefined,
+      match_port: matchPort || undefined,
       description,
       _rule_index: index + 1,
       _uturn: isUturn || undefined,
