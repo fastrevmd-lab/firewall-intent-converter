@@ -103,6 +103,78 @@ describe('Hardening checks (issue #48 Group B)', () => {
       expect(result.items[0].label).toMatch(/md5/);
     });
 
+    test('flags vendor-normalized weak encryption (3des-cbc)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group14',
+              encryption: '3des-cbc',
+              authentication: 'sha256',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/3des-cbc/);
+    });
+
+    test('flags vendor-normalized weak encryption (des-cbc)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group14',
+              encryption: 'des-cbc',
+              authentication: 'sha256',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/des-cbc/);
+    });
+
+    test('flags vendor-normalized weak authentication (hmac-md5-96)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group14',
+              encryption: 'aes-256-gcm',
+              authentication: 'hmac-md5-96',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/hmac-md5-96/);
+    });
+
+    test('flags vendor-normalized weak authentication (hmac-sha1-96)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group14',
+              encryption: 'aes-256-gcm',
+              authentication: 'hmac-sha1-96',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/hmac-sha1-96/);
+    });
+
     test('does not flag tunnel with strong crypto', () => {
       const config = {
         vpn_tunnels: [
@@ -119,6 +191,57 @@ describe('Hardening checks (issue #48 Group B)', () => {
       const result = AnalysisEngine._weakIke(config);
       expect(result.count).toBe(0);
       expect(result.description).toMatch(/No VPN tunnels.*weak IKE crypto/);
+    });
+
+    test('does not flag aes-128-cbc as weak (no des substring)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group14',
+              encryption: 'aes-128-cbc',
+              authentication: 'sha256',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(0);
+    });
+
+    test('does not flag hmac-sha2-256 as weak (sha1 not a substring)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group14',
+              encryption: 'aes-256-gcm',
+              authentication: 'hmac-sha2-256',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(0);
+    });
+
+    test('does not flag sha384 as weak', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ike_proposal: {
+              dh_group: 'group20',
+              encryption: 'aes-256-gcm',
+              authentication: 'sha384',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIke(config);
+      expect(result.count).toBe(0);
     });
 
     test('handles missing vpn_tunnels array', () => {
@@ -272,6 +395,78 @@ describe('Hardening checks (issue #48 Group B)', () => {
       expect(result.items[0].label).toMatch(/no PFS/);
     });
 
+    test('flags vendor-normalized weak encryption (3des-cbc)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: '3des-cbc',
+              authentication: 'sha256',
+              pfs_group: 'group14',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/3des-cbc/);
+    });
+
+    test('flags vendor-normalized weak encryption (des-cbc)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: 'des-cbc',
+              authentication: 'sha256',
+              pfs_group: 'group14',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/des-cbc/);
+    });
+
+    test('flags vendor-normalized weak authentication (hmac-md5-96)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: 'aes-256-gcm',
+              authentication: 'hmac-md5-96',
+              pfs_group: 'group14',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/hmac-md5-96/);
+    });
+
+    test('flags vendor-normalized weak authentication (hmac-sha1-96)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: 'aes-256-gcm',
+              authentication: 'hmac-sha1-96',
+              pfs_group: 'group14',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(1);
+      expect(result.items[0].label).toMatch(/hmac-sha1-96/);
+    });
+
     test('does not flag tunnel with strong crypto and PFS', () => {
       const config = {
         vpn_tunnels: [
@@ -288,6 +483,57 @@ describe('Hardening checks (issue #48 Group B)', () => {
       const result = AnalysisEngine._weakIpsec(config);
       expect(result.count).toBe(0);
       expect(result.description).toMatch(/No VPN tunnels.*weak IPsec crypto/);
+    });
+
+    test('does not flag aes-128-cbc as weak (no des substring)', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: 'aes-128-cbc',
+              authentication: 'sha256',
+              pfs_group: 'group14',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(0);
+    });
+
+    test('does not flag hmac-sha2-256 as weak', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: 'aes-256-gcm',
+              authentication: 'hmac-sha2-256',
+              pfs_group: 'group20',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(0);
+    });
+
+    test('does not flag sha512 as weak', () => {
+      const config = {
+        vpn_tunnels: [
+          {
+            name: 'vpn1',
+            ipsec_proposal: {
+              encryption: 'aes-256-gcm',
+              authentication: 'sha512',
+              pfs_group: 'group14',
+            },
+          },
+        ],
+      };
+      const result = AnalysisEngine._weakIpsec(config);
+      expect(result.count).toBe(0);
     });
 
     test('handles missing vpn_tunnels array', () => {

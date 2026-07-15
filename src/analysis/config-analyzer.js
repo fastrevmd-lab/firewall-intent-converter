@@ -28,11 +28,23 @@ const LARGE_GROUP_THRESHOLD = 50;
 /** Threshold for nested group depth detection (issue #50). */
 const NESTED_GROUP_THRESHOLD = 3;
 
-/** Weak encryption algorithms for VPN crypto checks (issue #48). */
-const WEAK_ENC = new Set(['des', '3des', 'des3']);
+/**
+ * True if a crypto token denotes a weak cipher (DES/3DES family).
+ * @param {string} token - Crypto token (e.g., "des", "3des-cbc", "des-cbc")
+ * @returns {boolean} - True if the token contains 'des'
+ */
+function isWeakEncToken(token) {
+  return token.includes('des');
+}
 
-/** Weak authentication/hash algorithms for VPN crypto checks (issue #48). */
-const WEAK_AUTH = new Set(['md5', 'sha1', 'sha-1']);
+/**
+ * True if a token denotes weak integrity/hash (MD5 or SHA-1 family).
+ * @param {string} token - Auth token (e.g., "md5", "hmac-md5-96", "sha1", "hmac-sha1-96")
+ * @returns {boolean} - True if the token contains 'md5', 'sha1', or 'sha-1'
+ */
+function isWeakAuthToken(token) {
+  return token.includes('md5') || token.includes('sha1') || token.includes('sha-1');
+}
 
 /**
  * Parse a Junos/PAN dh-group token like "group14" → 14 (NaN if not parseable).
@@ -1096,7 +1108,7 @@ export const AnalysisEngine = {
       // Check encryption
       const encTokens = cryptoTokens(prop.encryption);
       for (const tok of encTokens) {
-        if (WEAK_ENC.has(tok)) {
+        if (isWeakEncToken(tok)) {
           weaknesses.push(tok);
           break; // one per category
         }
@@ -1105,7 +1117,7 @@ export const AnalysisEngine = {
       // Check authentication
       const authTokens = cryptoTokens(prop.authentication);
       for (const tok of authTokens) {
-        if (WEAK_AUTH.has(tok)) {
+        if (isWeakAuthToken(tok)) {
           weaknesses.push(tok);
           break;
         }
@@ -1159,7 +1171,7 @@ export const AnalysisEngine = {
       // Check encryption
       const encTokens = cryptoTokens(prop.encryption);
       for (const tok of encTokens) {
-        if (WEAK_ENC.has(tok)) {
+        if (isWeakEncToken(tok)) {
           weaknesses.push(tok);
           break;
         }
@@ -1168,7 +1180,7 @@ export const AnalysisEngine = {
       // Check authentication
       const authTokens = cryptoTokens(prop.authentication);
       for (const tok of authTokens) {
-        if (WEAK_AUTH.has(tok)) {
+        if (isWeakAuthToken(tok)) {
           weaknesses.push(tok);
           break;
         }
