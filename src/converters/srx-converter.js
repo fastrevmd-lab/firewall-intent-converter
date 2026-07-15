@@ -35,6 +35,7 @@ import {
 } from '../security/junos-identifiers.js';
 import { canonicalizeJunosSecurityFeatures } from '../security/junos-identifier-catalog.js';
 import { validateSetOutput } from '../security/junos-output-validation.js';
+import { findPolicyReferenceIssues } from '../security/policy-reference-integrity.js';
 
 /**
  * Returns the correct ANY address for NAT rules based on whether the rule
@@ -107,7 +108,13 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
     lag_interfaces_converted: 0,
     total_warnings: 0,
     unsupported_items: 0,
+    total_source_policies: 0,
+    policies_deactivated_undefined_ref: 0,
   };
+
+  // Detect policies with undefined address/service references
+  const policyReferenceIssues = findPolicyReferenceIssues(config);
+  summary.total_source_policies = (config.security_policies || []).filter(p => !p._implicit).length;
 
   // Site identification header (for SDC/Mist integration)
   const siteN = config.metadata?.siteName;
@@ -168,7 +175,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   // This ensures all custom applications are defined before policies reference them.
   const policyCommands = [];
   const policyStructure = options.policyStructure === 'zone-pair' ? 'zone-pair' : 'global';
-  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath, policyStructure);
+  convertSecurityPolicies(config.security_policies, policyCommands, warnings, summary, { utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName }, config.application_groups, sourceVendor, config._rule_groups, identifiers, identifierPath, policyStructure, policyReferenceIssues);
 
   // Tier 2 emission: concrete custom applications (known ports from canonical data)
   if (concreteCustomApps.size > 0) {
@@ -1673,7 +1680,8 @@ function emitPolicyBody(commands, policyPath, policyName, ctx) {
   const {
     policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
     utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
-    identifiers, identifierPath, warnings, deactivateCommands,
+    identifiers, identifierPath, warnings, deactivateCommands, deactivateCaveats,
+    policyReferenceIssues,
   } = ctx;
 
   // Description (include PAN-OS tags as comments)
@@ -1750,10 +1758,39 @@ function emitPolicyBody(commands, policyPath, policyName, ctx) {
     commands.push(`set ${policyPath} scheduler-name ${scheduleName}`);
   }
 
-  if (policy.disabled || hasUnmappedApp) deactivateCommands.push(`deactivate ${policyPath}`);
+  // Check for undefined references (addresses or services)
+  const hasUndefinedRef = policyReferenceIssues && policyReferenceIssues.has(pIdx);
+
+  if (policy.disabled || hasUnmappedApp || hasUndefinedRef) {
+    if (hasUndefinedRef) {
+      // Emit caveat comment naming the undefined reference(s)
+      const issue = policyReferenceIssues.get(pIdx);
+      const undefinedItems = [];
+      if (issue.addresses && issue.addresses.length > 0) {
+        for (const addr of issue.addresses) {
+          undefinedItems.push(`address "${addr}"`);
+        }
+      }
+      if (issue.services && issue.services.length > 0) {
+        for (const svc of issue.services) {
+          undefinedItems.push(`service "${svc}"`);
+        }
+      }
+      const caveatMsg = `# CAVEAT: policy deactivated — undefined reference(s): ${undefinedItems.join(', ')}`;
+      deactivateCaveats.push(caveatMsg);
+
+      // Create a warning for the report
+      warnings.push(createWarning(
+        `Policy ${policy.name || pIdx} has undefined reference(s): ${undefinedItems.join(', ')}`,
+        `security_policies[${pIdx}]`,
+        `Policy references undefined objects: ${undefinedItems.join(', ')}`,
+      ));
+    }
+    deactivateCommands.push(`deactivate ${policyPath}`);
+  }
 }
 
-function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath, policyStructure = 'global') {
+function convertSecurityPolicies(policies, commands, warnings, summary, profileMaps = {}, appGroups = [], sourceVendor = '', ruleGroups = [], identifiers, identifierPath, policyStructure = 'global', policyReferenceIssues = new Map()) {
   if (!policies || policies.length === 0) return;
 
   const {
@@ -1778,6 +1815,7 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
 
   // Collect deactivate commands for disabled rules (applied at the end)
   const deactivateCommands = [];
+  const deactivateCaveats = [];
 
   for (let pIdx = 0; pIdx < policies.length; pIdx++) {
     const policy = policies[pIdx];
@@ -1857,7 +1895,8 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
           emitPolicyBody(commands, policyPath, policyName, {
             policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
             utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
-            identifiers, identifierPath, warnings, deactivateCommands,
+            identifiers, identifierPath, warnings, deactivateCommands, deactivateCaveats,
+            policyReferenceIssues,
           });
         }
       }
@@ -1891,18 +1930,35 @@ function convertSecurityPolicies(policies, commands, warnings, summary, profileM
       emitPolicyBody(commands, policyPath, policyName, {
         policy, pIdx, srcAddrs, dstAddrs, dstZones, appGroups, sourceVendor,
         utmPolicyMap, idpPolicyMap, secIntelEnabled, secIntelPolicyName,
-        identifiers, identifierPath, warnings, deactivateCommands,
+        identifiers, identifierPath, warnings, deactivateCommands, deactivateCaveats,
+        policyReferenceIssues,
       });
     }
 
     summary.policies_converted++;
   }
 
-  // Append deactivate commands at the end
+  // Append deactivate commands and caveats at the end
   if (deactivateCommands.length > 0) {
     commands.push('');
+    if (deactivateCaveats.length > 0) {
+      commands.push(...deactivateCaveats);
+    }
     commands.push('# Disabled rules (PAN-OS disabled → Junos deactivate)');
     commands.push(...deactivateCommands);
+  }
+
+  // Count policies deactivated due to undefined references
+  summary.policies_deactivated_undefined_ref = policyReferenceIssues.size;
+
+  // Emit fidelity manifest if there are non-implicit policies
+  if (summary.total_source_policies > 0) {
+    commands.push('');
+    commands.push('# =============================================');
+    commands.push('# Conversion Fidelity Manifest');
+    commands.push('# =============================================');
+    commands.push(`# Source security policies: ${summary.total_source_policies}`);
+    commands.push(`#   inactive (undefined reference): ${summary.policies_deactivated_undefined_ref}`);
   }
 
   commands.push('');
