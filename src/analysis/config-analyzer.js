@@ -83,6 +83,7 @@ export const AnalysisEngine = {
     return [
       await step('Checking for unused objects...', () => this._unusedObjects(config)),
       await step('Detecting shadowed policies...', () => this._shadowedPolicies(config)),
+      await step('Checking for redundant rules...', () => this._redundantRules(config)),
       await step('Detecting shadowed NAT rules...', () => this._shadowedNat(config)),
       await step('Detecting duplicate objects...', () => this._duplicateObjects(config)),
       await step('Checking for disabled policies...', () => this._disabledPolicies(config)),
@@ -95,7 +96,6 @@ export const AnalysisEngine = {
       await step('Checking for broad addresses...', () => this._broadAddresses(config)),
       await step('Checking for orphan references...', () => this._orphanReferences(config)),
       await step('Checking for deny-all tail rule...', () => this._noDenyAll(config)),
-      await step('Checking for redundant rules...', () => this._redundantRules(config)),
       await step('Checking for empty policy set...', () => this._emptyPolicySet(config)),
       await step('Checking for zones without policy...', () => this._zonesWithoutPolicy(config)),
       await step('Checking for remote logging...', () => this._logCompleteness(config)),
@@ -1416,6 +1416,24 @@ export const AnalysisApplicator = {
               return shadowedKeys.has(key);
             })
             .forEach(p => { p._note = (p._note || '') + '[shadowed by earlier rule] '; });
+          break;
+        }
+
+        case 'redundant_rule': {
+          // Redundant rules are exact duplicates (same match + same action) of an
+          // earlier rule. Remove the later duplicate on exclude (keep the original),
+          // or annotate it when kept. Mirrors the `shadowed` case.
+          const redundantKeys = new Set(f.items.map(i => i.key));
+          config.security_policies = (config.security_policies || []).filter(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            return !redundantKeys.has(key) || act(key) !== 'exclude';
+          });
+          (config.security_policies || [])
+            .filter(p => {
+              const key = p._rule_index != null ? String(p._rule_index) : p.name;
+              return redundantKeys.has(key);
+            })
+            .forEach(p => { p._note = (p._note || '') + '[redundant — duplicate of earlier rule] '; });
           break;
         }
 

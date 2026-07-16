@@ -99,6 +99,19 @@ const FINDING_ACTIONS = {
     { value: 'include', label: 'Keep All' },
     { value: 'exclude', label: 'Remove Never-Hit' },
   ],
+  redundant_rule: [
+    { value: 'include', label: 'Keep All' },
+    { value: 'exclude', label: 'Remove All Redundant' },
+  ],
+};
+
+// Short clarifying notes shown under a card's description. Used mainly to
+// distinguish findings that sound alike (shadowed vs redundant).
+const FINDING_HINTS = {
+  shadowed:
+    'Shadowed ≠ Redundant: a broader earlier rule already matches all of this rule’s traffic, so this rule never evaluates — often a real misconfiguration (e.g. an allow-any hiding a specific deny). The masked rule may have a different, narrower match or a different action.',
+  redundant_rule:
+    'Redundant ≠ Shadowed: this rule is an exact duplicate — same match criteria AND same action as an earlier rule. Harmless but clutter; safe to remove. (Shadowed, by contrast, is a broader rule masking a different/narrower one.)',
 };
 
 export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoading, progressLabel, hasConfig, onNavigate }) {
@@ -289,6 +302,18 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
             <div style={{ padding: '0 16px 8px 42px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.4 }}>
               {finding.description}
             </div>
+
+            {/* Clarifying hint (e.g. shadowed vs redundant) */}
+            {FINDING_HINTS[finding.id] && (
+              <div style={{
+                margin: '0 16px 8px 42px', padding: '6px 10px',
+                fontSize: 12, lineHeight: 1.45, color: 'var(--text-secondary)',
+                background: 'var(--surface-2, rgba(128,128,128,0.06))',
+                borderLeft: '3px solid var(--border-color)', borderRadius: 4,
+              }}>
+                {FINDING_HINTS[finding.id]}
+              </div>
+            )}
 
             {/* Expanded items */}
             {isExpanded && finding.items.length > 0 && (
