@@ -35,8 +35,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
-      - name: Install semgrep + njsscan (pinned)
-        run: python3 -m pip install --quiet semgrep==1.170.0 njsscan==0.4.3
+      - name: Install semgrep + njsscan (pinned, isolated)
+        # pipx gives each tool its own venv; semgrep and njsscan have
+        # conflicting transitive deps and cannot share one environment.
+        run: |
+          pipx install semgrep==1.170.0
+          pipx install njsscan==0.4.3
 
       - name: semgrep (SAST)
         run: semgrep scan --error --config p/javascript --config p/react --config p/secrets .
