@@ -294,7 +294,7 @@ export function convertToSrxSetCommands(config, interfaceMappings = {}, targetCo
   convertOspf3Config(config.ospf3_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
   convertEvpnConfig(config.evpn_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
   convertVxlanConfig(config.vxlan_config, commands, warnings, summary, interfaceMappings, identifiers, identifierPath, routingInstances);
-  convertHaConfig(config.ha_config, commands, warnings, summary, interfaceMappings);
+  convertHaConfig(config.ha_config, commands, warnings, summary, interfaceMappings, options.deploymentMode);
   convertScreenConfig(config.screen_config, commands, warnings, summary, identifiers, identifierPath);
   convertVpnTunnels(config.vpn_tunnels, commands, warnings, summary, interfaceMappings, identifiers, identifierPath);
   convertSyslogConfig(config.syslog_config, commands, warnings, summary);
@@ -3525,18 +3525,60 @@ function convertVxlanConfig(vxlanConfig, commands, warnings, summary, interfaceM
 /**
  * Converts HA configuration to SRX chassis cluster or MNHA set commands.
  */
-function convertHaConfig(haConfig, commands, warnings, summary, interfaceMappings = {}) {
+/**
+ * Converts HA configuration to SRX commands based on explicit deployment mode or auto-detection.
+ * @param {Object} haConfig - HA configuration from source
+ * @param {Array<string>} commands - Output command array
+ * @param {Array<Object>} warnings - Warnings array
+ * @param {Object} summary - Summary object
+ * @param {Object} interfaceMappings - Interface mapping object
+ * @param {string} deploymentMode - Explicit deployment mode: 'standalone', 'chassis-cluster', 'mnha', or undefined (auto)
+ */
+function convertHaConfig(haConfig, commands, warnings, summary, interfaceMappings = {}, deploymentMode) {
+  // Explicit deployment mode dispatch
+  if (deploymentMode) {
+    if (deploymentMode === 'standalone') {
+      commands.push('# Target: standalone — no HA/chassis-cluster/MNHA config emitted.');
+      commands.push('');
+      return;
+    }
+
+    if (deploymentMode === 'mnha') {
+      // MNHA mode — use haConfig fields or defaults
+      convertMnhaConfig(haConfig || {}, commands, warnings, summary, interfaceMappings);
+      return;
+    }
+
+    if (deploymentMode === 'chassis-cluster') {
+      // Chassis cluster mode — emit even if haConfig is missing/disabled
+      const effectiveHaConfig = haConfig || {};
+      convertChassisClusterConfig(effectiveHaConfig, commands, warnings, summary, interfaceMappings);
+      return;
+    }
+  }
+
+  // Auto mode (legacy behavior) — only emit HA if enabled
   if (!haConfig || !haConfig.enabled) return;
 
+  // Auto mode ha_type dispatch
   if (haConfig.ha_type === 'mnha') {
     convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappings);
     return;
   }
 
+  // Auto mode default: chassis cluster
+  convertChassisClusterConfig(haConfig, commands, warnings, summary, interfaceMappings);
+}
+
+/**
+ * Converts chassis cluster configuration to SRX set commands.
+ * Extracted from convertHaConfig for reuse in explicit deployment mode.
+ */
+function convertChassisClusterConfig(haConfig, commands, warnings, summary, interfaceMappings = {}) {
   commands.push('# =============================================');
   commands.push('# Chassis Cluster / HA Configuration');
   commands.push('# =============================================');
-  commands.push(`# Source HA: ${haConfig.description || haConfig.mode}`);
+  commands.push(`# Source HA: ${haConfig.description || haConfig.mode || 'chassis-cluster'}`);
 
   const clusterId = haConfig.group_id || 1;
 
@@ -3562,7 +3604,8 @@ function convertHaConfig(haConfig, commands, warnings, summary, interfaceMapping
   commands.push('set chassis cluster heartbeat-threshold 3');
 
   // HA interfaces — map to SRX fabric and control links
-  for (const iface of haConfig.ha_interfaces) {
+  if (haConfig.ha_interfaces) {
+    for (const iface of haConfig.ha_interfaces) {
     const name = (iface.name || '').toLowerCase();
     if (name === 'fab0' || name === 'fab1' || name.includes('fabric')) {
       if (iface.interface) {
@@ -3576,6 +3619,7 @@ function convertHaConfig(haConfig, commands, warnings, summary, interfaceMapping
       commands.push(`# Source HA data link: ${iface.name} on ${iface.interface || 'N/A'} (${iface.ip || 'no IP'})`);
     } else if (iface.interface) {
       commands.push(`# Source HA interface: ${iface.name} on ${iface.interface} (${iface.ip || 'no IP'})`);
+    }
     }
   }
 
@@ -3609,10 +3653,14 @@ function buildMnhaPeerList(haConfig, nodeCount) {
   const additionalPeers = haConfig.additional_peers || [];
 
   // First peer — always from top-level fields (backward compatible with 2-node)
+  // ICL interface fallback: haConfig.icl_interface or first ha_interface (for PAN-OS sources)
+  const iclInterfaceFallback = haConfig.icl_interface ||
+    (haConfig.ha_interfaces && haConfig.ha_interfaces[0] ? haConfig.ha_interfaces[0].interface : '');
+
   peers.push({
     peer_id: haConfig.peer_id || 2,
     peer_ip: haConfig.peer_ip || '',
-    icl_interface: haConfig.icl_interface || '',
+    icl_interface: iclInterfaceFallback,
     vpn_profile: haConfig.vpn_profile || 'IPSEC_VPN_ICL',
     liveness_interval: haConfig.liveness_interval || 400,
     liveness_multiplier: haConfig.liveness_multiplier || 5,
@@ -3644,6 +3692,7 @@ function buildMnhaPeerList(haConfig, nodeCount) {
  * Converts MNHA (Multinode High Availability) configuration to SRX set commands.
  * Uses `set chassis high-availability` instead of `set chassis cluster`.
  * Supports 2-node, 3-node, and 4-node MNHA topologies.
+ * Emits skill-correct MNHA config per srx-mnha skill (flat model, activeness-probe, SRG monitoring, ICL zone).
  */
 function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappings = {}) {
   const nodeCount = haConfig.node_count || 2;
@@ -3663,6 +3712,7 @@ function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappi
 
   // Build list of all peers (supports 2-, 3-, and 4-node topologies)
   const peers = buildMnhaPeerList(haConfig, nodeCount);
+  const iclInterfaces = []; // Track ICL interfaces for security zone
 
   for (const peer of peers) {
     // Peer node identity
@@ -3672,6 +3722,10 @@ function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappi
     if (peer.icl_interface) {
       const iclInterface = mapInterfaceName(peer.icl_interface, interfaceMappings);
       commands.push(`${prefix} peer-id ${peer.peer_id} interface ${iclInterface}`);
+      // Track for ICL security zone
+      if (!iclInterfaces.includes(iclInterface)) {
+        iclInterfaces.push(iclInterface);
+      }
     }
     if (peer.vpn_profile) {
       commands.push(`${prefix} peer-id ${peer.peer_id} vpn-profile ${peer.vpn_profile}`);
@@ -3699,17 +3753,59 @@ function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappi
     }
   }
 
-  // Monitoring (applies to all peers)
+  // Mandatory activeness-probe for deployment-type routing (added once after SRG1 config)
+  const deployType = haConfig.deployment_type || 'routing';
+  if (deployType === 'routing') {
+    const probeDest = haConfig.activeness_probe_dest || '192.0.2.1';
+    const probeSrc = haConfig.activeness_probe_src || '192.0.2.2';
+    commands.push(`${prefix} services-redundancy-group 1 activeness-probe dest-ip ${probeDest} src-ip ${probeSrc}`);
+
+    if (!haConfig.activeness_probe_dest || !haConfig.activeness_probe_src) {
+      commands.push('# CAVEAT: activeness-probe uses placeholder IPs — set to a REAL reachable data-segment address (not the ICL); mandatory for deployment-type routing.');
+      warnings.push(createWarning('ha', 'MNHA activeness-probe uses placeholder IPs (192.0.2.x) — replace with real reachable data-segment addresses before commit', 'warning'));
+    }
+  }
+
+  // SRG interface monitoring via monitor-object (not chassis-cluster interface-monitor)
+  const monitoredInterfaces = new Set();
   if (haConfig.monitoring) {
     for (const lg of (haConfig.monitoring.link_groups || [])) {
       if (lg.enabled && lg.interfaces && lg.interfaces.length > 0) {
         for (const iface of lg.interfaces) {
-          const monitorInterface = mapInterfaceName(iface, interfaceMappings);
-          commands.push(`${prefix} services-redundancy-group 1 interface-monitor ${monitorInterface} weight 255`);
+          const monitorIfl = mapInterfaceName(iface, interfaceMappings);
+          // Extract IFD (physical interface) for monitoring — strip .unit
+          const monitorIfd = monitorIfl.split('.')[0];
+          if (!monitoredInterfaces.has(monitorIfd)) {
+            monitoredInterfaces.add(monitorIfd);
+            // Sanitize interface name for monitor-object name (replace slashes with dashes)
+            const monObjName = `mon-${monitorIfd.replace(/\//g, '-')}`;
+            commands.push(`${prefix} services-redundancy-group 1 monitor monitor-object ${monObjName} interface interface-name ${monitorIfd} weight 100`);
+            commands.push(`${prefix} services-redundancy-group 1 monitor monitor-object ${monObjName} interface threshold 100`);
+            commands.push(`${prefix} services-redundancy-group 1 monitor monitor-object ${monObjName} object-threshold 100`);
+            commands.push(`${prefix} services-redundancy-group 1 monitor srg-threshold 100`);
+          }
         }
       }
     }
+    if (monitoredInterfaces.size > 0) {
+      commands.push('# CAVEAT: chassis-cluster interface-monitor weights were NOT ported 1:1 — SRG monitoring redesigned; re-validate failover.');
+    }
   }
+
+  // ICL security zone (required for HA link services)
+  for (const iclIface of iclInterfaces) {
+    // Add .0 unit if not already present
+    const iclIfl = iclIface.includes('.') ? iclIface : `${iclIface}.0`;
+    commands.push(`set security zones security-zone ICL interfaces ${iclIfl}`);
+  }
+  if (iclInterfaces.length > 0) {
+    commands.push('set security zones security-zone ICL host-inbound-traffic system-services high-availability');
+  }
+
+  // MNHA caveats
+  commands.push('# CAVEAT: flat MNHA config model targets Junos <= 24.x; Junos 26.x requires the GRID model (grid-id/local-domain-id/peer-domain-id) + reboot — verify against the target release.');
+  commands.push('# CAVEAT: enabling chassis high-availability is reboot-gated (may need two cycles) to activate.');
+  commands.push('# CAVEAT: this is NODE-LOCAL config for one node; the peer node mirrors it with swapped local/peer IDs + IPs and a lower activeness-priority. MNHA does not auto-sync full config.');
 
   if (nodeCount > 2) {
     commands.push(`# NOTE: ${nodeCount}-node MNHA requires full mesh ICL connectivity between all nodes.`);
@@ -3718,7 +3814,7 @@ function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappi
   commands.push('# NOTE: Review MNHA config — verify ICL interface, VPN profile, and virtual-IP');
   commands.push('# assignments match your target SRX4700 topology');
 
-  warnings.push(createWarning('ha', `${nodeCount}-node MNHA configured — verify ICL, VPN profile, and SRG settings for target topology`, 'info'));
+  warnings.push(createWarning('ha', 'MNHA output is a node-local scaffold — review activeness-probe, ICL, monitoring, and peer-node mirror per the srx-mnha guidance.', 'info'));
   summary.ha_converted = 1;
   summary.mnha_node_count = nodeCount;
   commands.push('');
