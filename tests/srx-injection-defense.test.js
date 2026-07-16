@@ -761,7 +761,6 @@ describe('set converter injection defense', () => {
     ['security_policies[0].action', config => { config.security_policies[0].action = 'permit deactivate system'; }],
     ['security_policies[0].name', config => { config.security_policies[0].name = 'p\rset system root-authentication'; }],
     ['address_objects[0].value', config => { config.address_objects[0].value = '192.0.2.1 set system services telnet'; }],
-    ['interfaces[0].ip', config => { config.interfaces = [{ name: 'ethernet1/1', ip: '192.0.2.1/24 set system services telnet' }]; }],
     ['service_objects[0].protocol', config => { config.service_objects = [{ name: 'web', protocol: 'tcp set system services telnet', port_range: '443' }]; }],
     ['bgp_config[0].peer_groups[0].neighbors[0].address', config => {
       config.bgp_config = [{ peer_groups: [{ name: 'upstream', type: 'external', neighbors: [{ address: '192.0.2.1 set system services telnet' }] }] }];

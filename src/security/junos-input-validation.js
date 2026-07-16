@@ -201,8 +201,12 @@ function validateInterfaces(interfaces, basePath) {
   interfaces.forEach((iface, index) => {
     if (!iface || typeof iface !== 'object') return;
     if (iface.name) validateInterfaceName(iface.name, `${basePath}[${index}].name`);
-    if (iface.ip) setAddressOrPrefix(iface.ip, `${basePath}[${index}].ip`);
-    if (iface.ipv6) setAddressOrPrefix(iface.ipv6, `${basePath}[${index}].ipv6`);
+    // NOTE: interface ip/ipv6 are intentionally NOT hard-validated here. A
+    // non-literal PAN-OS value (named object ref, scoped link-local, EUI-64
+    // suffix, dhcpv6 keyword) must not abort the whole conversion. Control-char
+    // injection is already blocked by walkScalars; the converter skips a
+    // malformed address with a caveat + warning, and validateSetOutput is the
+    // fail-closed backstop on emitted commands.
   });
 }
 

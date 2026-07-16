@@ -21,6 +21,7 @@
 import { sanitizeJunosName, mapAppToJunos, mapProfileToSrx, createWarning, isPredefEquivalent, JUNOS_PREDEFINED_APPS } from '../parsers/parser-utils.js';
 import { getJunosEmission } from '../utils/app-mappings.js';
 import {
+  setAddressOrPrefix,
   setComment,
   setEnum,
   setInteger,
@@ -587,6 +588,50 @@ function isValidSrxInterface(ifName) {
 // Interface Address Converter (IPv4 + IPv6)
 // ---------------------------------------------------------------------------
 
+/**
+ * True when `value` is a Junos-serializable literal IPv4/IPv6 address or prefix.
+ * @param {string} value - candidate address (already trimmed)
+ * @returns {boolean}
+ */
+function isEmittableAddress(value) {
+  try {
+    setAddressOrPrefix(value, 'probe');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Emit one interface family address, skipping non-literal PAN-OS values
+ * (named object refs, scoped link-locals like `fe80::1%eth0`, EUI-64 suffixes,
+ * `dhcpv6`, etc.) with a caveat + warning instead of hard-blocking conversion.
+ * @param {string[]} commands - output command list (mutated)
+ * @param {object[]} warnings - warnings list (mutated)
+ * @param {string} base - SRX physical interface (e.g. ge-0/0/1)
+ * @param {string} unit - unit number
+ * @param {string} ifKey - `${base}.${unit}` for messages
+ * @param {'inet'|'inet6'} family - address family to emit
+ * @param {string} rawValue - the source address value
+ * @returns {void}
+ */
+function emitInterfaceAddress(commands, warnings, base, unit, ifKey, family, rawValue) {
+  if (!rawValue) return;
+  const value = String(rawValue).trim();
+  const label = family === 'inet6' ? 'IPv6' : 'IPv4';
+  if (isEmittableAddress(value)) {
+    commands.push(`set interfaces ${base} unit ${unit} family ${family} address ${value}`);
+    return;
+  }
+  // Do NOT reflect rawValue into the command stream — a malformed value may be
+  // an injection payload (e.g. "192.0.2.1/24 set system services telnet"). The
+  // raw value goes only into the warning (UI data, not executable output).
+  commands.push(`# CAVEAT: interface ${ifKey} ${label} address omitted — source value is not a literal IP/prefix; assign it manually`);
+  warnings.push(createWarning('warning', `interfaces/${ifKey}`,
+    `Interface ${ifKey} ${label} address "${rawValue}" is not a literal IP/prefix (named ref, scoped, EUI-64, or dhcp keyword) — address skipped`,
+    `Assign the interface ${label} address manually on the SRX`));
+}
+
 function convertInterfaceAddresses(interfaces, commands, warnings, summary, interfaceMappings = {}) {
   if (!interfaces || interfaces.length === 0) return;
 
@@ -647,12 +692,8 @@ function convertInterfaceAddresses(interfaces, commands, warnings, summary, inte
       commands.push(`set interfaces ${base} unit ${unit} vlan-id ${String(iface.vlan)}`);
     }
 
-    if (iface.ip) {
-      commands.push(`set interfaces ${base} unit ${unit} family inet address ${iface.ip}`);
-    }
-    if (iface.ipv6) {
-      commands.push(`set interfaces ${base} unit ${unit} family inet6 address ${iface.ipv6}`);
-    }
+    emitInterfaceAddress(commands, warnings, base, unit, ifKey, 'inet', iface.ip);
+    emitInterfaceAddress(commands, warnings, base, unit, ifKey, 'inet6', iface.ipv6);
     if (iface.description) {
       commands.push(`set interfaces ${base} unit ${unit} description ${setQuoted(iface.description, 'interfaces.description')}`);
     }
