@@ -48,4 +48,7 @@ jobs:
           SEMGREP_TIMEOUT: "300"
 
       - name: njsscan (node-specific)
-        run: njsscan --exit-warning .
+        # Scope to application source. njsscan's hardcoded-credential rules
+        # false-positive on test fixtures (passphrases, sample tokens);
+        # gitleaks already covers real secrets across the whole tree.
+        run: njsscan --exit-warning src public
