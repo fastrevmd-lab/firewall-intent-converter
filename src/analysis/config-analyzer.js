@@ -1437,6 +1437,51 @@ export const AnalysisApplicator = {
           break;
         }
 
+        case 'nat_shadowed': {
+          // Shadowed NAT rules: remove the later (shadowed) rule on exclude,
+          // keeping the earlier broader rule; annotate when kept.
+          const natKeys = new Set(f.items.map(i => i.key));
+          const natKey = (r) => r._rule_index != null ? String(r._rule_index) : r.name;
+          config.nat_rules = (config.nat_rules || []).filter(r => {
+            return !natKeys.has(natKey(r)) || act(natKey(r)) !== 'exclude';
+          });
+          (config.nat_rules || [])
+            .filter(r => natKeys.has(natKey(r)))
+            .forEach(r => { r._note = (r._note || '') + '[shadowed by earlier NAT rule] '; });
+          break;
+        }
+
+        case 'orphan_ref': {
+          // Policies that reference undefined address/service objects. Remove the
+          // referencing policy on exclude; otherwise leave it and annotate
+          // (report-only — the converter still deactivates it on emit).
+          const refKeys = new Set(f.items.map(i => i.key));
+          config.security_policies = (config.security_policies || []).filter(p => {
+            const key = p._rule_index != null ? String(p._rule_index) : p.name;
+            return !refKeys.has(key) || act(key) !== 'exclude';
+          });
+          (config.security_policies || [])
+            .filter(p => {
+              const key = p._rule_index != null ? String(p._rule_index) : p.name;
+              return refKeys.has(key);
+            })
+            .forEach(p => { p._note = (p._note || '') + '[references undefined object] '; });
+          break;
+        }
+
+        case 'zones_no_policy': {
+          // Zones referenced by no policy/NAT rule. Remove on exclude; annotate
+          // when kept (report-only). Items are keyed by zone name.
+          const zoneKeys = new Set(f.items.map(i => i.key));
+          config.zones = (config.zones || []).filter(z => {
+            return !zoneKeys.has(z.name) || act(z.name) !== 'exclude';
+          });
+          (config.zones || [])
+            .filter(z => zoneKeys.has(z.name))
+            .forEach(z => { z._note = (z._note || '') + '[no policy references this zone] '; });
+          break;
+        }
+
         case 'duplicates': {
           if (f.selected === 'consolidate') {
             const toConsolidate = f.items.filter(i => act(i.key) !== 'include');

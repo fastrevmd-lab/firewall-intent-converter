@@ -103,7 +103,39 @@ const FINDING_ACTIONS = {
     { value: 'include', label: 'Keep All' },
     { value: 'exclude', label: 'Remove All Redundant' },
   ],
+  nat_shadowed: [
+    { value: 'include', label: 'Keep All' },
+    { value: 'exclude', label: 'Remove All' },
+  ],
+  orphan_ref: [
+    { value: 'include', label: 'Keep All (Report Only)' },
+    { value: 'exclude', label: 'Remove All' },
+  ],
+  zones_no_policy: [
+    { value: 'include', label: 'Keep All (Report Only)' },
+    { value: 'exclude', label: 'Remove All' },
+  ],
 };
+
+// Advisory findings that can't be auto-remediated. They get a Warning Flag /
+// Ignore pull-down: Ignore acknowledges the finding and suppresses it from the
+// summary badges and the PDF report (no config change either way).
+const ADVISORY_FINDINGS = [
+  'inbound_any', 'exposed_services', 'broad_address', 'no_deny_all',
+  'empty_policyset', 'log_completeness', 'large_group', 'nested_group',
+  'undescribed_object', 'undescribed_policy', 'weak_ike', 'weak_ipsec', 'no_screen',
+];
+for (const id of ADVISORY_FINDINGS) {
+  FINDING_ACTIONS[id] = [
+    { value: 'flag', label: 'Warning Flag' },
+    { value: 'ignore', label: 'Ignore' },
+  ];
+}
+
+/** True when the user chose to Ignore (suppress) this advisory finding. */
+function isIgnored(finding) {
+  return finding.selected === 'ignore';
+}
 
 // Short clarifying notes shown under a card's description. Used mainly to
 // distinguish findings that sound alike (shadowed vs redundant).
@@ -147,8 +179,11 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
     }));
   }, []);
 
-  const totalFindings = localFindings.reduce((sum, f) => sum + f.count, 0);
-  const hasFindings = localFindings.length > 0 && totalFindings > 0;
+  // Ignored advisory findings are suppressed from the summary count/badges.
+  const totalFindings = localFindings.reduce((sum, f) => sum + (isIgnored(f) ? 0 : f.count), 0);
+  const rawTotal = localFindings.reduce((sum, f) => sum + f.count, 0);
+  const ignoredCount = rawTotal - totalFindings;
+  const hasFindings = localFindings.length > 0 && rawTotal > 0;
 
   return (
     <div style={{ padding: '16px', maxWidth: 900 }}>
@@ -157,7 +192,8 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
           <h3 style={{ margin: 0 }}>Configuration Analysis</h3>
           {hasFindings && (
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-              {totalFindings} finding{totalFindings !== 1 ? 's' : ''} across {localFindings.filter(f => f.count > 0).length} categories
+              {totalFindings} finding{totalFindings !== 1 ? 's' : ''} across {localFindings.filter(f => f.count > 0 && !isIgnored(f)).length} categories
+              {ignoredCount > 0 && ` · ${ignoredCount} ignored`}
             </span>
           )}
         </div>
@@ -218,7 +254,7 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
       {/* Summary badges */}
       {hasFindings && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-          {localFindings.filter(f => f.count > 0).map(f => {
+          {localFindings.filter(f => f.count > 0 && !isIgnored(f)).map(f => {
             const sev = FINDING_SEVERITY[f.id] || 'info';
             return (
               <span
@@ -254,12 +290,14 @@ export default function AnalysisPanel({ findings, onApply, onRunAnalysis, isLoad
         const actions = FINDING_ACTIONS[finding.id] || [];
         const badgeColor = severity === 'warning' ? 'var(--caution)' : '#6b7280';
 
+        const ignored = isIgnored(finding);
         return (
           <div key={finding.id} style={{
             border: '1px solid var(--border-color)',
             borderRadius: 8,
             marginBottom: 12,
             background: 'var(--bg-primary)',
+            opacity: ignored ? 0.55 : 1,
           }}>
             {/* Header */}
             <div
