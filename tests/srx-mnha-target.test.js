@@ -252,4 +252,16 @@ describe('Correct MNHA output (Part B)', () => {
     // Basic syntax check (starts with set or #)
     expect(result.commands.every(cmd => cmd.startsWith('set ') || cmd.startsWith('#') || cmd.trim() === '')).toBe(true);
   });
+
+  it('does not emit a dangling ICL vpn-profile by default (only when explicitly set)', () => {
+    const cfg = { zones: [], security_policies: [], service_objects: [], address_objects: [], address_groups: [], nat_rules: [],
+      ha_config: { enabled: true, peer_ip: '10.255.0.2', local_ip: '10.255.0.1', priority: 200, ha_interfaces: [{ interface: 'ethernet1/5' }], monitoring: { link_groups: [] } } };
+    const noVpn = convertToSrxSetCommands(cfg, { 'ethernet1/5': 'ge-0/0/4' }, null, { deploymentMode: 'mnha' });
+    expect(noVpn.commands.filter(l => l.includes('vpn-profile'))).toHaveLength(0);
+    const cfg2 = { ...cfg, ha_config: { ...cfg.ha_config, vpn_profile: 'MY-ICL-VPN' } };
+    const withVpn = convertToSrxSetCommands(cfg2, { 'ethernet1/5': 'ge-0/0/4' }, null, { deploymentMode: 'mnha' });
+    expect(withVpn.commands.some(l => l.includes('vpn-profile MY-ICL-VPN'))).toBe(true);
+    expect(withVpn.commands.some(l => /CAVEAT.*vpn-profile/.test(l))).toBe(true);
+  });
+
 });

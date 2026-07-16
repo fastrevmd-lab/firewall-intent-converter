@@ -3661,7 +3661,7 @@ function buildMnhaPeerList(haConfig, nodeCount) {
     peer_id: haConfig.peer_id || 2,
     peer_ip: haConfig.peer_ip || '',
     icl_interface: iclInterfaceFallback,
-    vpn_profile: haConfig.vpn_profile || 'IPSEC_VPN_ICL',
+    vpn_profile: haConfig.vpn_profile || '',
     liveness_interval: haConfig.liveness_interval || 400,
     liveness_multiplier: haConfig.liveness_multiplier || 5,
     deployment_type: haConfig.deployment_type || 'routing',
@@ -3676,7 +3676,7 @@ function buildMnhaPeerList(haConfig, nodeCount) {
       peer_id: extra.peer_id || (3 + i),
       peer_ip: extra.peer_ip || '',
       icl_interface: extra.icl_interface || '',
-      vpn_profile: extra.vpn_profile || 'IPSEC_VPN_ICL',
+      vpn_profile: extra.vpn_profile || '',
       liveness_interval: extra.liveness_interval || haConfig.liveness_interval || 400,
       liveness_multiplier: extra.liveness_multiplier || haConfig.liveness_multiplier || 5,
       deployment_type: extra.deployment_type || haConfig.deployment_type || 'routing',
@@ -3728,6 +3728,7 @@ function convertMnhaConfig(haConfig, commands, warnings, summary, interfaceMappi
       }
     }
     if (peer.vpn_profile) {
+      commands.push(`# CAVEAT: ICL encryption references vpn-profile "${peer.vpn_profile}" — define this IKE/IPsec profile, or remove the line to run the ICL unencrypted.`);
       commands.push(`${prefix} peer-id ${peer.peer_id} vpn-profile ${peer.vpn_profile}`);
     }
 
