@@ -248,7 +248,11 @@ function buildAnalysisChanges(intermediateConfig, originalPolicies) {
     consolidate: 'Consolidate', remove: 'Remove', remove_all: 'Remove All',
     disable: 'Disable', include_disabled: 'Keep Disabled', include_enabled: 'Re-enable',
     enable_logging: 'Enable Logging', enable_all: 'Enable All', report_only: 'Report Only',
+    flag: 'Warning Flag', ignore: 'Ignored',
   };
+
+  // Advisory findings the user chose to Ignore are suppressed from the report.
+  const isIgnored = (f) => f.selected === 'ignore';
 
   // Determine per-item effective status based on bulk action + per-item overrides
   const REMOVE_ACTIONS = new Set(['exclude', 'remove', 'remove_all']);
@@ -269,8 +273,8 @@ function buildAnalysisChanges(intermediateConfig, originalPolicies) {
 
   let html = '';
 
-  // Summary table
-  const summaryRows = findings.filter(f => f.count > 0).map(f => {
+  // Summary table (ignored advisory findings are suppressed)
+  const summaryRows = findings.filter(f => f.count > 0 && !isIgnored(f)).map(f => {
     const action = ACTION_LABELS[f.selected] || f.selected || 'No action';
     const isRemove = REMOVE_ACTIONS.has(f.selected);
     const actionHtml = isRemove
@@ -287,7 +291,7 @@ function buildAnalysisChanges(intermediateConfig, originalPolicies) {
   html += table(['Finding Category', 'Count', 'Action Taken'], summaryRows);
 
   // Detailed item list for EVERY finding with items
-  const activeFindings = findings.filter(f => f.count > 0 && arr(f.items).length > 0);
+  const activeFindings = findings.filter(f => f.count > 0 && !isIgnored(f) && arr(f.items).length > 0);
   for (const f of activeFindings) {
     const label = f.id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     const isRemove = REMOVE_ACTIONS.has(f.selected);

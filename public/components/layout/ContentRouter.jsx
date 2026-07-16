@@ -450,6 +450,9 @@ export default function ContentRouter({
               import('../../../src/analysis/config-analyzer.js').then(({ AnalysisApplicator }) => {
                 const cloned = structuredClone(activeConfig);
                 AnalysisApplicator.apply(cloned, findings);
+                // Persist the user's per-finding selections (Keep/Remove/Ignore)
+                // so the PDF report reflects the chosen actions, not stale defaults.
+                cloned._analysisFindings = structuredClone(findings);
                 config.updateConfig(() => cloned);
                 // Copy cleaned policies into SRX view for review
                 if (cloned.security_policies?.length) {
